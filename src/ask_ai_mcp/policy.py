@@ -44,6 +44,7 @@ def evaluate_tool_spec(spec: ToolBuildSpec) -> PolicyDecision:
             spec.input_contract,
             spec.output_contract,
             *spec.acceptance_tests,
+            spec.fixture_notes or "",
         ]
     )
 

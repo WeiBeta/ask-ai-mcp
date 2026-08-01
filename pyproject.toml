@@ -10,12 +10,16 @@ readme = "README.md"
 requires-python = ">=3.13,<3.14"
 dependencies = [
   "fastmcp>=3.4.5,<3.5",
+  "httpx>=0.28.1,<0.29",
+  "keyring>=25.7,<26",
   "platformdirs>=4.4,<5",
   "pydantic>=2.12,<3",
 ]
 
 [project.scripts]
 ask-ai-mcp = "ask_ai_mcp.__main__:main"
+ask-ai-mcp-credentials = "ask_ai_mcp.credential_cli:main"
+ask-ai-mcp-smoke = "ask_ai_mcp.smoke_cli:main"
 
 [dependency-groups]
 dev = [

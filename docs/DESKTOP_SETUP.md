@@ -6,9 +6,10 @@ Both desktop clients use the same local STDIO executable and the same
 prompt-free SQLite audit store. Each client starts its own process, so seeing
 two server processes is expected.
 
-During phase 0, the server exposes only the read-only `usage_status` tool. Do
-not add a DeepSeek API key yet. Credential Manager integration and the guarded
-tool-building workflow arrive in phase 1 and phase 2.
+The server currently exposes only the read-only `usage_status` tool. Phase 1
+credential storage and the internal V4 client are implemented, but do not add
+a key merely to connect either desktop client. Candidate generation remains
+unavailable until the isolated runner is complete.
 
 Use this absolute executable path:
 
@@ -78,11 +79,17 @@ tool_timeout_sec = 60
 Restart Codex Desktop after saving, then use `/mcp` to confirm the server and
 tool catalog.
 
-## Credential rule for later phases
+## Credential rule
 
-The DeepSeek key will be written to Windows Credential Manager by a dedicated
-setup command. It must not be placed in either desktop configuration file, a
-repository file, `.env`, prompt, fixture, or ordinary log.
+When the opt-in API smoke test is approved, store the DeepSeek key through:
+
+```powershell
+uv run ask-ai-mcp-credentials set
+```
+
+The hidden interactive prompt writes it to Windows Credential Manager. It must
+not be placed in either desktop configuration file, a repository file, `.env`,
+prompt, fixture, or ordinary log.
 
 ## Troubleshooting
 

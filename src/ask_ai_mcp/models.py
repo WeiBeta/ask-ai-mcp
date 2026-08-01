@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
+from pathlib import PurePosixPath
+from typing import Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class StrictModel(BaseModel):
@@ -54,6 +56,51 @@ class ToolBuildSpec(StrictModel):
     allowed_packages: list[str] = Field(default_factory=list, max_length=20)
     fixture_notes: str | None = Field(default=None, max_length=4_000)
     model: DeepSeekModel = DeepSeekModel.FLASH
+
+
+class CandidateFile(StrictModel):
+    """One untrusted, relative file returned by the toolsmith."""
+
+    path: str = Field(min_length=1, max_length=240)
+    content: str = Field(max_length=100_000)
+
+    @field_validator("path")
+    @classmethod
+    def validate_relative_path(cls, value: str) -> str:
+        if "\\" in value or ":" in value:
+            raise ValueError("candidate paths must use relative POSIX syntax")
+        path = PurePosixPath(value)
+        if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+            raise ValueError("candidate path escapes its job workspace")
+        if path.suffix.casefold() not in {".json", ".md", ".py", ".txt"}:
+            raise ValueError("candidate file extension is not allowed")
+        return value
+
+
+class ToolCandidatePayload(StrictModel):
+    """Schema-constrained DeepSeek output; still untrusted until reviewed."""
+
+    summary: str = Field(min_length=1, max_length=1_000)
+    files: list[CandidateFile] = Field(min_length=1, max_length=20)
+    risks: list[str] = Field(default_factory=list, max_length=20)
+
+    @model_validator(mode="after")
+    def validate_payload_bounds(self) -> Self:
+        paths = [file.path.casefold() for file in self.files]
+        if len(paths) != len(set(paths)):
+            raise ValueError("candidate file paths must be unique")
+        if sum(len(file.content) for file in self.files) > 500_000:
+            raise ValueError("candidate payload is too large")
+        return self
+
+
+class ToolCandidateResult(StrictModel):
+    """Validated envelope returned to Sol without chain-of-thought content."""
+
+    candidate_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    model: DeepSeekModel
+    thinking_enabled: bool
+    payload: ToolCandidatePayload
 
 
 class PolicyDecision(StrictModel):

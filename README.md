@@ -16,9 +16,10 @@ layout, repository changes, and final acceptance.
 
 ## Current status
 
-Phase 0 provides the Windows package skeleton, strict task and audit models,
-runtime policy, DeepSeek V4 cost estimation, a prompt-free SQLite usage store,
-and an intentionally narrow MCP surface.
+Phase 0 is complete. Phase 1 now includes Windows Credential Manager storage
+and an internal DeepSeek V4 client with schema-constrained JSON candidates,
+explicit Pro escalation, response-body-free errors, and prompt-free usage
+accounting.
 
 Only `usage_status` is currently exposed. Candidate generation and execution
 stay disabled until the isolated runner and review gates are implemented.
@@ -52,6 +53,7 @@ C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp.exe
 
 - `docs/ARCHITECTURE.md`: system roles, data flow, isolation, and storage
 - `docs/DEEPSEEK_POLICY.md`: mandatory delegation and content boundaries
+- `docs/DEEPSEEK_CLIENT.md`: API contract, credential workflow, and safeguards
 - `docs/DESKTOP_SETUP.md`: Claude Desktop and Codex Desktop connection guide
 - `docs/ROADMAP.md`: staged implementation and exit criteria
 - `AGENTS.md`: repository rules for future model-driven development

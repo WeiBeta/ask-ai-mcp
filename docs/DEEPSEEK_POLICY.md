@@ -93,6 +93,8 @@ sanitized excerpt that reproduces it.
 
 Logs use hashes and structural metadata instead of filenames or content where
 possible. DeepSeek API request and response bodies are not archived by default.
+Thinking content is discarded; it is never returned to the host or written to
+the audit store.
 
 ## Trial metrics
 
