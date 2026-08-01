@@ -2,13 +2,14 @@
 
 ## Implementation status
 
-The internal client and its mocked integration tests are complete. It is not
-yet exposed as an MCP tool because generated files must not leave memory or be
-written to disk until the isolated candidate runner exists.
+Phase 1 is complete. The internal client, mocked integration tests, Windows
+credential storage, and one real synthetic Flash smoke request have passed. It
+is not yet exposed as an MCP tool because generated files must not leave memory
+or be written to disk until the isolated candidate runner exists.
 
-One real, harmless, explicitly approved smoke request remains before phase 1
-meets its exit criteria. The command is implemented but will not run without a
-charge-confirmation flag.
+The 2026-08-01 smoke request used 656 cache-miss input tokens and 458 output
+tokens, including 265 reasoning tokens. Estimated cost was CNY 0.001572. The
+candidate remained in memory; no repository or job file was created.
 
 ## Official API contract
 

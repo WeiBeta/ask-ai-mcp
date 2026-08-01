@@ -16,10 +16,10 @@ layout, repository changes, and final acceptance.
 
 ## Current status
 
-Phase 0 is complete. Phase 1 now includes Windows Credential Manager storage
-and an internal DeepSeek V4 client with schema-constrained JSON candidates,
-explicit Pro escalation, response-body-free errors, and prompt-free usage
-accounting.
+Phase 0 and phase 1 are complete. The project includes Windows Credential
+Manager storage and an internal DeepSeek V4 client with schema-constrained JSON
+candidates, explicit Pro escalation, response-body-free errors, prompt-free
+usage accounting, and a successfully completed synthetic Flash smoke request.
 
 Only `usage_status` is currently exposed. Candidate generation and execution
 stay disabled until the isolated runner and review gates are implemented.

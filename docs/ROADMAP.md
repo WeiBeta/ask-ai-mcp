@@ -1,9 +1,8 @@
 # Roadmap
 
-Current implementation status: phase 0 is complete. Phase 1 code and mocked
-tests are complete; its one real opt-in smoke request remains pending. Desktop
-configuration should remain limited to the read-only status tool until the
-later safety gates are complete.
+Current implementation status: phases 0 and 1 are complete, including the
+real opt-in synthetic Flash smoke request. Desktop configuration should remain
+limited to the read-only status tool until the later safety gates are complete.
 
 ## Phase 0: policy and skeleton
 
