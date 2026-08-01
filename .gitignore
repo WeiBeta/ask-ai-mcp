@@ -11,3 +11,8 @@ venv/
 !.env.example
 *.pem
 *.key
+
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/

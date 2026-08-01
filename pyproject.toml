@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ask-ai-mcp"
+version = "0.1.0"
+description = "Windows-only MCP toolsmith and source-preprocessing assistant"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+  "fastmcp>=3.4.5,<3.5",
+  "platformdirs>=4.4,<5",
+  "pydantic>=2.12,<3",
+]
+
+[project.scripts]
+ask-ai-mcp = "ask_ai_mcp.__main__:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=8.4,<10",
+  "ruff>=0.12,<1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ask_ai_mcp"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+extend-exclude = ["mcp_server.py", "README.md"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.uv]
+package = true
