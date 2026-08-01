@@ -1,2 +1,13 @@
 .aider*
 __pycache__/
+
+# Local Python environments
+.venv/
+venv/
+
+# Local secrets and provider credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
