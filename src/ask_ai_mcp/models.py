@@ -42,6 +42,18 @@ class CandidateDecision(StrEnum):
     REJECTED = "rejected"
 
 
+class FindingSeverity(StrEnum):
+    ERROR = "error"
+    WARNING = "warning"
+
+
+class CandidateJobState(StrEnum):
+    STATIC_APPROVED = "static_approved"
+    STATIC_REJECTED = "static_rejected"
+    EXECUTED = "executed"
+    EXECUTION_FAILED = "execution_failed"
+
+
 class ToolBuildSpec(StrictModel):
     """Bounded specification supplied by Opus/Sol to the toolsmith."""
 
@@ -101,6 +113,45 @@ class ToolCandidateResult(StrictModel):
     model: DeepSeekModel
     thinking_enabled: bool
     payload: ToolCandidatePayload
+
+
+class StaticFinding(StrictModel):
+    file_path: str = Field(min_length=1, max_length=240)
+    code: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9_]+$")
+    severity: FindingSeverity
+    message: str = Field(min_length=1, max_length=500)
+    line: int | None = Field(default=None, ge=1)
+
+
+class StaticAnalysisReport(StrictModel):
+    candidate_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    allowed: bool
+    scanned_python_files: int = Field(ge=0)
+    findings: list[StaticFinding] = Field(default_factory=list, max_length=200)
+
+
+class CandidateJobManifest(StrictModel):
+    job_id: str = Field(
+        min_length=36,
+        max_length=36,
+        pattern=r"^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+    )
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    state: CandidateJobState
+    tool_name: str = Field(min_length=3, max_length=64, pattern=r"^[a-z][a-z0-9_]+$")
+    spec_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    candidate_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    candidate_files: list[str] = Field(min_length=1, max_length=20)
+    execution_backend: str | None = Field(default=None, max_length=64)
+
+
+class SandboxBackendStatus(StrictModel):
+    backend: str = Field(min_length=1, max_length=64)
+    ready: bool
+    container_cli_available: bool
+    engine_available: bool
+    image_available: bool
+    reasons: list[str] = Field(default_factory=list, max_length=20)
 
 
 class PolicyDecision(StrictModel):

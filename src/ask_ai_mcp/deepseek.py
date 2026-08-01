@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections.abc import Callable
 from time import perf_counter
@@ -12,6 +11,7 @@ import httpx
 from pydantic import ValidationError
 
 from ask_ai_mcp.credentials import CredentialStore
+from ask_ai_mcp.hashing import candidate_payload_sha256
 from ask_ai_mcp.models import (
     DeepSeekModel,
     ToolBuildSpec,
@@ -44,11 +44,6 @@ class DeepSeekClientError(RuntimeError):
 
 class ModelEscalationRequired(PolicyViolation):
     """Raised when V4 Pro was selected without explicit host approval."""
-
-
-def _candidate_hash(payload: ToolCandidatePayload) -> str:
-    canonical = payload.model_dump_json(exclude_none=True)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _usage_counts(data: dict[str, Any]) -> tuple[int, int, int, int]:
@@ -131,7 +126,7 @@ class DeepSeekClient:
             )
             raise DeepSeekClientError("DeepSeek returned an invalid candidate response") from None
 
-        candidate_hash = _candidate_hash(payload)
+        candidate_hash = candidate_payload_sha256(payload)
         self._record_usage(
             spec=spec,
             client_name=client_name,

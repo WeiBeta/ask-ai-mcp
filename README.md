@@ -54,6 +54,7 @@ C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp.exe
 - `docs/ARCHITECTURE.md`: system roles, data flow, isolation, and storage
 - `docs/DEEPSEEK_POLICY.md`: mandatory delegation and content boundaries
 - `docs/DEEPSEEK_CLIENT.md`: API contract, credential workflow, and safeguards
+- `docs/ISOLATION.md`: Docker/WSL candidate sandbox and workspace boundary
 - `docs/DESKTOP_SETUP.md`: Claude Desktop and Codex Desktop connection guide
 - `docs/ROADMAP.md`: staged implementation and exit criteria
 - `AGENTS.md`: repository rules for future model-driven development

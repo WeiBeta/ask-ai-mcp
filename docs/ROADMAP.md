@@ -28,6 +28,8 @@ can generate a harmless candidate without logging secrets.
 
 ## Phase 2: isolated candidate runner
 
+Selected backend: all-users Docker Desktop with WSL 2 Linux containers.
+
 - Create per-job directories and immutable fixture inputs.
 - Add Python AST and dependency policy checks.
 - Add runtime, memory, process, and output limits.

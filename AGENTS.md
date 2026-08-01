@@ -4,6 +4,12 @@
 
 - The current product target is Windows 11 only. Do not add macOS support in
   this development phase.
+- Treat the Windows machine as a multipurpose physical host. System changes
+  must be additive by default: do not disable, remove, or downgrade existing
+  Windows features, Hyper-V, Containers, IIS, .NET Framework versions, or other
+  shared runtimes without explicit approval for that exact change.
+- Enforce project-specific restrictions inside the project runner or container
+  configuration instead of reducing host capabilities.
 - Use PowerShell 7 for scripts and automation.
 - Use the system Python 3.13 installation and the system `uv` installation.
 - Project dependencies belong in `.venv` and must be locked with `uv.lock`.
