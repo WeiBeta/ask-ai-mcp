@@ -39,3 +39,23 @@ At the time of this 0.2.0 smoke, the project exposed no `run_verified_tool`
 operation. Version 0.3.0 retains this legacy registration for audit visibility,
 but it remains non-runnable because it has no standard execution contract,
 dedicated-output capability, or second desktop approval.
+
+## First 0.3.0 verified-execution acceptance attempt
+
+On 2026-08-02, after both desktop clients confirmed MCP 0.3.0 was loaded, Codex
+started one user-approved Flash lifecycle for `synthetic_file_inventory`. The
+lifecycle made three billed API calls: one initial candidate and two automatic
+repairs. It failed closed and registered nothing.
+
+- Initial candidate: safe implementation, but no discoverable unittest file.
+- First repair: test file used forbidden `tempfile` and absolute path literals.
+- Second repair: again omitted a discoverable unittest file.
+- Usage increment: 4,875 cache-miss input tokens, 512 cache-hit input tokens,
+  31,381 completion tokens, and 28,877 reasoning tokens.
+- Estimated cost increment: CNY 0.06764724 under the standard pricing band.
+
+The controller did not approve, register, or execute any candidate and did not
+issue another billed build. The orchestration layer was then hardened so every
+initial or repaired response is explicitly required to include a discoverable
+stdlib unittest. Version 0.3.1 rejects missing or pytest-only tests before
+Docker execution, and permits `tempfile` only inside test files.

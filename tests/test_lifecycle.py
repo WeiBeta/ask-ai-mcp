@@ -36,7 +36,7 @@ def make_spec() -> ToolBuildSpec:
     )
 
 
-def make_candidate(*, unsafe: bool = False) -> ToolCandidateResult:
+def make_candidate(*, unsafe: bool = False, include_test: bool = True) -> ToolCandidateResult:
     tool_source = (
         "import os\n"
         if unsafe
@@ -46,10 +46,9 @@ def make_candidate(*, unsafe: bool = False) -> ToolCandidateResult:
             "    return normalize(request)\n"
         )
     )
-    payload = ToolCandidatePayload(
-        summary="A synthetic fixture normalizer.",
-        files=[
-            CandidateFile(path="tool.py", content=tool_source),
+    files = [CandidateFile(path="tool.py", content=tool_source)]
+    if include_test:
+        files.append(
             CandidateFile(
                 path="test_tool.py",
                 content=(
@@ -57,8 +56,11 @@ def make_candidate(*, unsafe: bool = False) -> ToolCandidateResult:
                     "class TestTool(unittest.TestCase):\n"
                     "    def test_value(self):\n        self.assertEqual(normalize(1), 1)\n"
                 ),
-            ),
-        ],
+            )
+        )
+    payload = ToolCandidatePayload(
+        summary="A synthetic fixture normalizer.",
+        files=files,
         risks=["Synthetic coverage is intentionally narrow."],
     )
     return ToolCandidateResult(
@@ -192,6 +194,24 @@ def test_no_more_than_two_repairs_are_attempted(tmp_path: Path) -> None:
     assert len(result.attempts) == 3
     assert len(client.repair_feedback) == 2
     assert result.review is None
+
+
+def test_missing_tests_are_rejected_before_docker_and_repaired(tmp_path: Path) -> None:
+    client = FakeClient([make_candidate(include_test=False), make_candidate()])
+    executor = PassingExecutor()
+    lifecycle = CandidateLifecycle(
+        client=client,
+        workspace=CandidateWorkspaceManager(tmp_path / "jobs"),
+        executor=executor,
+    )
+
+    result = lifecycle.run(make_spec(), client_name="codex")
+
+    assert result.status is CandidateLifecycleStatus.REVIEW_PENDING
+    assert len(result.attempts) == 2
+    assert result.attempts[0].state is CandidateJobState.STATIC_REJECTED
+    assert "missing_test_file" in client.repair_feedback[0].reason_codes
+    assert executor.calls == 1
 
 
 def test_client_hash_mismatch_is_rejected_before_staging(tmp_path: Path) -> None:

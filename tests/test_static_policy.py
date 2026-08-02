@@ -18,10 +18,23 @@ def make_spec(*, allowed_packages: list[str] | None = None) -> ToolBuildSpec:
     )
 
 
-def payload(source: str, *, path: str = "tool.py") -> ToolCandidatePayload:
+TEST_SOURCE = (
+    "import unittest\n\n"
+    "class TestTool(unittest.TestCase):\n"
+    "    def test_placeholder(self):\n"
+    "        self.assertTrue(True)\n"
+)
+
+
+def payload(
+    source: str, *, path: str = "tool.py", include_test: bool = True
+) -> ToolCandidatePayload:
+    files = [CandidateFile(path=path, content=source)]
+    if include_test:
+        files.append(CandidateFile(path="test_tool.py", content=TEST_SOURCE))
     return ToolCandidatePayload(
         summary="A bounded test candidate.",
-        files=[CandidateFile(path=path, content=source)],
+        files=files,
     )
 
 
@@ -34,7 +47,7 @@ def test_safe_standard_library_candidate_is_allowed() -> None:
         ),
     )
     assert report.allowed is True
-    assert report.scanned_python_files == 1
+    assert report.scanned_python_files == 2
     assert report.findings == []
 
 
@@ -85,6 +98,7 @@ def test_local_candidate_module_import_is_allowed() -> None:
                 ),
             ),
             CandidateFile(path="helper.py", content="VALUE = 1\n"),
+            CandidateFile(path="test_tool.py", content=TEST_SOURCE),
         ],
     )
     assert analyze_candidate(make_spec(), candidate).allowed is True
@@ -97,3 +111,64 @@ def test_entrypoint_requires_exact_run_signature() -> None:
     )
     assert report.allowed is False
     assert "invalid_run_signature" in {finding.code for finding in report.findings}
+
+
+def test_candidate_requires_discoverable_unittest_file() -> None:
+    report = analyze_candidate(
+        make_spec(),
+        payload(
+            "def run(request, input_dir, output_dir):\n    return request\n",
+            include_test=False,
+        ),
+    )
+
+    assert report.allowed is False
+    assert "missing_test_file" in {finding.code for finding in report.findings}
+
+
+def test_plain_test_function_is_not_treated_as_unittest_case() -> None:
+    candidate = ToolCandidatePayload(
+        summary="A candidate with an undiscoverable test.",
+        files=[
+            CandidateFile(
+                path="tool.py",
+                content="def run(request, input_dir, output_dir):\n    return request\n",
+            ),
+            CandidateFile(path="test_tool.py", content="def test_value():\n    assert True\n"),
+        ],
+    )
+
+    report = analyze_candidate(make_spec(), candidate)
+    assert report.allowed is False
+    assert "missing_unittest_case" in {finding.code for finding in report.findings}
+
+
+def test_tempfile_is_allowed_only_in_test_files() -> None:
+    test_source = (
+        "import tempfile\nimport unittest\n\n"
+        "class TestTool(unittest.TestCase):\n"
+        "    def test_temp_directory(self):\n"
+        "        with tempfile.TemporaryDirectory() as directory:\n"
+        "            self.assertTrue(directory)\n"
+    )
+    candidate = ToolCandidatePayload(
+        summary="A candidate using a test-only temporary directory.",
+        files=[
+            CandidateFile(
+                path="tool.py",
+                content="def run(request, input_dir, output_dir):\n    return request\n",
+            ),
+            CandidateFile(path="test_tool.py", content=test_source),
+        ],
+    )
+    assert analyze_candidate(make_spec(), candidate).allowed is True
+
+    report = analyze_candidate(
+        make_spec(),
+        payload(
+            "import tempfile\n\n"
+            "def run(request, input_dir, output_dir):\n    return request\n"
+        ),
+    )
+    assert report.allowed is False
+    assert "forbidden_import" in {finding.code for finding in report.findings}

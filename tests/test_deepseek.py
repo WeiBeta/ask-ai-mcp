@@ -84,6 +84,8 @@ def test_flash_candidate_uses_thinking_json_and_records_prompt_free_usage(
         assert body["reasoning_effort"] == "high"
         assert body["response_format"] == {"type": "json_object"}
         assert "Return JSON only" in body["messages"][1]["content"]
+        assert "test_*.py" in body["messages"][0]["content"]
+        assert "tempfile.TemporaryDirectory" in body["messages"][0]["content"]
         return httpx.Response(200, json=api_response())
 
     store = UsageStore(tmp_path / "usage.db")
@@ -185,6 +187,8 @@ def test_repair_uses_bounded_feedback_and_records_repair_round(tmp_path: Path) -
         assert "Previous candidate JSON" in user_message
         assert "execution_exit_1" in user_message
         assert "source documents" in user_message
+        assert "complete replacement candidate" in user_message
+        assert "test_*.py" in body["messages"][0]["content"]
         return httpx.Response(200, json=api_response())
 
     database = tmp_path / "usage.db"

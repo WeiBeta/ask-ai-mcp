@@ -38,7 +38,15 @@ def make_items() -> tuple[ToolBuildSpec, ToolCandidateResult]:
                     "    return normalize(json.dumps(request))\n"
                 ),
             ),
-            CandidateFile(path="tests/test_tool.py", content="def test_true():\n    assert True\n"),
+            CandidateFile(
+                path="tests/test_tool.py",
+                content=(
+                    "import unittest\n\n"
+                    "class TestTool(unittest.TestCase):\n"
+                    "    def test_true(self):\n"
+                    "        self.assertTrue(True)\n"
+                ),
+            ),
         ],
     )
     digest = candidate_payload_sha256(payload)

@@ -44,6 +44,15 @@ The declared Python entrypoint must define exactly the public callable
 is a pathlib.Path containing staged read-only file copies, and `output_dir` is
 a pathlib.Path dedicated to this run. The callable must return a JSON-
 serializable value. Do not add a command-line or shell interface.
+
+Every complete candidate, including every repaired replacement, must contain
+the declared entrypoint and at least one discoverable stdlib unittest file
+named `test_*.py`. Tests must define a `unittest.TestCase` subclass with one or
+more methods named `test_*`; plain pytest-style functions are not discoverable
+by the runner. Tests may use `tempfile.TemporaryDirectory` and pathlib to make
+synthetic input and output directories. Do not use pytest, absolute path
+literals, external packages not listed in the specification, or omit tests
+when returning a repaired candidate.
 """.strip()
 
 

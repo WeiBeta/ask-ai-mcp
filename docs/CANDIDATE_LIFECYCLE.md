@@ -24,11 +24,18 @@ stderr. Candidate-development jobs have empty or synthetic-only inputs, so
 repair feedback must never contain knowledge-base or real source-document text.
 There is no automatic escalation from Flash to Pro.
 
+One user-approved `build_helper_tool` lifecycle can therefore create as many as
+three billed DeepSeek API calls: the initial candidate and two bounded repair
+calls. Usage accounting records each API call separately.
+
 New candidates declare one simple Python entrypoint and the fixed
 `json_files_v1` execution contract. Static analysis requires that entrypoint to
 define exactly `run(request, input_dir, output_dir)`, and isolated candidate
-testing verifies the callable exists. Arbitrary CLI commands and function names
-are not supported.
+testing verifies the callable exists. Every candidate must also contain at
+least one `test_*.py` file with a discoverable stdlib `unittest.TestCase` and a
+`test_*` method. `tempfile` is allowed only in test files for synthetic fixture
+directories; it remains forbidden in production candidate code. Arbitrary CLI
+commands and function names are not supported.
 
 ## Review bundle
 

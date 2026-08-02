@@ -85,3 +85,8 @@ is reachable only through `run_verified_tool`. Callers cannot choose container
 commands, images, mounts, limits, entrypoint names, or output paths. Verified
 inputs are host-staged copies under explicitly configured narrow roots; original
 source files are never mounted.
+
+Static policy rejects candidates without a discoverable `test_*.py`
+`unittest.TestCase` before Docker starts. Test files may use
+`tempfile.TemporaryDirectory` to construct synthetic fixtures inside the
+container; the same import remains forbidden in the production entrypoint.

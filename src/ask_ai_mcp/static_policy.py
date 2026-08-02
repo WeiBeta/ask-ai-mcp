@@ -9,6 +9,7 @@ from __future__ import annotations
 import ast
 import re
 import sys
+from pathlib import PurePosixPath
 
 from ask_ai_mcp.hashing import candidate_payload_sha256
 from ask_ai_mcp.models import (
@@ -55,6 +56,8 @@ PACKAGE_IMPORT_ROOTS = {
     "python-docx": frozenset({"docx"}),
     "python-pptx": frozenset({"pptx"}),
 }
+
+TEST_ONLY_IMPORT_ROOTS = frozenset({"tempfile"})
 
 FORBIDDEN_CALLS = frozenset(
     {
@@ -116,7 +119,7 @@ class _CandidateVisitor(ast.NodeVisitor):
 
     def check_import(self, module: str, node: ast.AST) -> None:
         root = module.split(".", maxsplit=1)[0]
-        if root in FORBIDDEN_MODULE_ROOTS:
+        if root in FORBIDDEN_MODULE_ROOTS and root not in self.allowed_import_roots:
             self.add("forbidden_import", f"Import '{root}' is forbidden", node)
         elif (
             root not in sys.stdlib_module_names
@@ -158,6 +161,33 @@ def _allowed_import_roots(spec: ToolBuildSpec) -> frozenset[str]:
     return frozenset(roots)
 
 
+def _is_test_file(path: str) -> bool:
+    candidate = PurePosixPath(path)
+    return candidate.name.startswith("test_") and candidate.suffix.casefold() == ".py"
+
+
+def _has_discoverable_unittest(tree: ast.AST) -> bool:
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        is_test_case = any(
+            (
+                isinstance(base, ast.Attribute)
+                and isinstance(base.value, ast.Name)
+                and base.value.id == "unittest"
+                and base.attr == "TestCase"
+            )
+            or (isinstance(base, ast.Name) and base.id == "TestCase")
+            for base in node.bases
+        )
+        if is_test_case and any(
+            isinstance(item, ast.FunctionDef) and item.name.startswith("test_")
+            for item in node.body
+        ):
+            return True
+    return False
+
+
 def analyze_candidate(
     spec: ToolBuildSpec,
     payload: ToolCandidatePayload,
@@ -168,6 +198,21 @@ def analyze_candidate(
         file.path.split("/", maxsplit=1)[0].removesuffix(".py") for file in python_files
     )
     allowed_roots = _allowed_import_roots(spec)
+    test_files = [file for file in python_files if _is_test_file(file.path)]
+    discoverable_test_found = False
+
+    if not test_files:
+        findings.append(
+            StaticFinding(
+                file_path="test_*.py",
+                code="missing_test_file",
+                severity=FindingSeverity.ERROR,
+                message=(
+                    "Candidate must include a test_*.py file containing a discoverable "
+                    "stdlib unittest.TestCase"
+                ),
+            )
+        )
 
     if spec.entrypoint not in {file.path for file in python_files}:
         findings.append(
@@ -193,9 +238,14 @@ def analyze_candidate(
                 )
             )
             continue
+        file_allowed_roots = allowed_roots
+        if _is_test_file(file.path):
+            file_allowed_roots = frozenset((*allowed_roots, *TEST_ONLY_IMPORT_ROOTS))
+            discoverable_test_found = discoverable_test_found or _has_discoverable_unittest(tree)
+
         visitor = _CandidateVisitor(
             file_path=file.path,
-            allowed_import_roots=allowed_roots,
+            allowed_import_roots=file_allowed_roots,
             local_import_roots=local_roots,
         )
         visitor.visit(tree)
@@ -238,6 +288,19 @@ def analyze_candidate(
                             line=run_functions[0].lineno,
                         )
                     )
+
+    if test_files and not discoverable_test_found:
+        findings.append(
+            StaticFinding(
+                file_path=test_files[0].path,
+                code="missing_unittest_case",
+                severity=FindingSeverity.ERROR,
+                message=(
+                    "Test files must define a unittest.TestCase subclass with at least "
+                    "one test_* method"
+                ),
+            )
+        )
 
     return StaticAnalysisReport(
         candidate_sha256=candidate_payload_sha256(payload),
