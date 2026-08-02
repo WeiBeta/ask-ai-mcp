@@ -152,12 +152,16 @@ def test_real_lifecycle_returns_only_a_review_pending_candidate(tmp_path: Path) 
         client=FixedClient(),
         workspace=CandidateWorkspaceManager(tmp_path / "lifecycle-jobs"),
         executor=DockerCandidateExecutor(),
-    ).run(spec, client_name="integration_test")
+    ).run(
+        spec,
+        client_name="integration_test",
+        budget_session_id="11111111-1111-4111-8111-111111111111",
+    )
 
     assert result.status is CandidateLifecycleStatus.REVIEW_PENDING
-    assert result.review is not None
-    assert result.review.execution.tests_run == 1
-    assert result.review.candidate_sha256 == candidate.candidate_sha256
+    assert result.review_summary is not None
+    assert result.review_summary.tests_run == 1
+    assert result.review_summary.candidate_sha256 == candidate.candidate_sha256
 
 
 def test_real_verified_executor_runs_json_files_contract(tmp_path: Path) -> None:

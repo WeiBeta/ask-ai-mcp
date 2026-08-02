@@ -45,6 +45,24 @@ class PricingBand(StrEnum):
     PEAK = "peak"
 
 
+class BudgetState(StrEnum):
+    ACTIVE = "active"
+    FLASH_EXTENSION_REQUIRED = "flash_extension_required"
+    PRO_AUTHORIZATION_REQUIRED = "pro_authorization_required"
+    PRO_EXTENSION_REQUIRED = "pro_extension_required"
+    CLOSED = "closed"
+
+
+class ReviewMode(StrEnum):
+    SUMMARY = "summary"
+    FULL = "full"
+
+
+class RepairKind(StrEnum):
+    STATIC_POLICY = "static_policy"
+    SEMANTIC_TEST = "semantic_test"
+
+
 class CandidateDecision(StrEnum):
     PENDING = "pending"
     APPROVED = "approved"
@@ -213,6 +231,7 @@ class CandidateExecutionReport(StrictModel):
 
 class CandidateRepairFeedback(StrictModel):
     repair_round: int = Field(ge=1, le=2)
+    repair_kind: RepairKind = RepairKind.SEMANTIC_TEST
     reason_codes: list[str] = Field(min_length=1, max_length=20)
     diagnostic_excerpt: str = Field(default="", max_length=8_000)
 
@@ -221,6 +240,8 @@ class CandidateAttemptReport(StrictModel):
     attempt: int = Field(ge=1, le=3)
     candidate_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
     model: DeepSeekModel
+    thinking_enabled: bool = True
+    repair_kind: RepairKind | None = None
     state: CandidateJobState
     job_id: str | None = Field(default=None, min_length=36, max_length=36)
     static_analysis: StaticAnalysisReport
@@ -234,6 +255,21 @@ class CandidateAttemptReport(StrictModel):
             if self.candidate_sha256 != self.execution.candidate_sha256:
                 raise ValueError("attempt and execution candidate hashes must match")
         return self
+
+
+class CandidateAttemptSummary(StrictModel):
+    attempt: int = Field(ge=1, le=3)
+    candidate_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    model: DeepSeekModel
+    thinking_enabled: bool
+    repair_kind: RepairKind | None = None
+    state: CandidateJobState
+    job_id: str | None = Field(default=None, min_length=36, max_length=36)
+    static_allowed: bool
+    static_finding_codes: list[str] = Field(default_factory=list, max_length=200)
+    exit_code: int | None = None
+    timed_out: bool = False
+    tests_run: int = Field(default=0, ge=0)
 
 
 class CandidateReviewBundle(StrictModel):
@@ -260,21 +296,93 @@ class CandidateReviewBundle(StrictModel):
         return self
 
 
+class CandidateReviewSummary(StrictModel):
+    status: CandidateLifecycleStatus = CandidateLifecycleStatus.REVIEW_PENDING
+    tool_name: str = Field(min_length=3, max_length=64, pattern=r"^[a-z][a-z0-9_]+$")
+    spec_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    job_id: str = Field(min_length=36, max_length=36)
+    candidate_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    candidate_summary: str = Field(min_length=1, max_length=1_000)
+    candidate_files: list[str] = Field(min_length=1, max_length=20)
+    test_files: list[str] = Field(min_length=1, max_length=20)
+    declared_risks: list[str] = Field(default_factory=list, max_length=20)
+    allowed_packages: list[str] = Field(default_factory=list, max_length=20)
+    patch_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    patch_size_bytes: int = Field(ge=1)
+    static_allowed: bool
+    static_finding_codes: list[str] = Field(default_factory=list, max_length=200)
+    tests_run: int = Field(ge=1)
+    attempts: list[CandidateAttemptSummary] = Field(min_length=1, max_length=3)
+
+
 class CandidateLifecycleResult(StrictModel):
+    lifecycle_id: str = Field(min_length=36, max_length=36)
+    budget_session_id: str = Field(min_length=36, max_length=36)
     status: CandidateLifecycleStatus
     tool_name: str = Field(min_length=3, max_length=64, pattern=r"^[a-z][a-z0-9_]+$")
     spec_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
-    attempts: list[CandidateAttemptReport] = Field(min_length=1, max_length=3)
-    review: CandidateReviewBundle | None = None
+    attempts: list[CandidateAttemptSummary] = Field(min_length=1, max_length=3)
+    review_summary: CandidateReviewSummary | None = None
     failure_summary: str | None = Field(default=None, max_length=1_000)
 
     @model_validator(mode="after")
     def validate_outcome(self) -> Self:
-        if self.status is CandidateLifecycleStatus.REVIEW_PENDING and self.review is None:
-            raise ValueError("review-pending lifecycle result requires a review bundle")
-        if self.status is CandidateLifecycleStatus.FAILED and self.review is not None:
-            raise ValueError("failed lifecycle result cannot contain a review bundle")
+        if self.status is CandidateLifecycleStatus.REVIEW_PENDING and self.review_summary is None:
+            raise ValueError("review-pending lifecycle result requires a review summary")
+        if self.status is CandidateLifecycleStatus.FAILED and self.review_summary is not None:
+            raise ValueError("failed lifecycle result cannot contain a review summary")
         return self
+
+
+class ModelBudgetStatus(StrictModel):
+    model: DeepSeekModel
+    state: BudgetState
+    granted_cny: float = Field(ge=0)
+    spent_cny: float = Field(ge=0)
+    remaining_cny: float = Field(ge=0)
+    overshoot_cny: float = Field(ge=0)
+    next_increment_cny: float = Field(default=5.0, ge=5.0, le=5.0)
+
+
+class BudgetSessionStatus(StrictModel):
+    budget_session_id: str = Field(
+        min_length=36,
+        max_length=36,
+        pattern=r"^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+    )
+    client_name: str = Field(min_length=1, max_length=64)
+    label: str | None = Field(default=None, max_length=120)
+    created_at: datetime
+    updated_at: datetime
+    closed_at: datetime | None = None
+    flash: ModelBudgetStatus
+    pro: ModelBudgetStatus
+    lifecycle_count: int = Field(default=0, ge=0)
+    api_call_count: int = Field(default=0, ge=0)
+
+
+class BudgetSessionOpenCommand(StrictModel):
+    label: str | None = Field(default=None, max_length=120)
+
+
+class BudgetSessionCommand(StrictModel):
+    budget_session_id: str = Field(
+        min_length=36,
+        max_length=36,
+        pattern=r"^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+    )
+
+
+class BudgetIncrementCommand(BudgetSessionCommand):
+    model: DeepSeekModel
+
+
+class ReviewAttestation(StrictModel):
+    job_id: str = Field(min_length=36, max_length=36)
+    candidate_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    patch_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    reviewed_by: str = Field(min_length=1, max_length=64)
+    reviewed_at: datetime
 
 
 class SandboxBackendStatus(StrictModel):
@@ -315,6 +423,37 @@ class UsageEvent(StrictModel):
     retries: int = Field(default=0, ge=0)
     status: str = Field(min_length=1, max_length=32)
     candidate_hash: str | None = Field(default=None, max_length=128)
+    budget_session_id: str | None = Field(default=None, min_length=36, max_length=36)
+    lifecycle_id: str | None = Field(default=None, min_length=36, max_length=36)
+    request_chars: int = Field(default=0, ge=0)
+    response_chars: int = Field(default=0, ge=0)
+
+
+class LifecycleAuditEvent(StrictModel):
+    lifecycle_id: str = Field(min_length=36, max_length=36)
+    budget_session_id: str = Field(min_length=36, max_length=36)
+    client_name: str = Field(min_length=1, max_length=64)
+    model: DeepSeekModel
+    tool_name: str = Field(min_length=3, max_length=64)
+    spec_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    started_at: datetime
+    completed_at: datetime
+    status: CandidateLifecycleStatus
+    spec_total_chars: int = Field(ge=0)
+    purpose_chars: int = Field(ge=0)
+    input_contract_chars: int = Field(ge=0)
+    output_contract_chars: int = Field(ge=0)
+    fixture_notes_chars: int = Field(ge=0)
+    acceptance_tests_chars: int = Field(ge=0)
+    candidate_source_chars: int = Field(default=0, ge=0)
+    candidate_test_chars: int = Field(default=0, ge=0)
+    candidate_file_count: int = Field(default=0, ge=0)
+    review_summary_chars: int = Field(default=0, ge=0)
+    patch_chars: int = Field(default=0, ge=0)
+    attempt_count: int = Field(default=0, ge=0)
+    repair_count: int = Field(default=0, ge=0)
+    final_job_id: str | None = Field(default=None, min_length=36, max_length=36)
+    final_candidate_sha256: str | None = Field(default=None, min_length=64, max_length=64)
 
 
 class UsageSummary(StrictModel):

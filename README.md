@@ -22,10 +22,12 @@ candidates, explicit Pro escalation, response-body-free errors, prompt-free
 usage accounting, a successfully completed synthetic Flash smoke request, and
 a digest-pinned Docker/WSL 2 candidate runner.
 
-The lifecycle permits one build plus at most two repair rounds, returns a
-patch-and-test review bundle, and requires explicit hash-matched promotion.
-The development MCP surface exposes six narrow tools: usage, candidate build,
-review, approval, registry listing, and verified execution. Verified execution
+The lifecycle permits one build plus at most two policy-routed repair rounds,
+returns a compact review summary by default, and requires explicit hash-matched
+promotion. Per-conversation budget sessions start with CNY 5 for Flash and CNY
+0 for Pro; either model is extended only in fixed CNY 5 blocks. The development
+MCP surface exposes ten narrow tools: usage, four local budget operations,
+candidate build, review, approval, registry listing, and verified execution. Verified execution
 requires a standard callable contract, exact registry hash, dual Claude/Codex
 approval for output-producing tools, Docker isolation, and explicitly
 configured narrow input roots. No real input root is enabled by default.

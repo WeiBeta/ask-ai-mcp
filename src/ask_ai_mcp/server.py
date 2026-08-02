@@ -11,15 +11,24 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from ask_ai_mcp import __version__
+from ask_ai_mcp.budget import BudgetStore
 from ask_ai_mcp.lifecycle import CandidateLifecycle
 from ask_ai_mcp.models import (
+    BudgetIncrementCommand,
+    BudgetSessionCommand,
+    BudgetSessionOpenCommand,
+    BudgetSessionStatus,
     CandidateApprovalCommand,
     CandidateApprovalRequest,
     CandidateDecision,
     CandidateLifecycleResult,
     CandidateReviewBundle,
+    CandidateReviewSummary,
+    DeepSeekModel,
     RegisteredToolList,
+    ReviewMode,
     ToolBuildSpec,
+    ToolCapability,
     UsageSummary,
     VerifiedToolExecutionCommand,
     VerifiedToolExecutionReport,
@@ -27,6 +36,7 @@ from ask_ai_mcp.models import (
 )
 from ask_ai_mcp.promotion import VerifiedToolRegistry
 from ask_ai_mcp.review import CandidateReviewRepository
+from ask_ai_mcp.review_attestation import ReviewAttestationStore
 from ask_ai_mcp.sandbox import docker_backend_status
 from ask_ai_mcp.usage import UsageStore
 from ask_ai_mcp.verified_execution import VerifiedToolRunner
@@ -58,6 +68,11 @@ def get_usage_store() -> UsageStore:
 
 
 @lru_cache(maxsize=1)
+def get_budget_store() -> BudgetStore:
+    return BudgetStore(get_usage_store().path)
+
+
+@lru_cache(maxsize=1)
 def get_workspace() -> CandidateWorkspaceManager:
     return CandidateWorkspaceManager()
 
@@ -69,7 +84,16 @@ def get_review_repository() -> CandidateReviewRepository:
 
 @lru_cache(maxsize=1)
 def get_lifecycle() -> CandidateLifecycle:
-    return CandidateLifecycle(workspace=get_workspace(), review_repository=get_review_repository())
+    return CandidateLifecycle(
+        workspace=get_workspace(),
+        review_repository=get_review_repository(),
+        audit_store=get_usage_store(),
+    )
+
+
+@lru_cache(maxsize=1)
+def get_review_attestation_store() -> ReviewAttestationStore:
+    return ReviewAttestationStore(get_usage_store().path)
 
 
 @lru_cache(maxsize=1)
@@ -113,6 +137,84 @@ def usage_status(days: Annotated[int, Field(ge=1, le=366)] = 15) -> UsageSummary
 
 @mcp.tool(
     annotations=ToolAnnotations(
+        title="Open a local DeepSeek budget session",
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=False,
+    )
+)
+def open_budget_session(
+    command: BudgetSessionOpenCommand | None = None,
+) -> BudgetSessionStatus:
+    """Create one conversation budget with Flash CNY 5 and Pro CNY 0.
+
+    This is local and prompt-free. The returned opaque session ID must be
+    reused by the same Claude/Codex conversation for every billed build.
+    """
+    client_name = get_client_name()
+    command = command or BudgetSessionOpenCommand()
+    return get_budget_store().open_session(client_name=client_name, label=command.label)
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Read a local DeepSeek budget session",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
+def budget_status(command: BudgetSessionCommand) -> BudgetSessionStatus:
+    """Return prompt-free model grants and actual locally estimated spend."""
+    return get_budget_store().status(
+        command.budget_session_id,
+        client_name=get_client_name(),
+    )
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Add one confirmed CNY 5 budget block",
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=False,
+    )
+)
+def add_budget_block(command: BudgetIncrementCommand) -> BudgetSessionStatus:
+    """Add exactly CNY 5 for one model after explicit user confirmation.
+
+    Callers cannot choose the amount. For Pro, the first block changes the
+    default zero grant into an active CNY 5 grant for this conversation.
+    """
+    return get_budget_store().add_budget_block(
+        command.budget_session_id,
+        client_name=get_client_name(),
+        model=command.model,
+    )
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Close a local DeepSeek budget session",
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
+def close_budget_session(command: BudgetSessionCommand) -> BudgetSessionStatus:
+    """Close a conversation budget without deleting its audit history."""
+    return get_budget_store().close_session(
+        command.budget_session_id,
+        client_name=get_client_name(),
+    )
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
         title="Build isolated helper-tool candidate",
         readOnlyHint=False,
         destructiveHint=False,
@@ -121,30 +223,48 @@ def usage_status(days: Annotated[int, Field(ge=1, le=366)] = 15) -> UsageSummary
     )
 )
 def build_helper_tool(
+    budget_session_id: Annotated[
+        str,
+        Field(
+            min_length=36,
+            max_length=36,
+            pattern=r"^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+        ),
+    ],
     spec: ToolBuildSpec,
-    allow_pro: bool = False,
 ) -> CandidateLifecycleResult:
     """Build and test one bounded helper-tool candidate for Sol/Opus review.
 
     This may call DeepSeek and create disposable local jobs. It accepts only a
     structured tool specification, never an arbitrary prompt or source bundle.
-    Flash thinking is the default. Pro requires both `spec.model=deepseek-v4-pro`
-    and explicit `allow_pro=true`. A passing result is still only review-pending.
+    Flash thinking is the default. Pro requires an active Pro budget block in
+    the same conversation session. A passing result is still only review-pending
+    and returns a compact summary rather than the full candidate patch.
     """
     client_name = get_client_name()
     backend = docker_backend_status()
     if not backend.ready:
         reasons = ",".join(backend.reasons) or "unknown"
         raise RuntimeError(f"isolated runner is unavailable: {reasons}")
-    return get_lifecycle().run(spec, client_name=client_name, allow_pro=allow_pro)
+    get_budget_store().require_lifecycle_budget(
+        budget_session_id,
+        client_name=client_name,
+        model=spec.model,
+    )
+    return get_lifecycle().run(
+        spec,
+        client_name=client_name,
+        budget_session_id=budget_session_id,
+        allow_pro=spec.model is DeepSeekModel.PRO,
+    )
 
 
 @mcp.tool(
     annotations=ToolAnnotations(
         title="Review isolated tool candidate",
-        readOnlyHint=True,
+        readOnlyHint=False,
         destructiveHint=False,
-        idempotentHint=True,
+        idempotentHint=False,
         openWorldHint=False,
     )
 )
@@ -157,13 +277,20 @@ def review_tool_candidate(
             pattern=r"^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
         ),
     ],
-) -> CandidateReviewBundle:
-    """Revalidate and return the exact patch, tests, findings, and risks.
+    mode: ReviewMode = ReviewMode.SUMMARY,
+) -> CandidateReviewSummary | CandidateReviewBundle:
+    """Return a compact review by default, or attest an exact full patch.
 
     This performs no model or network call and does not approve or execute the
-    candidate. Any changed review metadata or candidate byte causes rejection.
+    candidate. Full mode revalidates every byte and records the configured
+    desktop identity, candidate hash, and patch hash for the later approval gate.
     """
-    return get_review_repository().load(job_id)
+    repository = get_review_repository()
+    if mode is ReviewMode.SUMMARY:
+        return repository.load_summary(job_id)
+    review = repository.load(job_id)
+    get_review_attestation_store().record(review, client_name=get_client_name())
+    return review
 
 
 @mcp.tool(
@@ -186,6 +313,12 @@ def approve_tool_candidate(command: CandidateApprovalCommand) -> VerifiedToolRec
     review = get_review_repository().load(command.job_id)
     if review.candidate_sha256 != command.candidate_sha256:
         raise RuntimeError("approval hash does not match the reviewed candidate")
+    requires_full_review = (
+        ToolCapability.WRITE_DEDICATED_OUTPUT in command.allowed_capabilities
+        or review.attempts[-1].model is DeepSeekModel.PRO
+    )
+    if requires_full_review:
+        get_review_attestation_store().require(review, client_name=client_name)
     request = CandidateApprovalRequest(
         job_id=command.job_id,
         candidate_sha256=command.candidate_sha256,

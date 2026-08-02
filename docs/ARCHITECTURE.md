@@ -103,14 +103,19 @@ then renders and visually validates them.
 The current public tool set is deliberately narrow:
 
 - `usage_status`
+- `open_budget_session`
+- `budget_status`
+- `add_budget_block`
+- `close_budget_session`
 - `build_helper_tool`
 - `review_tool_candidate`
 - `approve_tool_candidate`
 - `list_registered_tools`
 - `run_verified_tool`
 
-There is no arbitrary prompt forwarding tool. Candidate build, review, and
-approval are exposed as separate narrow operations. Verified execution is
+There is no arbitrary prompt forwarding tool. Local conversation-budget
+operations and candidate build, review, and approval are exposed as separate
+narrow operations. Verified execution is
 capability-scoped, exact-hash-pinned, dual-approved for output-producing tools,
 and closed to real files unless narrow input roots are explicitly configured.
 
@@ -135,7 +140,8 @@ be supported for isolated development and CI, but secrets are never committed.
 
 The audit store records timestamps, client identity, task kind, model tier,
 thinking mode, token usage, cache hits, estimated cost, latency, retry count,
-test outcome, candidate hash, and final promotion decision.
+opaque budget/lifecycle IDs, request/response character counts, structural
+lifecycle sizes, test outcome, candidate hash, and final promotion decision.
 
 It does not record API keys, full prompts, full source contents, or ordinary
 model responses by default.

@@ -10,13 +10,18 @@ import pytest
 
 from ask_ai_mcp import server
 from ask_ai_mcp.models import (
+    BudgetIncrementCommand,
+    BudgetSessionCommand,
     CandidateApprovalCommand,
     CandidateDecision,
     DeepSeekModel,
+    ReviewMode,
     ToolBuildSpec,
     ToolCategory,
     VerifiedToolExecutionCommand,
 )
+
+BUDGET_SESSION_ID = "a1c2e3f4-1234-4567-89ab-1234567890ab"
 
 
 def make_spec() -> ToolBuildSpec:
@@ -36,6 +41,10 @@ def test_mcp_surface_and_raw_schema_are_narrow() -> None:
     by_name = {tool.name: tool for tool in tools}
     assert set(by_name) == {
         "usage_status",
+        "open_budget_session",
+        "budget_status",
+        "add_budget_block",
+        "close_budget_session",
         "build_helper_tool",
         "review_tool_candidate",
         "approve_tool_candidate",
@@ -43,7 +52,7 @@ def test_mcp_surface_and_raw_schema_are_narrow() -> None:
         "run_verified_tool",
     }
     build_schema = by_name["build_helper_tool"].parameters
-    assert set(build_schema["properties"]) == {"spec", "allow_pro"}
+    assert set(build_schema["properties"]) == {"budget_session_id", "spec"}
     assert (
         build_schema["properties"]["spec"]["properties"]["name"]["pattern"] == "^[a-z][a-z0-9_]+$"
     )
@@ -64,12 +73,16 @@ def test_mcp_surface_and_raw_schema_are_narrow() -> None:
         "input_files",
         "parameters_json",
     }
+    review_annotations = by_name["review_tool_candidate"].annotations
+    assert review_annotations is not None
+    assert review_annotations.readOnlyHint is False
+    assert review_annotations.idempotentHint is False
 
 
 def test_candidate_operations_require_configured_desktop_identity(monkeypatch) -> None:
     monkeypatch.delenv("ASK_AI_MCP_CLIENT_NAME", raising=False)
     with pytest.raises(RuntimeError, match="must be claude_desktop or codex_desktop"):
-        server.build_helper_tool(make_spec())
+        server.build_helper_tool(BUDGET_SESSION_ID, make_spec())
 
 
 def test_build_refuses_to_spend_when_runner_is_unavailable(monkeypatch) -> None:
@@ -86,7 +99,7 @@ def test_build_refuses_to_spend_when_runner_is_unavailable(monkeypatch) -> None:
     )
 
     with pytest.raises(RuntimeError, match="docker_engine_not_available"):
-        server.build_helper_tool(make_spec())
+        server.build_helper_tool(BUDGET_SESSION_ID, make_spec())
 
 
 def test_build_binds_usage_to_configured_client(monkeypatch) -> None:
@@ -105,19 +118,93 @@ def test_build_binds_usage_to_configured_client(monkeypatch) -> None:
         lambda: SimpleNamespace(ready=True, reasons=[]),
     )
     monkeypatch.setattr(server, "get_lifecycle", lambda: FakeLifecycle())
+    monkeypatch.setattr(
+        server,
+        "get_budget_store",
+        lambda: SimpleNamespace(require_lifecycle_budget=lambda *args, **kwargs: None),
+    )
 
-    result = server.build_helper_tool(make_spec(), allow_pro=False)
+    result = server.build_helper_tool(BUDGET_SESSION_ID, make_spec())
 
     assert result == "review-pending"
     assert captured["client_name"] == "claude_desktop"
+    assert captured["budget_session_id"] == BUDGET_SESSION_ID
     assert captured["allow_pro"] is False
 
 
 def test_review_tool_only_loads_persisted_review(monkeypatch) -> None:
     job_id = "52efb642-6d4a-42ea-9bbf-da5197360c77"
-    repository = SimpleNamespace(load=lambda value: ("review", value))
+    repository = SimpleNamespace(load_summary=lambda value: ("summary", value))
     monkeypatch.setattr(server, "get_review_repository", lambda: repository)
-    assert server.review_tool_candidate(job_id) == ("review", job_id)
+    assert server.review_tool_candidate(job_id) == ("summary", job_id)
+
+
+def test_full_review_records_exact_desktop_attestation(monkeypatch) -> None:
+    job_id = "52efb642-6d4a-42ea-9bbf-da5197360c77"
+    review = SimpleNamespace(job_id=job_id)
+    captured = {}
+    monkeypatch.setenv("ASK_AI_MCP_CLIENT_NAME", "claude_desktop")
+    monkeypatch.setattr(
+        server,
+        "get_review_repository",
+        lambda: SimpleNamespace(load=lambda value: review if value == job_id else None),
+    )
+    monkeypatch.setattr(
+        server,
+        "get_review_attestation_store",
+        lambda: SimpleNamespace(
+            record=lambda value, **kwargs: captured.update(review=value, **kwargs)
+        ),
+    )
+
+    assert server.review_tool_candidate(job_id, ReviewMode.FULL) is review
+    assert captured == {"review": review, "client_name": "claude_desktop"}
+
+
+def test_budget_tools_bind_opaque_session_to_configured_desktop(monkeypatch) -> None:
+    calls = []
+
+    class FakeBudgetStore:
+        def open_session(self, **kwargs):
+            calls.append(("open", kwargs))
+            return "opened"
+
+        def status(self, *args, **kwargs):
+            calls.append(("status", args, kwargs))
+            return "status"
+
+        def add_budget_block(self, *args, **kwargs):
+            calls.append(("add", args, kwargs))
+            return "added"
+
+        def close_session(self, *args, **kwargs):
+            calls.append(("close", args, kwargs))
+            return "closed"
+
+    monkeypatch.setenv("ASK_AI_MCP_CLIENT_NAME", "codex_desktop")
+    monkeypatch.setattr(server, "get_budget_store", lambda: FakeBudgetStore())
+
+    assert server.open_budget_session() == "opened"
+    assert (
+        server.budget_status(BudgetSessionCommand(budget_session_id=BUDGET_SESSION_ID)) == "status"
+    )
+    assert (
+        server.add_budget_block(
+            BudgetIncrementCommand(
+                budget_session_id=BUDGET_SESSION_ID,
+                model=DeepSeekModel.PRO,
+            )
+        )
+        == "added"
+    )
+    assert (
+        server.close_budget_session(BudgetSessionCommand(budget_session_id=BUDGET_SESSION_ID))
+        == "closed"
+    )
+    assert calls[0] == ("open", {"client_name": "codex_desktop", "label": None})
+    assert calls[1][2]["client_name"] == "codex_desktop"
+    assert calls[2][2] == {"client_name": "codex_desktop", "model": DeepSeekModel.PRO}
+    assert calls[3][2]["client_name"] == "codex_desktop"
 
 
 def test_approval_identity_comes_from_server_configuration(monkeypatch) -> None:
@@ -135,7 +222,10 @@ def test_approval_identity_comes_from_server_configuration(monkeypatch) -> None:
         server,
         "get_review_repository",
         lambda: SimpleNamespace(
-            load=lambda _job_id: SimpleNamespace(candidate_sha256=candidate_hash)
+            load=lambda _job_id: SimpleNamespace(
+                candidate_sha256=candidate_hash,
+                attempts=[SimpleNamespace(model=DeepSeekModel.FLASH)],
+            )
         ),
     )
     monkeypatch.setattr(
@@ -159,6 +249,47 @@ def test_approval_identity_comes_from_server_configuration(monkeypatch) -> None:
     assert request.approved_by == "codex_desktop"
     assert request.decision is CandidateDecision.APPROVED
     assert request.candidate_sha256 == candidate_hash
+
+
+def test_high_risk_approval_requires_full_review_attestation(monkeypatch) -> None:
+    job_id = "52efb642-6d4a-42ea-9bbf-da5197360c77"
+    candidate_hash = "a" * 64
+    review = SimpleNamespace(
+        candidate_sha256=candidate_hash,
+        attempts=[SimpleNamespace(model=DeepSeekModel.FLASH)],
+    )
+    captured = {}
+    monkeypatch.setenv("ASK_AI_MCP_CLIENT_NAME", "claude_desktop")
+    monkeypatch.setattr(
+        server,
+        "get_review_repository",
+        lambda: SimpleNamespace(load=lambda _job_id: review),
+    )
+    monkeypatch.setattr(
+        server,
+        "get_review_attestation_store",
+        lambda: SimpleNamespace(
+            require=lambda value, **kwargs: captured.update(review=value, **kwargs)
+        ),
+    )
+    monkeypatch.setattr(server, "get_workspace", lambda: SimpleNamespace(jobs_root=Path("jobs")))
+    monkeypatch.setattr(
+        server,
+        "get_registry",
+        lambda: SimpleNamespace(approve=lambda **kwargs: (Path("registered"), "record")),
+    )
+
+    result = server.approve_tool_candidate(
+        CandidateApprovalCommand(
+            job_id=job_id,
+            candidate_sha256=candidate_hash,
+            version="0.1.0",
+            allowed_capabilities=["write_dedicated_output"],
+        )
+    )
+
+    assert result == "record"
+    assert captured == {"review": review, "client_name": "claude_desktop"}
 
 
 def test_list_registered_tools_is_local_registry_read(monkeypatch) -> None:

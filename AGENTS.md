@@ -44,17 +44,35 @@
 ## Generated-tool lifecycle
 
 1. Sol defines a bounded tool specification and acceptance tests.
-2. DeepSeek Flash Thinking may generate a candidate.
-3. Static checks and isolated tests run with bounded retries.
-4. Sol reviews the code diff, test report, dependencies, and risk report.
-5. Only an explicitly approved, hash-pinned tool may process real file copies.
-6. Any code change returns the tool to unverified status.
+2. The controller opens one opaque budget session for the current conversation.
+3. DeepSeek Flash Thinking may generate a candidate.
+4. Static checks and isolated tests run with bounded policy-routed retries.
+5. Sol reviews the summary, then loads the full patch when a code review is needed.
+6. Only an explicitly approved, hash-pinned tool may process real file copies.
+7. Any code change returns the tool to unverified status.
+
+Flash receives CNY 5 automatically when a conversation budget session opens;
+Pro starts at CNY 0. Either model may be extended only by one CNY 5 block after
+explicit user confirmation. A started lifecycle may finish and slightly
+overshoot, but the next lifecycle must be blocked until an extension is
+confirmed. Lifecycle and API-call counts are audit metrics, not spending caps.
+Never infer a Pro grant from the Flash budget or automatically escalate models.
+
+Static-policy repair is limited to one attempt with Thinking disabled and a
+4,096-token output cap. Semantic-test repair uses Thinking High with a
+16,384-token cap, within the three-candidate-attempt lifecycle limit. An invalid
+initial structured response may be regenerated once.
 
 Verified execution additionally requires the fixed `json_files_v1` contract,
 an exact registered entrypoint, dedicated output, and both Claude Desktop and
 Codex Desktop approval for Pro or output-producing tools. Never add arbitrary
 commands, function names, output paths, container images, or mount options to
 the MCP schema.
+
+Build and summary-review responses must remain compact. A full review records a
+desktop-specific attestation bound to the exact job, candidate hash, and patch
+hash. Pro or `write_dedicated_output` approval requires this attestation from
+the approving desktop before promotion.
 
 ## Verification
 

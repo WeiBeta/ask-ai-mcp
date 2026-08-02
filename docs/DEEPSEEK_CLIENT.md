@@ -2,10 +2,10 @@
 
 ## Implementation status
 
-Phase 1 is complete. The internal client, mocked integration tests, Windows
-credential storage, and one real synthetic Flash smoke request have passed. It
-is not yet exposed as an MCP tool because generated files must not leave memory
-or be written to disk until the isolated candidate runner exists.
+The internal client, mocked integration tests, Windows credential storage, and
+real synthetic Flash smoke requests have passed. Candidate generation is
+exposed only through the bounded `build_helper_tool` lifecycle, after local
+budget and Docker-readiness checks.
 
 The 2026-08-01 smoke request used 656 cache-miss input tokens and 458 output
 tokens, including 265 reasoning tokens. Estimated cost was CNY 0.001572. The
@@ -22,11 +22,14 @@ POST https://api.deepseek.com/chat/completions
 Supported routes are pinned to:
 
 - `deepseek-v4-flash`: default tool-building route;
-- `deepseek-v4-pro`: requires an explicit `allow_pro` decision from Opus/Sol.
+- `deepseek-v4-pro`: requires a CNY 5 Pro grant in the current budget session.
 
-Tool candidates always use thinking mode with `reasoning_effort` set to
-`high`. Requests also select JSON Output and explicitly instruct the model to
-return JSON matching the server-provided candidate schema.
+Initial candidates and semantic-test repairs use thinking mode with
+`reasoning_effort` set to `high` and a 16,384-token output cap. A single
+static-policy repair disables thinking and uses a 4,096-token cap. Requests
+also select JSON Output and explicitly instruct the model to return JSON
+matching the server-provided candidate schema. There is no automatic model
+upgrade from Flash to Pro.
 
 Official references:
 
@@ -104,8 +107,10 @@ status code, never the response body.
 
 For each external call, the SQLite usage store records model, client, status,
 latency, cache-hit tokens, cache-miss tokens, output tokens, reasoning tokens,
-estimated CNY cost, and candidate hash. It does not record the API key, prompt,
-response body, source text, candidate contents, or chain of thought.
+estimated CNY cost, candidate hash, opaque budget/lifecycle IDs, and request and
+response character counts. It does not record the API key, prompt, response
+body, source text, candidate contents, or chain of thought. A separate lifecycle
+audit stores only structural size metrics and outcomes.
 
 ## Test boundary
 

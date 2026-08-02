@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
+from ask_ai_mcp.budget import BudgetStore
 from ask_ai_mcp.deepseek import DeepSeekClientError
 from ask_ai_mcp.lifecycle import CandidateLifecycle, CandidateLifecycleError
 from ask_ai_mcp.models import (
@@ -72,21 +73,31 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     try:
-        result = CandidateLifecycle().run(smoke_spec(), client_name="lifecycle_smoke")
+        budget = BudgetStore().open_session(
+            client_name="lifecycle_smoke", label="explicit lifecycle smoke"
+        )
+        result = CandidateLifecycle().run(
+            smoke_spec(),
+            client_name="lifecycle_smoke",
+            budget_session_id=budget.budget_session_id,
+        )
     except (DeepSeekClientError, CandidateLifecycleError, PolicyViolation) as error:
         print(f"Lifecycle smoke failed safely: {error}", file=sys.stderr)
         return 1
 
-    if result.status is not CandidateLifecycleStatus.REVIEW_PENDING or result.review is None:
+    if (
+        result.status is not CandidateLifecycleStatus.REVIEW_PENDING
+        or result.review_summary is None
+    ):
         print(result.failure_summary or "Candidate exhausted its repair limit.", file=sys.stderr)
         return 1
 
-    review = result.review
+    review = result.review_summary
     print("Lifecycle smoke passed; candidate remains review-pending and unapproved.")
     print(f"Job ID: {review.job_id}")
     print(f"Candidate SHA-256: {review.candidate_sha256}")
     print(f"Attempts: {len(review.attempts)}")
-    print(f"Isolated tests run: {review.execution.tests_run}")
+    print(f"Isolated tests run: {review.tests_run}")
     print("Candidate source was not printed and no real source documents were used.")
     return 0
 

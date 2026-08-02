@@ -10,7 +10,7 @@ from pathlib import Path
 
 from platformdirs import user_data_path
 
-from ask_ai_mcp.models import UsageEvent, UsageSummary
+from ask_ai_mcp.models import LifecycleAuditEvent, UsageEvent, UsageSummary
 from ask_ai_mcp.pricing import load_peak_pricing_effective_at, pricing_context
 
 
@@ -65,7 +65,11 @@ class UsageStore:
                     latency_ms INTEGER NOT NULL,
                     retries INTEGER NOT NULL,
                     status TEXT NOT NULL,
-                    candidate_hash TEXT
+                    candidate_hash TEXT,
+                    budget_session_id TEXT,
+                    lifecycle_id TEXT,
+                    request_chars INTEGER NOT NULL DEFAULT 0,
+                    response_chars INTEGER NOT NULL DEFAULT 0
                 )
                 """
             )
@@ -80,6 +84,10 @@ class UsageStore:
                 "cache_hit_price_cny_per_million": "REAL NOT NULL DEFAULT 0.0",
                 "cache_miss_price_cny_per_million": "REAL NOT NULL DEFAULT 0.0",
                 "output_price_cny_per_million": "REAL NOT NULL DEFAULT 0.0",
+                "budget_session_id": "TEXT",
+                "lifecycle_id": "TEXT",
+                "request_chars": "INTEGER NOT NULL DEFAULT 0",
+                "response_chars": "INTEGER NOT NULL DEFAULT 0",
             }
             for column_name, definition in migrations.items():
                 if column_name not in existing_columns:
@@ -96,6 +104,47 @@ class UsageStore:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_api_usage_pricing_band ON api_usage(pricing_band)"
             )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_api_usage_budget_session "
+                "ON api_usage(budget_session_id)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_api_usage_lifecycle ON api_usage(lifecycle_id)"
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS lifecycle_audit (
+                    lifecycle_id TEXT PRIMARY KEY,
+                    budget_session_id TEXT NOT NULL,
+                    client_name TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    tool_name TEXT NOT NULL,
+                    spec_sha256 TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    completed_at TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    spec_total_chars INTEGER NOT NULL,
+                    purpose_chars INTEGER NOT NULL,
+                    input_contract_chars INTEGER NOT NULL,
+                    output_contract_chars INTEGER NOT NULL,
+                    fixture_notes_chars INTEGER NOT NULL,
+                    acceptance_tests_chars INTEGER NOT NULL,
+                    candidate_source_chars INTEGER NOT NULL,
+                    candidate_test_chars INTEGER NOT NULL,
+                    candidate_file_count INTEGER NOT NULL,
+                    review_summary_chars INTEGER NOT NULL,
+                    patch_chars INTEGER NOT NULL,
+                    attempt_count INTEGER NOT NULL,
+                    repair_count INTEGER NOT NULL,
+                    final_job_id TEXT,
+                    final_candidate_sha256 TEXT
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_lifecycle_budget_session "
+                "ON lifecycle_audit(budget_session_id)"
+            )
 
     def record(self, event: UsageEvent) -> None:
         with self._connection() as connection:
@@ -110,8 +159,9 @@ class UsageStore:
                     output_price_cny_per_million,
                     prompt_cache_hit_tokens, prompt_cache_miss_tokens,
                     completion_tokens, reasoning_tokens, estimated_cost_cny,
-                    latency_ms, retries, status, candidate_hash
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    latency_ms, retries, status, candidate_hash,
+                    budget_session_id, lifecycle_id, request_chars, response_chars
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     event.timestamp.astimezone(UTC).isoformat(),
@@ -135,6 +185,53 @@ class UsageStore:
                     event.retries,
                     event.status,
                     event.candidate_hash,
+                    event.budget_session_id,
+                    event.lifecycle_id,
+                    event.request_chars,
+                    event.response_chars,
+                ),
+            )
+
+    def record_lifecycle(self, event: LifecycleAuditEvent) -> None:
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO lifecycle_audit (
+                    lifecycle_id, budget_session_id, client_name, model, tool_name,
+                    spec_sha256, started_at, completed_at, status,
+                    spec_total_chars, purpose_chars, input_contract_chars,
+                    output_contract_chars, fixture_notes_chars,
+                    acceptance_tests_chars, candidate_source_chars,
+                    candidate_test_chars, candidate_file_count,
+                    review_summary_chars, patch_chars, attempt_count, repair_count,
+                    final_job_id, final_candidate_sha256
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event.lifecycle_id,
+                    event.budget_session_id,
+                    event.client_name,
+                    event.model.value,
+                    event.tool_name,
+                    event.spec_sha256,
+                    event.started_at.astimezone(UTC).isoformat(),
+                    event.completed_at.astimezone(UTC).isoformat(),
+                    event.status.value,
+                    event.spec_total_chars,
+                    event.purpose_chars,
+                    event.input_contract_chars,
+                    event.output_contract_chars,
+                    event.fixture_notes_chars,
+                    event.acceptance_tests_chars,
+                    event.candidate_source_chars,
+                    event.candidate_test_chars,
+                    event.candidate_file_count,
+                    event.review_summary_chars,
+                    event.patch_chars,
+                    event.attempt_count,
+                    event.repair_count,
+                    event.final_job_id,
+                    event.final_candidate_sha256,
                 ),
             )
 

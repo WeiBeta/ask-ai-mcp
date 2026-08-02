@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
 
+from ask_ai_mcp.deepseek import InvalidCandidateResponse
 from ask_ai_mcp.hashing import candidate_payload_sha256
 from ask_ai_mcp.lifecycle import CandidateLifecycle, CandidateLifecycleError
 from ask_ai_mcp.models import (
@@ -15,6 +17,7 @@ from ask_ai_mcp.models import (
     CandidateJobState,
     CandidateLifecycleStatus,
     DeepSeekModel,
+    RepairKind,
     ToolBuildSpec,
     ToolCandidatePayload,
     ToolCandidateResult,
@@ -22,7 +25,10 @@ from ask_ai_mcp.models import (
 )
 from ask_ai_mcp.review import CandidateReviewError, CandidateReviewRepository
 from ask_ai_mcp.sandbox import DEFAULT_RUNNER_IMAGE
+from ask_ai_mcp.usage import UsageStore
 from ask_ai_mcp.workspace import CandidateWorkspaceManager
+
+BUDGET_SESSION_ID = "11111111-1111-4111-8111-111111111111"
 
 
 def make_spec() -> ToolBuildSpec:
@@ -75,12 +81,14 @@ class FakeClient:
     def __init__(self, candidates: list[ToolCandidateResult]) -> None:
         self.candidates = candidates
         self.repair_feedback = []
+        self.repair_kwargs = []
 
     def build_candidate(self, *_args, **_kwargs) -> ToolCandidateResult:
         return self.candidates[0]
 
     def repair_candidate(self, _spec, _previous, feedback, **_kwargs) -> ToolCandidateResult:
         self.repair_feedback.append(feedback)
+        self.repair_kwargs.append(_kwargs)
         return self.candidates[len(self.repair_feedback)]
 
 
@@ -119,6 +127,44 @@ class PassingExecutor:
         return report
 
 
+class FailOnceExecutor(PassingExecutor):
+    def execute(self, job_root: Path) -> CandidateExecutionReport:
+        if self.calls:
+            return super().execute(job_root)
+        self.calls += 1
+        manifest = CandidateJobManifest.model_validate_json(
+            (job_root / "control" / "manifest.json").read_text(encoding="utf-8")
+        )
+        return CandidateExecutionReport(
+            job_id=job_root.name,
+            candidate_sha256=manifest.candidate_sha256,
+            state=CandidateJobState.EXECUTION_FAILED,
+            backend="docker_desktop_wsl2",
+            runner_image=DEFAULT_RUNNER_IMAGE,
+            exit_code=1,
+            tests_run=1,
+            stderr="synthetic assertion failed",
+        )
+
+
+class RegeneratingClient(FakeClient):
+    def __init__(self, candidate: ToolCandidateResult) -> None:
+        super().__init__([candidate])
+        self.regenerations = 0
+
+    def build_candidate(self, *_args, **_kwargs) -> ToolCandidateResult:
+        raise InvalidCandidateResponse("invalid candidate")
+
+    def regenerate_candidate(self, *_args, **_kwargs) -> ToolCandidateResult:
+        self.regenerations += 1
+        return self.candidates[0]
+
+
+class FailingRepairClient(FakeClient):
+    def repair_candidate(self, *_args, **_kwargs) -> ToolCandidateResult:
+        raise RuntimeError("synthetic repair transport failure")
+
+
 def test_static_failure_is_repaired_then_returned_for_review(tmp_path: Path) -> None:
     client = FakeClient([make_candidate(unsafe=True), make_candidate()])
     executor = PassingExecutor()
@@ -128,21 +174,25 @@ def test_static_failure_is_repaired_then_returned_for_review(tmp_path: Path) -> 
         executor=executor,
     )
 
-    result = lifecycle.run(make_spec(), client_name="codex")
+    result = lifecycle.run(make_spec(), client_name="codex", budget_session_id=BUDGET_SESSION_ID)
 
     assert result.status is CandidateLifecycleStatus.REVIEW_PENDING
     assert len(result.attempts) == 2
     assert result.attempts[0].state is CandidateJobState.STATIC_REJECTED
     assert result.attempts[1].state is CandidateJobState.EXECUTED
     assert "forbidden_import" in client.repair_feedback[0].reason_codes
+    assert client.repair_kwargs[0]["thinking_enabled"] is False
+    assert client.repair_kwargs[0]["max_output_tokens"] == 4096
     assert executor.calls == 1
-    assert result.review is not None
-    assert result.review.status is CandidateLifecycleStatus.REVIEW_PENDING
-    assert "+++ b/tool.py" in result.review.candidate_patch
-    assert result.review.test_files == ["test_tool.py"]
-    assert result.review.declared_risks == ["Synthetic coverage is intentionally narrow."]
+    assert result.review_summary is not None
+    assert result.review_summary.status is CandidateLifecycleStatus.REVIEW_PENDING
+    assert result.review_summary.test_files == ["test_tool.py"]
+    assert result.review_summary.declared_risks == ["Synthetic coverage is intentionally narrow."]
+    assert "candidate_patch" not in result.model_dump_json()
     repository = CandidateReviewRepository(tmp_path / "jobs")
-    assert repository.load(result.review.job_id) == result.review
+    full_review = repository.load(result.review_summary.job_id)
+    assert "+++ b/tool.py" in full_review.candidate_patch
+    assert repository.load_summary(result.review_summary.job_id) == result.review_summary
 
 
 def test_persisted_review_detects_candidate_tampering(tmp_path: Path) -> None:
@@ -151,13 +201,13 @@ def test_persisted_review_detects_candidate_tampering(tmp_path: Path) -> None:
         workspace=CandidateWorkspaceManager(tmp_path / "jobs"),
         executor=PassingExecutor(),
     )
-    result = lifecycle.run(make_spec(), client_name="codex")
-    assert result.review is not None
-    job_root = tmp_path / "jobs" / result.review.job_id
+    result = lifecycle.run(make_spec(), client_name="codex", budget_session_id=BUDGET_SESSION_ID)
+    assert result.review_summary is not None
+    job_root = tmp_path / "jobs" / result.review_summary.job_id
     (job_root / "candidate" / "tool.py").write_text("changed = True\n", encoding="utf-8")
 
     with pytest.raises(CandidateReviewError, match="content changed"):
-        CandidateReviewRepository(tmp_path / "jobs").load(result.review.job_id)
+        CandidateReviewRepository(tmp_path / "jobs").load(result.review_summary.job_id)
 
 
 def test_review_remains_revalidatable_for_second_desktop_approval(tmp_path: Path) -> None:
@@ -168,32 +218,114 @@ def test_review_remains_revalidatable_for_second_desktop_approval(tmp_path: Path
         executor=PassingExecutor(),
         review_repository=repository,
     )
-    result = lifecycle.run(make_spec(), client_name="codex")
-    assert result.review is not None
-    manifest_path = tmp_path / "jobs" / result.review.job_id / "control" / "manifest.json"
+    result = lifecycle.run(make_spec(), client_name="codex", budget_session_id=BUDGET_SESSION_ID)
+    assert result.review_summary is not None
+    manifest_path = tmp_path / "jobs" / result.review_summary.job_id / "control" / "manifest.json"
     manifest = CandidateJobManifest.model_validate_json(manifest_path.read_text(encoding="utf-8"))
     manifest_path.write_text(
         manifest.model_copy(update={"state": CandidateJobState.APPROVED}).model_dump_json(indent=2),
         encoding="utf-8",
     )
 
-    assert repository.load(result.review.job_id) == result.review
+    assert repository.load_summary(result.review_summary.job_id) == result.review_summary
 
 
-def test_no_more_than_two_repairs_are_attempted(tmp_path: Path) -> None:
-    client = FakeClient([make_candidate(unsafe=True) for _ in range(3)])
+def test_static_policy_failure_gets_only_one_repair(tmp_path: Path) -> None:
+    client = FakeClient([make_candidate(unsafe=True) for _ in range(2)])
     lifecycle = CandidateLifecycle(
         client=client,
         workspace=CandidateWorkspaceManager(tmp_path / "jobs"),
         executor=PassingExecutor(),
     )
 
-    result = lifecycle.run(make_spec(), client_name="claude")
+    result = lifecycle.run(make_spec(), client_name="claude", budget_session_id=BUDGET_SESSION_ID)
 
     assert result.status is CandidateLifecycleStatus.FAILED
-    assert len(result.attempts) == 3
-    assert len(client.repair_feedback) == 2
-    assert result.review is None
+    assert len(result.attempts) == 2
+    assert len(client.repair_feedback) == 1
+    assert result.review_summary is None
+
+
+def test_semantic_failure_uses_thinking_high_repair(tmp_path: Path) -> None:
+    client = FakeClient([make_candidate(), make_candidate()])
+    lifecycle = CandidateLifecycle(
+        client=client,
+        workspace=CandidateWorkspaceManager(tmp_path / "jobs"),
+        executor=FailOnceExecutor(),
+    )
+
+    result = lifecycle.run(make_spec(), client_name="codex", budget_session_id=BUDGET_SESSION_ID)
+
+    assert result.status is CandidateLifecycleStatus.REVIEW_PENDING
+    assert client.repair_feedback[0].repair_kind is RepairKind.SEMANTIC_TEST
+    assert client.repair_kwargs[0]["thinking_enabled"] is True
+    assert client.repair_kwargs[0]["max_output_tokens"] == 16_384
+    assert result.attempts[1].repair_kind is RepairKind.SEMANTIC_TEST
+
+
+def test_invalid_initial_response_is_regenerated_once(tmp_path: Path) -> None:
+    client = RegeneratingClient(make_candidate())
+    lifecycle = CandidateLifecycle(
+        client=client,
+        workspace=CandidateWorkspaceManager(tmp_path / "jobs"),
+        executor=PassingExecutor(),
+    )
+
+    result = lifecycle.run(make_spec(), client_name="codex", budget_session_id=BUDGET_SESSION_ID)
+
+    assert result.status is CandidateLifecycleStatus.REVIEW_PENDING
+    assert client.regenerations == 1
+
+
+def test_lifecycle_records_structural_metrics_without_content(tmp_path: Path) -> None:
+    database = tmp_path / "usage.db"
+    lifecycle = CandidateLifecycle(
+        client=FakeClient([make_candidate()]),
+        workspace=CandidateWorkspaceManager(tmp_path / "jobs"),
+        executor=PassingExecutor(),
+        audit_store=UsageStore(database),
+    )
+
+    result = lifecycle.run(
+        make_spec(), client_name="codex_desktop", budget_session_id=BUDGET_SESSION_ID
+    )
+
+    with sqlite3.connect(database) as connection:
+        row = connection.execute(
+            """
+            SELECT lifecycle_id, budget_session_id, client_name, status,
+                   spec_total_chars, candidate_source_chars, candidate_test_chars,
+                   review_summary_chars, patch_chars, attempt_count, repair_count
+            FROM lifecycle_audit
+            """
+        ).fetchone()
+    assert row[:4] == (
+        result.lifecycle_id,
+        BUDGET_SESSION_ID,
+        "codex_desktop",
+        CandidateLifecycleStatus.REVIEW_PENDING.value,
+    )
+    assert all(value > 0 for value in row[4:9])
+    assert row[9:] == (1, 0)
+
+
+def test_failed_repair_still_records_lifecycle_audit(tmp_path: Path) -> None:
+    database = tmp_path / "usage.db"
+    lifecycle = CandidateLifecycle(
+        client=FailingRepairClient([make_candidate(unsafe=True)]),
+        workspace=CandidateWorkspaceManager(tmp_path / "jobs"),
+        executor=PassingExecutor(),
+        audit_store=UsageStore(database),
+    )
+
+    with pytest.raises(RuntimeError, match="synthetic repair transport failure"):
+        lifecycle.run(make_spec(), client_name="codex_desktop", budget_session_id=BUDGET_SESSION_ID)
+
+    with sqlite3.connect(database) as connection:
+        row = connection.execute(
+            "SELECT status, attempt_count, repair_count FROM lifecycle_audit"
+        ).fetchone()
+    assert row == (CandidateLifecycleStatus.FAILED.value, 1, 0)
 
 
 def test_missing_tests_are_rejected_before_docker_and_repaired(tmp_path: Path) -> None:
@@ -205,7 +337,7 @@ def test_missing_tests_are_rejected_before_docker_and_repaired(tmp_path: Path) -
         executor=executor,
     )
 
-    result = lifecycle.run(make_spec(), client_name="codex")
+    result = lifecycle.run(make_spec(), client_name="codex", budget_session_id=BUDGET_SESSION_ID)
 
     assert result.status is CandidateLifecycleStatus.REVIEW_PENDING
     assert len(result.attempts) == 2
@@ -223,15 +355,5 @@ def test_client_hash_mismatch_is_rejected_before_staging(tmp_path: Path) -> None
     )
 
     with pytest.raises(CandidateLifecycleError, match="hash"):
-        lifecycle.run(make_spec(), client_name="codex")
+        lifecycle.run(make_spec(), client_name="codex", budget_session_id=BUDGET_SESSION_ID)
     assert not any((tmp_path / "jobs").iterdir())
-
-
-@pytest.mark.parametrize("max_repairs", [-1, 3])
-def test_repair_limit_cannot_exceed_policy(max_repairs: int) -> None:
-    with pytest.raises(ValueError, match="between 0 and 2"):
-        CandidateLifecycle(
-            client=FakeClient([make_candidate()]),
-            executor=PassingExecutor(),
-            max_repairs=max_repairs,
-        )

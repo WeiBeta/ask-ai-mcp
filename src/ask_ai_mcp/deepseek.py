@@ -27,7 +27,9 @@ from ask_ai_mcp.pricing import calculate_cost_estimate, load_peak_pricing_effect
 from ask_ai_mcp.usage import UsageStore
 
 DEEPSEEK_CHAT_COMPLETIONS_URL = "https://api.deepseek.com/chat/completions"
-MAX_OUTPUT_TOKENS = 32_768
+INITIAL_MAX_OUTPUT_TOKENS = 16_384
+STATIC_REPAIR_MAX_OUTPUT_TOKENS = 4_096
+SEMANTIC_REPAIR_MAX_OUTPUT_TOKENS = 16_384
 
 SYSTEM_PROMPT = """
 You are an untrusted auxiliary toolsmith. Return one JSON object only. You may
@@ -58,6 +60,10 @@ when returning a repaired candidate.
 
 class DeepSeekClientError(RuntimeError):
     """Safe, response-body-free client error."""
+
+
+class InvalidCandidateResponse(DeepSeekClientError):
+    """Raised for an empty, truncated, or schema-invalid candidate response."""
 
 
 class ModelEscalationRequired(PolicyViolation):
@@ -115,6 +121,8 @@ class DeepSeekClient:
         *,
         client_name: str,
         allow_pro: bool = False,
+        budget_session_id: str | None = None,
+        lifecycle_id: str | None = None,
     ) -> ToolCandidateResult:
         require_tool_spec_allowed(spec)
         if spec.model is DeepSeekModel.PRO and not allow_pro:
@@ -123,9 +131,51 @@ class DeepSeekClient:
         return self._complete_candidate(
             spec=spec,
             client_name=client_name,
-            request_body=self._request_body(spec),
+            request_body=self._request_body(
+                spec,
+                thinking_enabled=True,
+                max_output_tokens=INITIAL_MAX_OUTPUT_TOKENS,
+            ),
             task_kind="tool_build",
             retries=0,
+            thinking_enabled=True,
+            budget_session_id=budget_session_id,
+            lifecycle_id=lifecycle_id,
+        )
+
+    def regenerate_candidate(
+        self,
+        spec: ToolBuildSpec,
+        *,
+        client_name: str,
+        allow_pro: bool = False,
+        budget_session_id: str | None = None,
+        lifecycle_id: str | None = None,
+    ) -> ToolCandidateResult:
+        """Retry one invalid/empty structured response without prior candidate content."""
+        require_tool_spec_allowed(spec)
+        if spec.model is DeepSeekModel.PRO and not allow_pro:
+            raise ModelEscalationRequired("V4 Pro requires explicit Opus/Sol escalation")
+        body = self._request_body(
+            spec,
+            thinking_enabled=True,
+            max_output_tokens=INITIAL_MAX_OUTPUT_TOKENS,
+        )
+        body["messages"][1]["content"] = (
+            "Regenerate the complete candidate because the previous API response was empty "
+            "or invalid JSON. Return JSON only and satisfy every specification and test-file "
+            "requirement. Specification JSON:\n"
+            f"{spec.model_dump_json(exclude_none=True)}"
+        )
+        return self._complete_candidate(
+            spec=spec,
+            client_name=client_name,
+            request_body=body,
+            task_kind="tool_regeneration",
+            retries=1,
+            thinking_enabled=True,
+            budget_session_id=budget_session_id,
+            lifecycle_id=lifecycle_id,
         )
 
     def repair_candidate(
@@ -136,6 +186,10 @@ class DeepSeekClient:
         *,
         client_name: str,
         allow_pro: bool = False,
+        thinking_enabled: bool = True,
+        max_output_tokens: int = SEMANTIC_REPAIR_MAX_OUTPUT_TOKENS,
+        budget_session_id: str | None = None,
+        lifecycle_id: str | None = None,
     ) -> ToolCandidateResult:
         """Repair one candidate from bounded, source-document-free diagnostics."""
         require_tool_spec_allowed(spec)
@@ -149,9 +203,18 @@ class DeepSeekClient:
         return self._complete_candidate(
             spec=spec,
             client_name=client_name,
-            request_body=self._repair_request_body(spec, previous, feedback),
+            request_body=self._repair_request_body(
+                spec,
+                previous,
+                feedback,
+                thinking_enabled=thinking_enabled,
+                max_output_tokens=max_output_tokens,
+            ),
             task_kind="tool_repair",
             retries=feedback.repair_round,
+            thinking_enabled=thinking_enabled,
+            budget_session_id=budget_session_id,
+            lifecycle_id=lifecycle_id,
         )
 
     def _complete_candidate(
@@ -162,30 +225,69 @@ class DeepSeekClient:
         request_body: dict[str, Any],
         task_kind: str,
         retries: int,
+        thinking_enabled: bool,
+        budget_session_id: str | None,
+        lifecycle_id: str | None,
     ) -> ToolCandidateResult:
         started = perf_counter()
         priced_at = self.clock()
+        request_chars = sum(
+            len(str(message.get("content", "")))
+            for message in request_body.get("messages", [])
+            if isinstance(message, dict)
+        )
         try:
             data = self._request(request_body)
         except httpx.HTTPStatusError as error:
             self._record_failure(
-                spec, client_name, started, priced_at, "http_error", task_kind, retries
+                spec,
+                client_name,
+                started,
+                priced_at,
+                "http_error",
+                task_kind,
+                retries,
+                thinking_enabled,
+                budget_session_id,
+                lifecycle_id,
+                request_chars,
             )
             raise DeepSeekClientError(
                 f"DeepSeek API returned HTTP {error.response.status_code}"
             ) from None
         except httpx.HTTPError:
             self._record_failure(
-                spec, client_name, started, priced_at, "transport_error", task_kind, retries
+                spec,
+                client_name,
+                started,
+                priced_at,
+                "transport_error",
+                task_kind,
+                retries,
+                thinking_enabled,
+                budget_session_id,
+                lifecycle_id,
+                request_chars,
             )
             raise DeepSeekClientError("DeepSeek API transport failed") from None
         except (TypeError, ValueError):
             self._record_failure(
-                spec, client_name, started, priced_at, "invalid_response", task_kind, retries
+                spec,
+                client_name,
+                started,
+                priced_at,
+                "invalid_response",
+                task_kind,
+                retries,
+                thinking_enabled,
+                budget_session_id,
+                lifecycle_id,
+                request_chars,
             )
             raise DeepSeekClientError("DeepSeek returned an invalid API response") from None
 
         cache_hit, cache_miss, completion, reasoning = _usage_counts(data)
+        response_chars = self._response_chars(data)
         try:
             payload = self._parse_candidate(data)
         except (KeyError, TypeError, ValueError, ValidationError):
@@ -201,8 +303,15 @@ class DeepSeekClient:
                 reasoning=reasoning,
                 task_kind=task_kind,
                 retries=retries,
+                thinking_enabled=thinking_enabled,
+                budget_session_id=budget_session_id,
+                lifecycle_id=lifecycle_id,
+                request_chars=request_chars,
+                response_chars=response_chars,
             )
-            raise DeepSeekClientError("DeepSeek returned an invalid candidate response") from None
+            raise InvalidCandidateResponse(
+                "DeepSeek returned an invalid candidate response"
+            ) from None
 
         candidate_hash = candidate_payload_sha256(payload)
         self._record_usage(
@@ -218,18 +327,29 @@ class DeepSeekClient:
             candidate_hash=candidate_hash,
             task_kind=task_kind,
             retries=retries,
+            thinking_enabled=thinking_enabled,
+            budget_session_id=budget_session_id,
+            lifecycle_id=lifecycle_id,
+            request_chars=request_chars,
+            response_chars=response_chars,
         )
         return ToolCandidateResult(
             candidate_sha256=candidate_hash,
             model=spec.model,
-            thinking_enabled=True,
+            thinking_enabled=thinking_enabled,
             payload=payload,
         )
 
-    def _request_body(self, spec: ToolBuildSpec) -> dict[str, Any]:
+    def _request_body(
+        self,
+        spec: ToolBuildSpec,
+        *,
+        thinking_enabled: bool,
+        max_output_tokens: int,
+    ) -> dict[str, Any]:
         schema = json.dumps(ToolCandidatePayload.model_json_schema(), ensure_ascii=False)
         specification = spec.model_dump_json(exclude_none=True)
-        return {
+        body = {
             "model": spec.model.value,
             "messages": [
                 {
@@ -244,24 +364,29 @@ class DeepSeekClient:
                     ),
                 },
             ],
-            "thinking": {"type": "enabled"},
-            "reasoning_effort": "high",
+            "thinking": {"type": "enabled" if thinking_enabled else "disabled"},
             "response_format": {"type": "json_object"},
-            "max_tokens": MAX_OUTPUT_TOKENS,
+            "max_tokens": max_output_tokens,
             "stream": False,
         }
+        if thinking_enabled:
+            body["reasoning_effort"] = "high"
+        return body
 
     def _repair_request_body(
         self,
         spec: ToolBuildSpec,
         previous: ToolCandidateResult,
         feedback: CandidateRepairFeedback,
+        *,
+        thinking_enabled: bool,
+        max_output_tokens: int,
     ) -> dict[str, Any]:
         schema = json.dumps(ToolCandidatePayload.model_json_schema(), ensure_ascii=False)
         specification = spec.model_dump_json(exclude_none=True)
         candidate = previous.payload.model_dump_json(exclude_none=True)
         diagnostics = feedback.model_dump_json(exclude_none=True)
-        return {
+        body = {
             "model": spec.model.value,
             "messages": [
                 {
@@ -281,12 +406,14 @@ class DeepSeekClient:
                     ),
                 },
             ],
-            "thinking": {"type": "enabled"},
-            "reasoning_effort": "high",
+            "thinking": {"type": "enabled" if thinking_enabled else "disabled"},
             "response_format": {"type": "json_object"},
-            "max_tokens": MAX_OUTPUT_TOKENS,
+            "max_tokens": max_output_tokens,
             "stream": False,
         }
+        if thinking_enabled:
+            body["reasoning_effort"] = "high"
+        return body
 
     def _request(self, request_body: dict[str, Any]) -> dict[str, Any]:
         api_key = self.api_key_provider()
@@ -321,6 +448,14 @@ class DeepSeekClient:
             raise ValueError("candidate content is empty")
         return ToolCandidatePayload.model_validate(json.loads(content))
 
+    @staticmethod
+    def _response_chars(data: dict[str, Any]) -> int:
+        try:
+            content = data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError):
+            return 0
+        return len(content) if isinstance(content, str) else 0
+
     def _record_failure(
         self,
         spec: ToolBuildSpec,
@@ -330,6 +465,10 @@ class DeepSeekClient:
         status: Literal["http_error", "transport_error", "invalid_response"],
         task_kind: str,
         retries: int,
+        thinking_enabled: bool,
+        budget_session_id: str | None,
+        lifecycle_id: str | None,
+        request_chars: int,
     ) -> None:
         self._record_usage(
             spec=spec,
@@ -343,6 +482,11 @@ class DeepSeekClient:
             reasoning=0,
             task_kind=task_kind,
             retries=retries,
+            thinking_enabled=thinking_enabled,
+            budget_session_id=budget_session_id,
+            lifecycle_id=lifecycle_id,
+            request_chars=request_chars,
+            response_chars=0,
         )
 
     def _record_usage(
@@ -360,6 +504,11 @@ class DeepSeekClient:
         candidate_hash: str | None = None,
         task_kind: str = "tool_build",
         retries: int = 0,
+        thinking_enabled: bool = True,
+        budget_session_id: str | None = None,
+        lifecycle_id: str | None = None,
+        request_chars: int = 0,
+        response_chars: int = 0,
     ) -> None:
         cost = calculate_cost_estimate(
             spec.model,
@@ -374,7 +523,7 @@ class DeepSeekClient:
                 client_name=client_name,
                 task_kind=task_kind,
                 model=spec.model,
-                thinking_enabled=True,
+                thinking_enabled=thinking_enabled,
                 priced_at=cost.priced_at,
                 pricing_band=cost.pricing_band,
                 pricing_multiplier=cost.pricing_multiplier,
@@ -391,5 +540,9 @@ class DeepSeekClient:
                 retries=retries,
                 status=status,
                 candidate_hash=candidate_hash,
+                budget_session_id=budget_session_id,
+                lifecycle_id=lifecycle_id,
+                request_chars=request_chars,
+                response_chars=response_chars,
             )
         )

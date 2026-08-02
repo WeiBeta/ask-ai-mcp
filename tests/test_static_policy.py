@@ -166,8 +166,7 @@ def test_tempfile_is_allowed_only_in_test_files() -> None:
     report = analyze_candidate(
         make_spec(),
         payload(
-            "import tempfile\n\n"
-            "def run(request, input_dir, output_dir):\n    return request\n"
+            "import tempfile\n\ndef run(request, input_dir, output_dir):\n    return request\n"
         ),
     )
     assert report.allowed is False

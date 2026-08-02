@@ -1,9 +1,10 @@
 # Roadmap
 
 Current implementation status: phases 0 through 2 are complete, including the
-real opt-in synthetic Flash smoke request. The six-tool desktop surface and
-verified execution implementation are complete; cross-client Phase 3 acceptance
-and explicit real-input-root configuration remain pending.
+real opt-in synthetic Flash smoke request. The ten-tool desktop surface,
+conversation budget sessions, compact/full review split, and verified execution
+implementation are complete; cross-client Phase 3 acceptance and explicit
+real-input-root configuration remain pending.
 
 ## Phase 0: policy and skeleton
 
@@ -87,8 +88,11 @@ verifiable outputs without arbitrary host automation.
 - [x] Connect local STDIO to Codex Desktop.
 - [x] Connect the same server to Claude Desktop on Windows.
 - [x] Configure tool approval and controller instructions.
+- [x] Add CNY 5 conversation budget blocks with separate Flash and Pro grants.
+- [x] Add policy-routed repair modes and prompt-free lifecycle size metrics.
+- [x] Require exact full-review attestations for Pro and output-producing tools.
 - Run the fifteen-day trial and review quality, cost, latency, and failure data.
-- Set budget policy only after observing real workloads.
+- Reassess the CNY 5 block size after observing real workloads.
 
 Exit criteria: both clients use the same policy and audit store, and trial data
 supports a decision on production limits and model routing.

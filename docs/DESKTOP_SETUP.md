@@ -6,11 +6,11 @@ Both desktop clients use the same local STDIO executable and the same
 prompt-free SQLite audit store. Each client starts its own process, so seeing
 two server processes is expected.
 
-The development server exposes usage status, candidate build/review/approval,
-registry listing, and verified execution. `build_helper_tool` may incur
-DeepSeek charges. Listing, review, approval, and verified local execution make
-no external model call. Real-file paths remain closed until narrow input roots
-are explicitly configured.
+The development server exposes usage status, four local budget-session tools,
+candidate build/review/approval, registry listing, and verified execution.
+`build_helper_tool` may incur DeepSeek charges. Budget operations, listing,
+review, approval, and verified local execution make no external model call.
+Real-file paths remain closed until narrow input roots are explicitly configured.
 
 Use this absolute executable path:
 
@@ -55,8 +55,9 @@ configured servers:
 ```
 
 Save the file, fully quit Claude Desktop, and reopen it. Closing only the window
-is not sufficient. Confirm that `ask-ai` advertises exactly six tools:
-`usage_status`, `build_helper_tool`, `review_tool_candidate`,
+is not sufficient. Confirm that `ask-ai` advertises exactly ten tools:
+`usage_status`, `open_budget_session`, `budget_status`, `add_budget_block`,
+`close_budget_session`, `build_helper_tool`, `review_tool_candidate`,
 `approve_tool_candidate`, `list_registered_tools`, and `run_verified_tool`.
 
 For later private packaging, Claude Desktop also supports a local desktop
@@ -82,7 +83,7 @@ command = "C:\\Dev\\ask-ai-mcp\\.venv\\Scripts\\ask-ai-mcp.exe"
 cwd = "C:\\Dev\\ask-ai-mcp"
 enabled = true
 required = false
-enabled_tools = ["usage_status", "build_helper_tool", "review_tool_candidate", "approve_tool_candidate", "list_registered_tools", "run_verified_tool"]
+enabled_tools = ["usage_status", "open_budget_session", "budget_status", "add_budget_block", "close_budget_session", "build_helper_tool", "review_tool_candidate", "approve_tool_candidate", "list_registered_tools", "run_verified_tool"]
 default_tools_approval_mode = "prompt"
 startup_timeout_sec = 20
 tool_timeout_sec = 600
@@ -94,9 +95,12 @@ PYTHONIOENCODING = "utf-8"
 ```
 
 Restart Codex Desktop after saving, then use `/mcp` to confirm the server and
-six-tool catalog. Keep approval mode set to `prompt` during the trial. A build
-may make up to three billed API calls (one initial candidate and two repairs),
-while review and approval make no external model call.
+ten-tool catalog. Keep approval mode set to `prompt` during the trial. Open one
+opaque budget session per conversation that needs Ask AI. Flash starts with CNY
+5, Pro with CNY 0, and either model is extended only in CNY 5 blocks after the
+required confirmation. A normal build may make up to three billed API calls
+(one initial candidate and two repairs); one invalid initial structured response
+may add a single regeneration call.
 
 Do not add `ASK_AI_MCP_ALLOWED_INPUT_ROOTS` until a narrow source-copy directory
 has been chosen. When enabled later, use a semicolon-separated list of explicit

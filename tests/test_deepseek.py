@@ -10,6 +10,7 @@ import pytest
 
 from ask_ai_mcp.deepseek import (
     DEEPSEEK_CHAT_COMPLETIONS_URL,
+    STATIC_REPAIR_MAX_OUTPUT_TOKENS,
     DeepSeekClient,
     DeepSeekClientError,
     ModelEscalationRequired,
@@ -222,6 +223,61 @@ def test_repair_uses_bounded_feedback_and_records_repair_round(tmp_path: Path) -
     with sqlite3.connect(database) as connection:
         row = connection.execute("SELECT task_kind, retries FROM api_usage").fetchone()
     assert row == ("tool_repair", 1)
+
+
+def test_static_repair_disables_thinking_and_uses_small_output_cap(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert body["thinking"] == {"type": "disabled"}
+        assert body["max_tokens"] == STATIC_REPAIR_MAX_OUTPUT_TOKENS
+        assert "reasoning_effort" not in body
+        return httpx.Response(200, json=api_response())
+
+    database = tmp_path / "usage.db"
+    client = DeepSeekClient(
+        api_key_provider=lambda: "sk-" + "x" * 40,
+        usage_store=UsageStore(database),
+        transport=httpx.MockTransport(handler),
+    )
+    previous_payload = client._parse_candidate(api_response())
+    from ask_ai_mcp.hashing import candidate_payload_sha256
+    from ask_ai_mcp.models import ToolCandidateResult
+
+    client.repair_candidate(
+        make_spec(),
+        ToolCandidateResult(
+            candidate_sha256=candidate_payload_sha256(previous_payload),
+            model=DeepSeekModel.FLASH,
+            thinking_enabled=True,
+            payload=previous_payload,
+        ),
+        CandidateRepairFeedback(
+            repair_round=1,
+            repair_kind="static_policy",
+            reason_codes=["forbidden_import"],
+        ),
+        client_name="codex_desktop",
+        thinking_enabled=False,
+        max_output_tokens=STATIC_REPAIR_MAX_OUTPUT_TOKENS,
+        budget_session_id="11111111-1111-4111-8111-111111111111",
+        lifecycle_id="22222222-2222-4222-8222-222222222222",
+    )
+
+    with sqlite3.connect(database) as connection:
+        row = connection.execute(
+            """
+            SELECT thinking_enabled, budget_session_id, lifecycle_id,
+                   request_chars, response_chars
+            FROM api_usage
+            """
+        ).fetchone()
+    assert row[:3] == (
+        0,
+        "11111111-1111-4111-8111-111111111111",
+        "22222222-2222-4222-8222-222222222222",
+    )
+    assert row[3] > 0
+    assert row[4] > 0
 
 
 def test_client_records_peak_price_metadata_from_request_start(tmp_path: Path) -> None:

@@ -11,11 +11,14 @@ from uuid import UUID
 
 from ask_ai_mcp.hashing import candidate_payload_sha256, tool_spec_sha256
 from ask_ai_mcp.models import (
+    CandidateAttemptReport,
+    CandidateAttemptSummary,
     CandidateExecutionReport,
     CandidateFile,
     CandidateJobManifest,
     CandidateJobState,
     CandidateReviewBundle,
+    CandidateReviewSummary,
     StaticAnalysisReport,
     ToolBuildSpec,
     ToolCandidatePayload,
@@ -39,6 +42,52 @@ def candidate_patch(payload: ToolCandidatePayload) -> str:
         )
         parts.append("\n".join(diff))
     return "\n\n".join(parts)
+
+
+def patch_sha256(patch: str) -> str:
+    return hashlib.sha256(patch.encode("utf-8")).hexdigest()
+
+
+def attempt_summary(attempt: CandidateAttemptReport) -> CandidateAttemptSummary:
+    execution = attempt.execution
+    return CandidateAttemptSummary(
+        attempt=attempt.attempt,
+        candidate_sha256=attempt.candidate_sha256,
+        model=attempt.model,
+        thinking_enabled=attempt.thinking_enabled,
+        repair_kind=attempt.repair_kind,
+        state=attempt.state,
+        job_id=attempt.job_id,
+        static_allowed=attempt.static_analysis.allowed,
+        static_finding_codes=sorted({finding.code for finding in attempt.static_analysis.findings}),
+        exit_code=execution.exit_code if execution else None,
+        timed_out=execution.timed_out if execution else False,
+        tests_run=execution.tests_run if execution else 0,
+    )
+
+
+def review_summary(
+    review: CandidateReviewBundle,
+    spec: ToolBuildSpec,
+) -> CandidateReviewSummary:
+    patch_bytes = review.candidate_patch.encode("utf-8")
+    return CandidateReviewSummary(
+        tool_name=review.tool_name,
+        spec_sha256=review.spec_sha256,
+        job_id=review.job_id,
+        candidate_sha256=review.candidate_sha256,
+        candidate_summary=review.candidate_summary,
+        candidate_files=review.candidate_files,
+        test_files=review.test_files,
+        declared_risks=review.declared_risks,
+        allowed_packages=spec.allowed_packages,
+        patch_sha256=hashlib.sha256(patch_bytes).hexdigest(),
+        patch_size_bytes=len(patch_bytes),
+        static_allowed=review.static_analysis.allowed,
+        static_finding_codes=sorted({finding.code for finding in review.static_analysis.findings}),
+        tests_run=review.execution.tests_run,
+        attempts=[attempt_summary(attempt) for attempt in review.attempts],
+    )
 
 
 class CandidateReviewRepository:
@@ -113,6 +162,13 @@ class CandidateReviewRepository:
         if review.candidate_patch != candidate_patch(payload):
             raise CandidateReviewError("review patch no longer matches candidate content")
         return review
+
+    def load_summary(self, job_id: str) -> CandidateReviewSummary:
+        review = self.load(job_id)
+        spec = ToolBuildSpec.model_validate_json(
+            (self._job_root(job_id) / "control" / "spec.json").read_text(encoding="utf-8")
+        )
+        return review_summary(review, spec)
 
     def _job_root(self, job_id: str) -> Path:
         try:

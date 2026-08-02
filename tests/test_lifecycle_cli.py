@@ -33,9 +33,12 @@ def test_success_prints_only_content_free_identifiers(monkeypatch, capsys) -> No
         job_id="52efb642-6d4a-42ea-9bbf-da5197360c77",
         candidate_sha256="a" * 64,
         attempts=[1],
-        execution=SimpleNamespace(tests_run=2),
+        tests_run=2,
     )
-    result = SimpleNamespace(status=CandidateLifecycleStatus.REVIEW_PENDING, review=review)
+    result = SimpleNamespace(
+        status=CandidateLifecycleStatus.REVIEW_PENDING,
+        review_summary=review,
+    )
 
     class FakeLifecycle:
         def run(self, *_args, **_kwargs):
@@ -47,6 +50,15 @@ def test_success_prints_only_content_free_identifiers(monkeypatch, capsys) -> No
         lambda: SimpleNamespace(ready=True, reasons=[]),
     )
     monkeypatch.setattr(lifecycle_cli, "CandidateLifecycle", FakeLifecycle)
+    monkeypatch.setattr(
+        lifecycle_cli,
+        "BudgetStore",
+        lambda: SimpleNamespace(
+            open_session=lambda **_kwargs: SimpleNamespace(
+                budget_session_id="11111111-1111-4111-8111-111111111111"
+            )
+        ),
+    )
     assert lifecycle_cli.main(["--confirm-charge"]) == 0
     output = capsys.readouterr().out
     assert review.job_id in output
