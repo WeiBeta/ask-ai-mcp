@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
@@ -65,6 +66,10 @@ class CandidateWorkspaceManager:
             spec_sha256=tool_spec_sha256(spec),
             candidate_sha256=actual_hash,
             candidate_files=[file.path for file in result.payload.files],
+            candidate_file_sha256={
+                file.path: hashlib.sha256(file.content.encode("utf-8")).hexdigest()
+                for file in result.payload.files
+            },
         )
         (job_root / "control" / "manifest.json").write_text(
             manifest.model_dump_json(indent=2), encoding="utf-8"

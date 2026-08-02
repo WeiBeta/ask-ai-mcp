@@ -142,7 +142,31 @@ class CandidateJobManifest(StrictModel):
     spec_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
     candidate_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
     candidate_files: list[str] = Field(min_length=1, max_length=20)
+    candidate_file_sha256: dict[str, str] = Field(default_factory=dict, max_length=20)
     execution_backend: str | None = Field(default=None, max_length=64)
+
+    @field_validator("candidate_file_sha256")
+    @classmethod
+    def validate_candidate_file_sha256(cls, value: dict[str, str]) -> dict[str, str]:
+        if any(
+            len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest)
+            for digest in value.values()
+        ):
+            raise ValueError("candidate file hashes must be lowercase SHA-256 values")
+        return value
+
+
+class CandidateExecutionReport(StrictModel):
+    job_id: str = Field(min_length=36, max_length=36)
+    state: CandidateJobState
+    backend: str = Field(min_length=1, max_length=64)
+    runner_image: str = Field(min_length=1, max_length=255)
+    exit_code: int | None = None
+    timed_out: bool = False
+    tests_run: int = Field(default=0, ge=0)
+    stdout: str = Field(default="", max_length=65_536)
+    stderr: str = Field(default="", max_length=65_536)
+    output_truncated: bool = False
 
 
 class SandboxBackendStatus(StrictModel):

@@ -1,5 +1,6 @@
 """Tests for non-executing candidate staging outside the repository."""
 
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -62,6 +63,10 @@ def test_stage_writes_only_candidate_and_content_free_control_files(tmp_path: Pa
     assert (job_root / "output").is_dir()
     manifest_text = (job_root / "control" / "manifest.json").read_text(encoding="utf-8")
     assert result.payload.files[0].content not in manifest_text
+    assert (
+        manifest.candidate_file_sha256["tool.py"]
+        == hashlib.sha256(result.payload.files[0].content.encode("utf-8")).hexdigest()
+    )
 
 
 def test_stage_rejects_hash_mismatch(tmp_path: Path) -> None:

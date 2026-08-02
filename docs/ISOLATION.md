@@ -7,10 +7,15 @@ backend. Windows Sandbox remains a possible future fallback, but it is not the
 primary implementation.
 
 The host meets the hardware baseline: Windows 11 Pro, hardware virtualization,
-and ample memory. WSL 2 and Docker Desktop are being prepared as machine-level
-components. Docker Desktop itself will reside under
+and ample memory. WSL 2 and Docker Desktop are installed as machine-level
+components. Docker Desktop resides under
 `C:\Program Files\Docker\Docker`; its WSL data disks use Docker's standard
 per-user data location.
+
+Post-reboot verification on 2026-08-02 confirmed WSL 2.7.11, Docker Engine
+29.6.2 on Linux/amd64, and working CPU, memory, and PID controls. Windows
+Containers, Hyper-V, WSL, Virtual Machine Platform, .NET Framework 3.5, and
+.NET 4 advanced services all remained enabled.
 
 This is a multipurpose physical machine. Host configuration follows an
 additive-only rule: the project does not disable Windows Containers, Hyper-V,
@@ -40,8 +45,9 @@ Every candidate run will use a fresh Linux container with:
 - no Docker socket, credentials, Git directory, user profile, or repository;
 - automatic container removal after completion.
 
-The initial pinned runtime is `python:3.13.14-slim-bookworm`. Before production
-use, the mutable tag will be resolved to and locked by image digest.
+The initial runtime is content-pinned as
+`python@sha256:9d7f287598e1a5a978c015ee176d8216435aaf335ed69ac3c38dd1bbb10e8d64`
+(resolved from `python:3.13.14-slim-bookworm` on 2026-08-02).
 
 Official isolation controls:
 
@@ -72,5 +78,7 @@ uv run ask-ai-mcp-runner status
 ```
 
 The backend is ready only when the Docker CLI, Docker engine, and pinned runner
-image are all available. Actual candidate execution remains unimplemented and
-unexposed through MCP until escape and resource-limit tests pass.
+image are all available. The internal executor runs Python compilation and
+stdlib `unittest` discovery using a fixed host-controlled harness. Candidate
+execution remains unexposed through MCP until escape and resource-limit tests
+pass and Sol explicitly approves the interface.
