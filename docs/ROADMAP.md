@@ -40,8 +40,9 @@ Selected backend: all-users Docker Desktop with WSL 2 Linux containers.
 Exit criteria: unsafe fixtures are rejected and safe candidates cannot escape
 the job directory or alter repository files.
 
-Status: completed internally on 2026-08-02. Candidate operations remain off the
-MCP surface until their schemas and a billed end-to-end smoke test are approved.
+Status: completed on 2026-08-02. The narrow MCP schemas and first billed
+build-review-approval smoke also passed. Verified real-file execution remains
+disabled.
 
 ## Phase 3: document preprocessing toolkit
 

@@ -10,6 +10,7 @@ from typing import Any, Literal
 import httpx
 from pydantic import ValidationError
 
+from ask_ai_mcp import __version__
 from ask_ai_mcp.credentials import CredentialStore
 from ask_ai_mcp.hashing import candidate_payload_sha256
 from ask_ai_mcp.models import (
@@ -267,7 +268,7 @@ class DeepSeekClient:
                 headers={
                     "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json",
-                    "User-Agent": "ask-ai-mcp/0.1.0",
+                    "User-Agent": f"ask-ai-mcp/{__version__}",
                 },
                 json=request_body,
             )

@@ -3,7 +3,13 @@
 import pytest
 from pydantic import ValidationError
 
-from ask_ai_mcp.models import CandidateFile, ToolBuildSpec, ToolCandidatePayload, ToolCategory
+from ask_ai_mcp.models import (
+    CandidateApprovalCommand,
+    CandidateFile,
+    ToolBuildSpec,
+    ToolCandidatePayload,
+    ToolCategory,
+)
 
 
 def test_tool_spec_rejects_unknown_fields() -> None:
@@ -46,4 +52,14 @@ def test_candidate_payload_rejects_duplicate_paths_case_insensitively() -> None:
                 CandidateFile(path="tool.py", content="pass"),
                 CandidateFile(path="TOOL.py", content="pass"),
             ],
+        )
+
+
+def test_approval_capabilities_are_closed_enum() -> None:
+    with pytest.raises(ValidationError):
+        CandidateApprovalCommand(
+            job_id="52efb642-6d4a-42ea-9bbf-da5197360c77",
+            candidate_sha256="a" * 64,
+            version="0.1.0",
+            allowed_capabilities=["network_access"],
         )

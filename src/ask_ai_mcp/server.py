@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from typing import Annotated
 
@@ -9,8 +10,23 @@ from fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from ask_ai_mcp.models import UsageSummary
+from ask_ai_mcp import __version__
+from ask_ai_mcp.lifecycle import CandidateLifecycle
+from ask_ai_mcp.models import (
+    CandidateApprovalCommand,
+    CandidateApprovalRequest,
+    CandidateDecision,
+    CandidateLifecycleResult,
+    CandidateReviewBundle,
+    ToolBuildSpec,
+    UsageSummary,
+    VerifiedToolRecord,
+)
+from ask_ai_mcp.promotion import VerifiedToolRegistry
+from ask_ai_mcp.review import CandidateReviewRepository
+from ask_ai_mcp.sandbox import docker_backend_status
 from ask_ai_mcp.usage import UsageStore
+from ask_ai_mcp.workspace import CandidateWorkspaceManager
 
 SERVER_INSTRUCTIONS = """
 DeepSeek is a constrained toolsmith and source-structuring worker only. Never
@@ -25,14 +41,46 @@ are always read-only. Do not send secrets or entire knowledge bases.
 mcp = FastMCP(
     "Ask AI MCP",
     instructions=SERVER_INSTRUCTIONS,
-    version="0.1.0",
+    version=__version__,
 )
+
+_DESKTOP_CLIENT_NAMES = frozenset({"claude_desktop", "codex_desktop"})
 
 
 @lru_cache(maxsize=1)
 def get_usage_store() -> UsageStore:
     """Create the shared audit store lazily after MCP initialization."""
     return UsageStore()
+
+
+@lru_cache(maxsize=1)
+def get_workspace() -> CandidateWorkspaceManager:
+    return CandidateWorkspaceManager()
+
+
+@lru_cache(maxsize=1)
+def get_review_repository() -> CandidateReviewRepository:
+    return CandidateReviewRepository(get_workspace().jobs_root)
+
+
+@lru_cache(maxsize=1)
+def get_lifecycle() -> CandidateLifecycle:
+    return CandidateLifecycle(workspace=get_workspace(), review_repository=get_review_repository())
+
+
+@lru_cache(maxsize=1)
+def get_registry() -> VerifiedToolRegistry:
+    return VerifiedToolRegistry(jobs_root=get_workspace().jobs_root)
+
+
+def get_client_name() -> str:
+    value = os.environ.get("ASK_AI_MCP_CLIENT_NAME", "")
+    if value not in _DESKTOP_CLIENT_NAMES:
+        raise RuntimeError(
+            "ASK_AI_MCP_CLIENT_NAME must be claude_desktop or codex_desktop before "
+            "candidate operations"
+        )
+    return value
 
 
 @mcp.tool(
@@ -48,7 +96,97 @@ def usage_status(days: Annotated[int, Field(ge=1, le=366)] = 15) -> UsageSummary
     """Return prompt-free DeepSeek usage totals for the requested period.
 
     This tool performs no external API call and never returns prompts, source
-    contents, responses, or credentials. Candidate operations remain disabled
-    until their narrow MCP schemas and end-to-end smoke test are approved.
+    contents, responses, or credentials. Candidate build, review, and approval
+    are separate tools; this status call cannot trigger any of them.
     """
     return get_usage_store().summarize(days=days)
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Build isolated helper-tool candidate",
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    )
+)
+def build_helper_tool(
+    spec: ToolBuildSpec,
+    allow_pro: bool = False,
+) -> CandidateLifecycleResult:
+    """Build and test one bounded helper-tool candidate for Sol/Opus review.
+
+    This may call DeepSeek and create disposable local jobs. It accepts only a
+    structured tool specification, never an arbitrary prompt or source bundle.
+    Flash thinking is the default. Pro requires both `spec.model=deepseek-v4-pro`
+    and explicit `allow_pro=true`. A passing result is still only review-pending.
+    """
+    client_name = get_client_name()
+    backend = docker_backend_status()
+    if not backend.ready:
+        reasons = ",".join(backend.reasons) or "unknown"
+        raise RuntimeError(f"isolated runner is unavailable: {reasons}")
+    return get_lifecycle().run(spec, client_name=client_name, allow_pro=allow_pro)
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Review isolated tool candidate",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
+def review_tool_candidate(
+    job_id: Annotated[
+        str,
+        Field(
+            min_length=36,
+            max_length=36,
+            pattern=r"^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+        ),
+    ],
+) -> CandidateReviewBundle:
+    """Revalidate and return the exact patch, tests, findings, and risks.
+
+    This performs no model or network call and does not approve or execute the
+    candidate. Any changed review metadata or candidate byte causes rejection.
+    """
+    return get_review_repository().load(job_id)
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Approve exact tested tool candidate",
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=False,
+    )
+)
+def approve_tool_candidate(command: CandidateApprovalCommand) -> VerifiedToolRecord:
+    """Promote an exact reviewed hash without running it on real files.
+
+    The desktop host identity is taken from server configuration, not caller
+    input. Modified candidates cannot be approved; they need a fresh build and
+    isolated test run. This tool only copies verified bytes into the registry.
+    """
+    client_name = get_client_name()
+    review = get_review_repository().load(command.job_id)
+    if review.candidate_sha256 != command.candidate_sha256:
+        raise RuntimeError("approval hash does not match the reviewed candidate")
+    request = CandidateApprovalRequest(
+        job_id=command.job_id,
+        candidate_sha256=command.candidate_sha256,
+        version=command.version,
+        approved_by=client_name,
+        decision=CandidateDecision.APPROVED,
+        allowed_capabilities=command.allowed_capabilities,
+    )
+    _, record = get_registry().approve(
+        job_root=get_workspace().jobs_root / command.job_id,
+        request=request,
+    )
+    return record

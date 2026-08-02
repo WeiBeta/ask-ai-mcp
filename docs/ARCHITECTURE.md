@@ -108,9 +108,9 @@ The intended public tool set is deliberately narrow:
 - `run_verified_tool`
 - `usage_status`
 
-There is no arbitrary prompt forwarding tool. The internal candidate lifecycle
-and promotion gate are implemented, but candidate operations remain unexposed
-until their narrow MCP schemas and end-to-end smoke test are approved.
+There is no arbitrary prompt forwarding tool. Candidate build, review, and
+approval are exposed as separate narrow operations. No MCP operation can yet
+run a verified tool on real files; that remains a later, capability-scoped gate.
 
 The server uses local STDIO for both desktop clients. Each client may start its
 own MCP process, so the audit database and verified-tool registry must support

@@ -22,10 +22,15 @@ candidates, explicit Pro escalation, response-body-free errors, prompt-free
 usage accounting, a successfully completed synthetic Flash smoke request, and
 a digest-pinned Docker/WSL 2 candidate runner.
 
-The internal lifecycle permits one build plus at most two repair rounds, returns
-a patch-and-test review bundle, and requires explicit hash-matched promotion.
-Only `usage_status` is currently exposed over MCP; candidate operations remain
-disabled until the narrow MCP schemas and a billed end-to-end smoke test pass.
+The lifecycle permits one build plus at most two repair rounds, returns a
+patch-and-test review bundle, and requires explicit hash-matched promotion.
+The development MCP surface exposes `usage_status`, `build_helper_tool`,
+`review_tool_candidate`, and `approve_tool_candidate`. Verified tools still
+cannot process real files; `run_verified_tool` remains disabled.
+
+The first full billed lifecycle smoke passed on 2026-08-02 in one Flash call:
+the generated synthetic helper passed four isolated tests, was reviewed, and
+was registered under an exact hash with synthetic-input capability only.
 
 ## Development
 
@@ -59,6 +64,8 @@ C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp.exe
 - `docs/DEEPSEEK_CLIENT.md`: API contract, credential workflow, and safeguards
 - `docs/ISOLATION.md`: Docker/WSL candidate sandbox and workspace boundary
 - `docs/CANDIDATE_LIFECYCLE.md`: repair, review, and hash-pinned promotion gates
+- `docs/MCP_SURFACE.md`: public tool contracts and desktop identity boundary
+- `docs/MCP_SMOKE.md`: first billed build-review-approval evidence
 - `docs/DESKTOP_SETUP.md`: Claude Desktop and Codex Desktop connection guide
 - `docs/ROADMAP.md`: staged implementation and exit criteria
 - `AGENTS.md`: repository rules for future model-driven development

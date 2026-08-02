@@ -60,6 +60,12 @@ class CandidateLifecycleStatus(StrEnum):
     FAILED = "failed"
 
 
+class ToolCapability(StrEnum):
+    READ_SYNTHETIC_INPUTS = "read_synthetic_inputs"
+    READ_COPIED_INPUTS = "read_copied_inputs"
+    WRITE_DEDICATED_OUTPUT = "write_dedicated_output"
+
+
 class ToolBuildSpec(StrictModel):
     """Bounded specification supplied by Opus/Sol to the toolsmith."""
 
@@ -211,6 +217,7 @@ class CandidateReviewBundle(StrictModel):
     spec_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
     job_id: str = Field(min_length=36, max_length=36)
     candidate_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    candidate_summary: str = Field(min_length=1, max_length=1_000)
     candidate_files: list[str] = Field(min_length=1, max_length=20)
     test_files: list[str] = Field(min_length=1, max_length=20)
     candidate_patch: str = Field(min_length=1, max_length=600_000)
@@ -306,7 +313,7 @@ class VerifiedToolRecord(StrictModel):
     approved_at: datetime
     approved_by: str = Field(min_length=1, max_length=64)
     decision: CandidateDecision
-    allowed_capabilities: list[str] = Field(default_factory=list, max_length=20)
+    allowed_capabilities: list[ToolCapability] = Field(default_factory=list, max_length=3)
 
     @field_validator("file_sha256")
     @classmethod
@@ -329,7 +336,7 @@ class CandidateApprovalRequest(StrictModel):
     version: str = Field(min_length=1, max_length=32, pattern=r"^[0-9A-Za-z][0-9A-Za-z._-]*$")
     approved_by: str = Field(min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_-]+$")
     decision: CandidateDecision
-    allowed_capabilities: list[str] = Field(default_factory=list, max_length=20)
+    allowed_capabilities: list[ToolCapability] = Field(default_factory=list, max_length=3)
 
     @model_validator(mode="after")
     def require_approval_decision(self) -> Self:
@@ -339,3 +346,16 @@ class CandidateApprovalRequest(StrictModel):
         }:
             raise ValueError("promotion requires an approval decision")
         return self
+
+
+class CandidateApprovalCommand(StrictModel):
+    """Controller-supplied fields for a clean, exact-hash approval."""
+
+    job_id: str = Field(
+        min_length=36,
+        max_length=36,
+        pattern=r"^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+    )
+    candidate_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    version: str = Field(min_length=1, max_length=32, pattern=r"^[0-9A-Za-z][0-9A-Za-z._-]*$")
+    allowed_capabilities: list[ToolCapability] = Field(default_factory=list, max_length=3)

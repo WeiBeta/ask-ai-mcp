@@ -20,6 +20,7 @@ from ask_ai_mcp.models import (
     ToolCandidateResult,
     ToolCategory,
 )
+from ask_ai_mcp.review import CandidateReviewError, CandidateReviewRepository
 from ask_ai_mcp.sandbox import DEFAULT_RUNNER_IMAGE
 from ask_ai_mcp.workspace import CandidateWorkspaceManager
 
@@ -79,11 +80,13 @@ class PassingExecutor:
 
     def execute(self, job_root: Path) -> CandidateExecutionReport:
         self.calls += 1
-        return CandidateExecutionReport(
+        manifest_path = job_root / "control" / "manifest.json"
+        manifest = CandidateJobManifest.model_validate_json(
+            manifest_path.read_text(encoding="utf-8")
+        )
+        report = CandidateExecutionReport(
             job_id=job_root.name,
-            candidate_sha256=CandidateJobManifest.model_validate_json(
-                (job_root / "control" / "manifest.json").read_text(encoding="utf-8")
-            ).candidate_sha256,
+            candidate_sha256=manifest.candidate_sha256,
             state=CandidateJobState.EXECUTED,
             backend="docker_desktop_wsl2",
             runner_image=DEFAULT_RUNNER_IMAGE,
@@ -91,6 +94,19 @@ class PassingExecutor:
             tests_run=1,
             stderr="Ran 1 test in 0.001s\nOK\n",
         )
+        (job_root / "control" / "execution.json").write_text(
+            report.model_dump_json(indent=2), encoding="utf-8"
+        )
+        manifest_path.write_text(
+            manifest.model_copy(
+                update={
+                    "state": CandidateJobState.EXECUTED,
+                    "execution_backend": "docker_desktop_wsl2",
+                }
+            ).model_dump_json(indent=2),
+            encoding="utf-8",
+        )
+        return report
 
 
 def test_static_failure_is_repaired_then_returned_for_review(tmp_path: Path) -> None:
@@ -115,6 +131,23 @@ def test_static_failure_is_repaired_then_returned_for_review(tmp_path: Path) -> 
     assert "+++ b/tool.py" in result.review.candidate_patch
     assert result.review.test_files == ["test_tool.py"]
     assert result.review.declared_risks == ["Synthetic coverage is intentionally narrow."]
+    repository = CandidateReviewRepository(tmp_path / "jobs")
+    assert repository.load(result.review.job_id) == result.review
+
+
+def test_persisted_review_detects_candidate_tampering(tmp_path: Path) -> None:
+    lifecycle = CandidateLifecycle(
+        client=FakeClient([make_candidate()]),
+        workspace=CandidateWorkspaceManager(tmp_path / "jobs"),
+        executor=PassingExecutor(),
+    )
+    result = lifecycle.run(make_spec(), client_name="codex")
+    assert result.review is not None
+    job_root = tmp_path / "jobs" / result.review.job_id
+    (job_root / "candidate" / "tool.py").write_text("changed = True\n", encoding="utf-8")
+
+    with pytest.raises(CandidateReviewError, match="content changed"):
+        CandidateReviewRepository(tmp_path / "jobs").load(result.review.job_id)
 
 
 def test_no_more_than_two_repairs_are_attempted(tmp_path: Path) -> None:

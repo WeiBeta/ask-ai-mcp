@@ -6,10 +6,10 @@ Both desktop clients use the same local STDIO executable and the same
 prompt-free SQLite audit store. Each client starts its own process, so seeing
 two server processes is expected.
 
-The server currently exposes only the read-only `usage_status` tool. Phase 1
-credential storage and the internal V4 client are implemented, but do not add
-a key merely to connect either desktop client. Candidate generation remains
-unavailable until the isolated runner is complete.
+The development server exposes usage status plus separate candidate build,
+review, and approval tools. It does not expose verified execution or real-file
+processing. `build_helper_tool` may incur DeepSeek charges; approval only copies
+an already-tested exact hash into the local registry.
 
 Use this absolute executable path:
 
@@ -37,15 +37,19 @@ configured servers:
   "mcpServers": {
     "ask-ai": {
       "command": "C:\\Dev\\ask-ai-mcp\\.venv\\Scripts\\ask-ai-mcp.exe",
-      "args": []
+      "args": [],
+      "env": {
+        "ASK_AI_MCP_CLIENT_NAME": "claude_desktop"
+      }
     }
   }
 }
 ```
 
 Save the file, fully quit Claude Desktop, and reopen it. Closing only the window
-is not sufficient. Confirm that `ask-ai` appears and that its only available
-tool is `usage_status`.
+is not sufficient. Confirm that `ask-ai` advertises exactly four tools:
+`usage_status`, `build_helper_tool`, `review_tool_candidate`, and
+`approve_tool_candidate`.
 
 For later private packaging, Claude Desktop also supports a local desktop
 extension bundle. We will evaluate that only after the server workflow is
@@ -70,14 +74,19 @@ command = "C:\\Dev\\ask-ai-mcp\\.venv\\Scripts\\ask-ai-mcp.exe"
 cwd = "C:\\Dev\\ask-ai-mcp"
 enabled = true
 required = false
-enabled_tools = ["usage_status"]
+enabled_tools = ["usage_status", "build_helper_tool", "review_tool_candidate", "approve_tool_candidate"]
 default_tools_approval_mode = "prompt"
 startup_timeout_sec = 20
-tool_timeout_sec = 60
+tool_timeout_sec = 600
+
+[mcp_servers.ask_ai.env]
+ASK_AI_MCP_CLIENT_NAME = "codex_desktop"
 ```
 
 Restart Codex Desktop after saving, then use `/mcp` to confirm the server and
-tool catalog.
+four-tool catalog. Keep approval mode set to `prompt` during the trial. A build
+may make up to three billed API calls (one initial candidate and two repairs),
+while review and approval make no external model call.
 
 ## Credential rule
 

@@ -80,5 +80,6 @@ uv run ask-ai-mcp-runner status
 The backend is ready only when the Docker CLI, Docker engine, and pinned runner
 image are all available. The internal executor runs Python compilation and
 stdlib `unittest` discovery using a fixed host-controlled harness. Candidate
-execution remains unexposed through MCP until escape and resource-limit tests
-pass and Sol explicitly approves the interface.
+test execution is reachable only through `build_helper_tool`; callers cannot
+choose container commands, images, mounts, limits, or inputs. Execution of
+approved tools against real file copies remains unimplemented and unexposed.

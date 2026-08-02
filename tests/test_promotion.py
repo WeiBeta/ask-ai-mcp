@@ -88,7 +88,7 @@ def approval(manifest: CandidateJobManifest, **updates) -> CandidateApprovalRequ
         "version": "0.1.0",
         "approved_by": "codex_sol",
         "decision": CandidateDecision.APPROVED,
-        "allowed_capabilities": ["synthetic_fixture_read", "dedicated_output_write"],
+        "allowed_capabilities": ["read_synthetic_inputs", "write_dedicated_output"],
     }
     values.update(updates)
     return CandidateApprovalRequest(**values)

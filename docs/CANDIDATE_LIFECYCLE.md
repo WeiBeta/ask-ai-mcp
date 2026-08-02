@@ -58,7 +58,8 @@ hash and a fresh isolated test run.
 
 ## Current exposure
 
-The lifecycle and registry are internal Python APIs. MCP still exposes only
-`usage_status`. Candidate build, review, approval, and verified execution will
-be added only through narrow schemas after an opt-in billed end-to-end smoke
-test succeeds.
+MCP exposes separate build, review, and approval tools. Build accepts only a
+strict `ToolBuildSpec`; review accepts only a UUID job ID; approval accepts only
+the reviewed job ID, exact candidate SHA-256, version, and capability labels.
+The server supplies the configured desktop identity, so the caller cannot name
+its own approver. Verified execution and real-source processing remain absent.

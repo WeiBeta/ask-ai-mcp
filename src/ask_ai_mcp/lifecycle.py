@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import difflib
 from pathlib import PurePosixPath
 from typing import Protocol
 
@@ -20,6 +19,7 @@ from ask_ai_mcp.models import (
     ToolBuildSpec,
     ToolCandidateResult,
 )
+from ask_ai_mcp.review import CandidateReviewRepository, candidate_patch
 from ask_ai_mcp.sandbox import DockerCandidateExecutor
 from ask_ai_mcp.static_policy import analyze_candidate
 from ask_ai_mcp.workspace import CandidateWorkspaceManager
@@ -62,13 +62,17 @@ class CandidateLifecycle:
         client: CandidateClient | None = None,
         workspace: CandidateWorkspaceManager | None = None,
         executor: CandidateExecutor | None = None,
+        review_repository: CandidateReviewRepository | None = None,
         max_repairs: int = 2,
     ) -> None:
         if not 0 <= max_repairs <= 2:
             raise ValueError("max_repairs must be between 0 and 2")
-        self.client = client or DeepSeekClient()
-        self.workspace = workspace or CandidateWorkspaceManager()
-        self.executor = executor or DockerCandidateExecutor()
+        self.client = client if client is not None else DeepSeekClient()
+        self.workspace = workspace if workspace is not None else CandidateWorkspaceManager()
+        self.executor = executor if executor is not None else DockerCandidateExecutor()
+        self.review_repository = review_repository or CandidateReviewRepository(
+            self.workspace.jobs_root
+        )
         self.max_repairs = max_repairs
 
     def run(
@@ -118,6 +122,7 @@ class CandidateLifecycle:
                     execution=execution,
                     attempts=attempts,
                 )
+                self.review_repository.save(review)
                 return CandidateLifecycleResult(
                     status=CandidateLifecycleStatus.REVIEW_PENDING,
                     tool_name=spec.name,
@@ -225,25 +230,15 @@ class CandidateLifecycle:
         if not test_files:
             raise ValueError("successful candidate did not include reviewable test files")
 
-        patch_parts: list[str] = []
-        for file in candidate.payload.files:
-            diff = difflib.unified_diff(
-                [],
-                file.content.splitlines(),
-                fromfile="/dev/null",
-                tofile=f"b/{file.path}",
-                lineterm="",
-            )
-            patch_parts.append("\n".join(diff))
-
         return CandidateReviewBundle(
             tool_name=spec.name,
             spec_sha256=spec_hash,
             job_id=job_id,
             candidate_sha256=candidate.candidate_sha256,
+            candidate_summary=candidate.payload.summary,
             candidate_files=[file.path for file in candidate.payload.files],
             test_files=test_files,
-            candidate_patch="\n\n".join(patch_parts),
+            candidate_patch=candidate_patch(candidate.payload),
             declared_risks=candidate.payload.risks,
             static_analysis=static_report,
             execution=execution,
