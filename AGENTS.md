@@ -50,6 +50,12 @@
 5. Only an explicitly approved, hash-pinned tool may process real file copies.
 6. Any code change returns the tool to unverified status.
 
+Verified execution additionally requires the fixed `json_files_v1` contract,
+an exact registered entrypoint, dedicated output, and both Claude Desktop and
+Codex Desktop approval for Pro or output-producing tools. Never add arbitrary
+commands, function names, output paths, container images, or mount options to
+the MCP schema.
+
 ## Verification
 
 - Add or update tests for every behavior change.

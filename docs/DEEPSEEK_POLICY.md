@@ -125,6 +125,6 @@ revision and a fresh build; old candidate bytes are never edited in place.
 
 Synthetic-only candidates need one controller review. Copied-input candidates
 need one controller review and an audit record. Dedicated-output or Pro-built
-candidates require independent Claude and Codex review before real-file
-execution is enabled. Server-side dual-review enforcement is planned with the
-verified execution surface.
+candidates require independent Claude and Codex approval before verified
+execution. The registry records both desktop identities for the same exact hash
+and the runner enforces that requirement.

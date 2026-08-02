@@ -100,17 +100,19 @@ then renders and visually validates them.
 
 ## MCP surface
 
-The intended public tool set is deliberately narrow:
+The current public tool set is deliberately narrow:
 
-- `inspect_source_bundle`
+- `usage_status`
 - `build_helper_tool`
 - `review_tool_candidate`
+- `approve_tool_candidate`
+- `list_registered_tools`
 - `run_verified_tool`
-- `usage_status`
 
 There is no arbitrary prompt forwarding tool. Candidate build, review, and
-approval are exposed as separate narrow operations. No MCP operation can yet
-run a verified tool on real files; that remains a later, capability-scoped gate.
+approval are exposed as separate narrow operations. Verified execution is
+capability-scoped, exact-hash-pinned, dual-approved for output-producing tools,
+and closed to real files unless narrow input roots are explicitly configured.
 
 The server uses local STDIO for both desktop clients. Each client may start its
 own MCP process, so the audit database and verified-tool registry must support
@@ -124,6 +126,7 @@ concurrent access. SQLite runs in WAL mode for shared metadata.
 - Usage database: `%LOCALAPPDATA%\AskAIMCP\usage.db`
 - Candidate jobs: `%LOCALAPPDATA%\AskAIMCP\jobs`
 - Verified tool registry: `%LOCALAPPDATA%\AskAIMCP\registry`
+- Verified execution runs: `%LOCALAPPDATA%\AskAIMCP\runs`
 
 Secrets will be stored in Windows Credential Manager. Environment variables may
 be supported for isolated development and CI, but secrets are never committed.

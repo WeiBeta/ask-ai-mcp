@@ -9,7 +9,7 @@ import stat
 from pathlib import Path
 from uuid import UUID
 
-from ask_ai_mcp.hashing import candidate_payload_sha256
+from ask_ai_mcp.hashing import candidate_payload_sha256, tool_spec_sha256
 from ask_ai_mcp.models import (
     CandidateExecutionReport,
     CandidateFile,
@@ -17,6 +17,7 @@ from ask_ai_mcp.models import (
     CandidateJobState,
     CandidateReviewBundle,
     StaticAnalysisReport,
+    ToolBuildSpec,
     ToolCandidatePayload,
 )
 from ask_ai_mcp.workspace import default_jobs_root
@@ -78,8 +79,11 @@ class CandidateReviewRepository:
         review = CandidateReviewBundle.model_validate_json(
             (control_root / "review.json").read_text(encoding="utf-8")
         )
+        spec = ToolBuildSpec.model_validate_json(
+            (control_root / "spec.json").read_text(encoding="utf-8")
+        )
 
-        if manifest.state is not CandidateJobState.EXECUTED:
+        if manifest.state not in {CandidateJobState.EXECUTED, CandidateJobState.APPROVED}:
             raise CandidateReviewError("candidate is not awaiting review")
         if (
             review.job_id != job_id
@@ -90,6 +94,10 @@ class CandidateReviewRepository:
             or review.spec_sha256 != manifest.spec_sha256
             or review.execution != execution
             or review.static_analysis != static_report
+            or tool_spec_sha256(spec) != manifest.spec_sha256
+            or manifest.entrypoint != spec.entrypoint
+            or manifest.execution_contract != spec.execution_contract
+            or manifest.build_model != review.attempts[-1].model
         ):
             raise CandidateReviewError("review identity or evidence does not match the job")
 

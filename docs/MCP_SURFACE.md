@@ -1,7 +1,7 @@
 # MCP candidate surface
 
 The server deliberately has no arbitrary `ask_deepseek(prompt)` operation.
-Desktop hosts receive four narrow tools.
+Desktop hosts receive six narrow tools.
 
 ## `usage_status`
 
@@ -41,12 +41,44 @@ copies exact bytes into the registry but does not execute them. Modified code,
 failed or missing tests, a different Docker image/backend, an external job
 directory, or a mismatched hash is rejected.
 
+Calling approval for the same exact job, version, hash, and capabilities from
+the other desktop app appends the second approval identity without changing
+candidate bytes. Output-producing and Pro-built tools are not runnable until
+both `claude_desktop` and `codex_desktop` have approved them.
+
+## `list_registered_tools`
+
+Performs a prompt-free local registry read and rehashes every registered file.
+It returns version, exact hash, capabilities, approval identities, execution
+count, whether the tool is runnable, and any blocking reasons. Legacy smoke
+registrations remain visible but are not made runnable by guessing an entrypoint.
+
+## `run_verified_tool`
+
+Accepts only a registered name, version, exact candidate hash, a bounded JSON
+parameter object, and up to 50 absolute input-file paths. It never accepts a
+command, module name, function name, image, network option, or output path.
+
+The tool requires the fixed `json_files_v1` contract. A trusted harness calls
+the registered Python `run(request, input_dir, output_dir)` function inside the
+digest-pinned Docker image. Candidate and staged inputs are read-only; only a
+private per-run output directory is writable. Networking, capabilities,
+privilege escalation, host credentials, repository access, and the Docker
+socket remain unavailable.
+
+Source paths must resolve under one of the semicolon-separated roots in
+`ASK_AI_MCP_ALLOWED_INPUT_ROOTS`. Drive roots and the entire user profile are
+rejected. The variable is absent by default, so real-file execution is closed
+until the user chooses a narrow business-input directory. Inputs are copied and
+hashed before execution; original files are never mounted. The response returns
+artifact metadata and hashes, not file contents.
+
 ## Deliberately absent
 
 - generic DeepSeek chat or prompt forwarding;
 - automatic Pro escalation;
 - self-approval inside the build operation;
-- execution against real source files;
+- mounting or modifying original source files;
 - Office COM or PowerShell automation;
 - network access from candidate containers;
 - direct repository edits by generated code.

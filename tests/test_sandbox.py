@@ -180,3 +180,43 @@ def test_executor_caps_output_and_cleans_up_on_timeout(tmp_path: Path, monkeypat
     assert report.output_truncated is True
     assert len(report.stdout.encode("utf-8")) == 4096
     assert removed == [f"ask-ai-mcp-{root.name}"]
+
+
+def test_verified_executor_uses_same_hardened_boundary(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / str(uuid4())
+    for name in ("candidate", "input", "output"):
+        (root / name).mkdir(parents=True)
+    (root / "candidate" / "tool.py").write_text(
+        "def run(request, input_dir, output_dir):\n    return {}\n",
+        encoding="utf-8",
+    )
+    (root / "input" / "request.json").write_text("{}", encoding="utf-8")
+    captured = {}
+
+    class FakeProcess:
+        def __init__(self, command, **_kwargs):
+            import io
+
+            captured["command"] = command
+            self.stdout = io.BytesIO(b"")
+            self.stderr = io.BytesIO(b"")
+
+        def wait(self, timeout):
+            return 0
+
+    monkeypatch.setattr(sandbox.subprocess, "Popen", FakeProcess)
+    executor = sandbox.DockerVerifiedToolExecutor(docker_cli=Path("docker.exe"))
+    report = executor.execute(
+        run_id=root.name,
+        candidate_root=root / "candidate",
+        input_root=root / "input",
+        output_root=root / "output",
+        entrypoint="tool.py",
+    )
+
+    command = captured["command"]
+    assert "--network" in command and "none" in command
+    assert "--read-only" in command
+    assert "no-new-privileges:true" in command
+    assert "65532:65532" in command
+    assert report.exit_code == 0

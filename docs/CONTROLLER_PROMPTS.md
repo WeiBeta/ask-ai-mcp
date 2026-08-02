@@ -65,14 +65,14 @@ billed operation. A Flash failure never escalates to Pro automatically.
 Review requirements are risk-based. A synthetic-input-only candidate may be
 reviewed by one controller. A copied-input candidate requires one controller
 review plus an audit record. A candidate requesting `write_dedicated_output`,
-or any Pro-generated candidate, requires independent Claude and Codex review
-before real-file execution is enabled. The current server records only one
-approval identity, so dual-review enforcement remains an implementation item.
+or any Pro-generated candidate, requires independent Claude and Codex approval
+before verified execution. The server records both identities for the same
+exact job, version, hash, and capability set and enforces this at run time.
 
 Original business files are always read-only. Tools may operate only on staged
-copies and must write to a dedicated output directory. Until
-`run_verified_tool` is implemented and accepted, do not use candidates or
-registered tools on real business files.
+copies and must write to a dedicated output directory. Do not enable real-file
+execution until the user chooses explicit narrow input roots and a new standard-
+contract synthetic helper passes the cross-client acceptance workflow.
 
 ## Claude Desktop adaptation
 
@@ -112,10 +112,13 @@ reviewer when the helper affects document semantics or delivery quality.
    attempts, isolated tests, token delta, and estimated cost.
 3. Claude calls `review_tool_candidate` for the same job and independently
    reviews the exact patch and evidence without calling DeepSeek.
-4. Claude approves only the unchanged hash with the minimum capabilities.
-5. Either client calls `usage_status` and verifies that only the build changed
+4. Codex and Claude each approve the same unchanged hash and minimum capability
+   set; the second approval must not change candidate bytes.
+5. Either client calls `list_registered_tools` and verifies the tool is marked
+   runnable, then runs it only on a synthetic copied fixture.
+6. Either client calls `usage_status` and verifies that only the build changed
    API usage.
-6. No real business file is processed during this acceptance test.
+7. No real business file is processed during this acceptance test.
 
 Candidate jobs use one per-Windows-user data directory and are not partitioned
 by `ASK_AI_MCP_CLIENT_NAME`, so a job created by one desktop is addressable by
@@ -123,7 +126,7 @@ the other. The acceptance workflow still verifies this behavior end to end.
 
 ## Not-yet-exposed roles
 
-The policy permits source-faithful structuring, but the current four-tool MCP
-surface exposes only candidate build, review, approval, and local usage status.
-There is no production source-structuring tool yet. Do not route source content
-through `build_helper_tool` as a workaround.
+The policy permits source-faithful structuring, but the six-tool MCP surface has
+no production source-structuring model call. Verified tools execute locally and
+offline; they do not make DeepSeek a source-content author. Do not route source
+content through `build_helper_tool` as a workaround.

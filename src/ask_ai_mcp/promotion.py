@@ -19,6 +19,7 @@ from ask_ai_mcp.models import (
     CandidateJobManifest,
     CandidateJobState,
     RuntimeKind,
+    ToolBuildSpec,
     VerifiedToolRecord,
 )
 from ask_ai_mcp.sandbox import BACKEND_NAME, DEFAULT_RUNNER_IMAGE
@@ -63,13 +64,39 @@ class VerifiedToolRegistry:
         execution = CandidateExecutionReport.model_validate_json(
             execution_path.read_text(encoding="utf-8")
         )
-        self._validate_gate(source_root, manifest, execution, request)
+        spec = ToolBuildSpec.model_validate_json(
+            (source_root / "control" / "spec.json").read_text(encoding="utf-8")
+        )
 
         candidate_root = source_root / "candidate"
         files = self._read_exact_files(candidate_root, manifest)
         target = self._target(manifest.tool_name, request.version, manifest.candidate_sha256)
+        self._validate_gate(
+            source_root,
+            manifest,
+            execution,
+            request,
+            spec,
+            already_registered=target.exists(),
+        )
         if target.exists():
-            raise CandidatePromotionError("this exact tool version is already registered")
+            _, existing = self.load(
+                name=manifest.tool_name,
+                version=request.version,
+                candidate_sha256=manifest.candidate_sha256,
+            )
+            if (
+                existing.source_job_id != manifest.job_id
+                or existing.spec_sha256 != manifest.spec_sha256
+                or set(existing.allowed_capabilities) != set(request.allowed_capabilities)
+            ):
+                raise CandidatePromotionError("existing registration metadata does not match")
+            identities = list(dict.fromkeys([*existing.approval_identities, request.approved_by]))
+            if len(identities) > 2:
+                raise CandidatePromotionError("only the two desktop controllers may approve")
+            updated = existing.model_copy(update={"approval_identities": identities})
+            self._write_json_atomic(target / "record.json", updated.model_dump_json(indent=2))
+            return target, updated
 
         record = VerifiedToolRecord(
             name=manifest.tool_name,
@@ -83,8 +110,12 @@ class VerifiedToolRegistry:
             runtime=RuntimeKind.PYTHON,
             approved_at=datetime.now(UTC),
             approved_by=request.approved_by,
+            approval_identities=[request.approved_by],
             decision=request.decision,
             allowed_capabilities=request.allowed_capabilities,
+            build_model=manifest.build_model,
+            entrypoint=manifest.entrypoint,
+            execution_contract=manifest.execution_contract,
         )
 
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -142,13 +173,28 @@ class VerifiedToolRegistry:
         manifest: CandidateJobManifest,
         execution: CandidateExecutionReport,
         request: CandidateApprovalRequest,
+        spec: ToolBuildSpec,
+        *,
+        already_registered: bool,
     ) -> None:
         if source_root.name != manifest.job_id or request.job_id != manifest.job_id:
             raise CandidatePromotionError("approval job identity mismatch")
         if request.candidate_sha256 != manifest.candidate_sha256:
             raise CandidatePromotionError("approval candidate hash mismatch")
-        if manifest.state is not CandidateJobState.EXECUTED:
+        expected_state = (
+            {CandidateJobState.EXECUTED, CandidateJobState.APPROVED}
+            if already_registered
+            else {CandidateJobState.EXECUTED}
+        )
+        if manifest.state not in expected_state:
             raise CandidatePromotionError("candidate job has not passed isolated execution")
+        if (
+            manifest.entrypoint is None
+            or manifest.execution_contract is None
+            or manifest.entrypoint != spec.entrypoint
+            or manifest.execution_contract != spec.execution_contract
+        ):
+            raise CandidatePromotionError("candidate execution contract is missing or changed")
         if (
             execution.job_id != manifest.job_id
             or execution.candidate_sha256 != manifest.candidate_sha256
@@ -161,6 +207,21 @@ class VerifiedToolRegistry:
             or manifest.execution_backend != BACKEND_NAME
         ):
             raise CandidatePromotionError("execution report does not qualify for approval")
+
+    def list_records(self) -> list[VerifiedToolRecord]:
+        records: list[VerifiedToolRecord] = []
+        for record_path in sorted(self.root.rglob("record.json")):
+            relative = record_path.relative_to(self.root)
+            if len(relative.parts) != 4:
+                raise CandidatePromotionError("registered record path has an invalid shape")
+            name, version, candidate_sha256, _ = relative.parts
+            _, record = self.load(
+                name=name,
+                version=version,
+                candidate_sha256=candidate_sha256,
+            )
+            records.append(record)
+        return records
 
     @classmethod
     def _read_exact_files(

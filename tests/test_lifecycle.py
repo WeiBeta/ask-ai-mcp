@@ -37,7 +37,15 @@ def make_spec() -> ToolBuildSpec:
 
 
 def make_candidate(*, unsafe: bool = False) -> ToolCandidateResult:
-    tool_source = "import os\n" if unsafe else "def normalize(value):\n    return value\n"
+    tool_source = (
+        "import os\n"
+        if unsafe
+        else (
+            "def normalize(value):\n    return value\n\n"
+            "def run(request, input_dir, output_dir):\n"
+            "    return normalize(request)\n"
+        )
+    )
     payload = ToolCandidatePayload(
         summary="A synthetic fixture normalizer.",
         files=[
@@ -124,7 +132,7 @@ def test_static_failure_is_repaired_then_returned_for_review(tmp_path: Path) -> 
     assert len(result.attempts) == 2
     assert result.attempts[0].state is CandidateJobState.STATIC_REJECTED
     assert result.attempts[1].state is CandidateJobState.EXECUTED
-    assert client.repair_feedback[0].reason_codes == ["forbidden_import"]
+    assert "forbidden_import" in client.repair_feedback[0].reason_codes
     assert executor.calls == 1
     assert result.review is not None
     assert result.review.status is CandidateLifecycleStatus.REVIEW_PENDING
@@ -148,6 +156,26 @@ def test_persisted_review_detects_candidate_tampering(tmp_path: Path) -> None:
 
     with pytest.raises(CandidateReviewError, match="content changed"):
         CandidateReviewRepository(tmp_path / "jobs").load(result.review.job_id)
+
+
+def test_review_remains_revalidatable_for_second_desktop_approval(tmp_path: Path) -> None:
+    repository = CandidateReviewRepository(tmp_path / "jobs")
+    lifecycle = CandidateLifecycle(
+        client=FakeClient([make_candidate()]),
+        workspace=CandidateWorkspaceManager(tmp_path / "jobs"),
+        executor=PassingExecutor(),
+        review_repository=repository,
+    )
+    result = lifecycle.run(make_spec(), client_name="codex")
+    assert result.review is not None
+    manifest_path = tmp_path / "jobs" / result.review.job_id / "control" / "manifest.json"
+    manifest = CandidateJobManifest.model_validate_json(manifest_path.read_text(encoding="utf-8"))
+    manifest_path.write_text(
+        manifest.model_copy(update={"state": CandidateJobState.APPROVED}).model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+
+    assert repository.load(result.review.job_id) == result.review
 
 
 def test_no_more_than_two_repairs_are_attempted(tmp_path: Path) -> None:

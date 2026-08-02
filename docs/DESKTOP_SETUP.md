@@ -6,10 +6,11 @@ Both desktop clients use the same local STDIO executable and the same
 prompt-free SQLite audit store. Each client starts its own process, so seeing
 two server processes is expected.
 
-The development server exposes usage status plus separate candidate build,
-review, and approval tools. It does not expose verified execution or real-file
-processing. `build_helper_tool` may incur DeepSeek charges; approval only copies
-an already-tested exact hash into the local registry.
+The development server exposes usage status, candidate build/review/approval,
+registry listing, and verified execution. `build_helper_tool` may incur
+DeepSeek charges. Listing, review, approval, and verified local execution make
+no external model call. Real-file paths remain closed until narrow input roots
+are explicitly configured.
 
 Use this absolute executable path:
 
@@ -54,9 +55,9 @@ configured servers:
 ```
 
 Save the file, fully quit Claude Desktop, and reopen it. Closing only the window
-is not sufficient. Confirm that `ask-ai` advertises exactly four tools:
-`usage_status`, `build_helper_tool`, `review_tool_candidate`, and
-`approve_tool_candidate`.
+is not sufficient. Confirm that `ask-ai` advertises exactly six tools:
+`usage_status`, `build_helper_tool`, `review_tool_candidate`,
+`approve_tool_candidate`, `list_registered_tools`, and `run_verified_tool`.
 
 For later private packaging, Claude Desktop also supports a local desktop
 extension bundle. We will evaluate that only after the server workflow is
@@ -81,7 +82,7 @@ command = "C:\\Dev\\ask-ai-mcp\\.venv\\Scripts\\ask-ai-mcp.exe"
 cwd = "C:\\Dev\\ask-ai-mcp"
 enabled = true
 required = false
-enabled_tools = ["usage_status", "build_helper_tool", "review_tool_candidate", "approve_tool_candidate"]
+enabled_tools = ["usage_status", "build_helper_tool", "review_tool_candidate", "approve_tool_candidate", "list_registered_tools", "run_verified_tool"]
 default_tools_approval_mode = "prompt"
 startup_timeout_sec = 20
 tool_timeout_sec = 600
@@ -93,9 +94,15 @@ PYTHONIOENCODING = "utf-8"
 ```
 
 Restart Codex Desktop after saving, then use `/mcp` to confirm the server and
-four-tool catalog. Keep approval mode set to `prompt` during the trial. A build
+six-tool catalog. Keep approval mode set to `prompt` during the trial. A build
 may make up to three billed API calls (one initial candidate and two repairs),
 while review and approval make no external model call.
+
+Do not add `ASK_AI_MCP_ALLOWED_INPUT_ROOTS` until a narrow source-copy directory
+has been chosen. When enabled later, use a semicolon-separated list of explicit
+subdirectories. Drive roots and the complete user profile are intentionally
+rejected. The same variable must be set in both desktop server environments if
+both clients will run verified tools.
 
 The UTF-8 environment settings are required on this workstation. Without them,
 Codex App Server can reject otherwise valid MCP startup because Python stderr

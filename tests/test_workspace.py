@@ -32,7 +32,11 @@ def make_items() -> tuple[ToolBuildSpec, ToolCandidateResult]:
         files=[
             CandidateFile(
                 path="tool.py",
-                content="import json\n\ndef normalize(value):\n    return json.loads(value)\n",
+                content=(
+                    "import json\n\ndef normalize(value):\n    return json.loads(value)\n\n"
+                    "def run(request, input_dir, output_dir):\n"
+                    "    return normalize(json.dumps(request))\n"
+                ),
             ),
             CandidateFile(path="tests/test_tool.py", content="def test_true():\n    assert True\n"),
         ],
@@ -61,6 +65,7 @@ def test_stage_writes_only_candidate_and_content_free_control_files(tmp_path: Pa
     ].content.encode("utf-8")
     assert (job_root / "input").is_dir()
     assert (job_root / "output").is_dir()
+    assert (job_root / "control" / "spec.json").is_file()
     manifest_text = (job_root / "control" / "manifest.json").read_text(encoding="utf-8")
     assert result.payload.files[0].content not in manifest_text
     assert (

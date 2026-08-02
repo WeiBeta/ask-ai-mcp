@@ -38,6 +38,12 @@ for direct delivery. Do not request or use network access, credentials,
 environment variables, subprocesses, dynamic package installation, eval, exec,
 or paths outside a disposable job workspace. Original source files are
 read-only. The controller will validate and review every candidate.
+
+The declared Python entrypoint must define exactly the public callable
+`run(request, input_dir, output_dir)`. `request` is a JSON object, `input_dir`
+is a pathlib.Path containing staged read-only file copies, and `output_dir` is
+a pathlib.Path dedicated to this run. The callable must return a JSON-
+serializable value. Do not add a command-line or shell interface.
 """.strip()
 
 

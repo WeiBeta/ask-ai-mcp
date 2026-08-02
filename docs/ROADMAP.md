@@ -1,8 +1,9 @@
 # Roadmap
 
 Current implementation status: phases 0 through 2 are complete, including the
-real opt-in synthetic Flash smoke request and the four-tool desktop surface.
-Verified execution and real-file processing remain disabled.
+real opt-in synthetic Flash smoke request. The six-tool desktop surface and
+verified execution implementation are complete; cross-client Phase 3 acceptance
+and explicit real-input-root configuration remain pending.
 
 ## Phase 0: policy and skeleton
 
@@ -41,21 +42,24 @@ Exit criteria: unsafe fixtures are rejected and safe candidates cannot escape
 the job directory or alter repository files.
 
 Status: completed on 2026-08-02. The narrow MCP schemas and first billed
-build-review-approval smoke also passed. Verified real-file execution remains
-disabled.
+build-review-approval smoke also passed.
 
 ## Phase 3: verified execution and asset inventory
 
-- Add `list_registered_tools` with hash, version, capabilities, approval time,
+- [x] Add `list_registered_tools` with hash, version, capabilities, approval time,
   and execution counters.
-- Add `run_verified_tool` for exact-hash registry entries only.
-- Stage read-only input copies and write only to a dedicated output directory.
-- Persist an execution evidence manifest, hashes, warnings, and validation
+- [x] Add `run_verified_tool` for exact-hash registry entries only.
+- [x] Stage read-only input copies and write only to a dedicated output directory.
+- [x] Persist an execution evidence manifest, hashes, warnings, and validation
   results.
-- Enforce independent Claude/Codex review for Pro or dedicated-output tools.
+- [x] Enforce independent Claude/Codex approval for Pro or dedicated-output tools.
 
 Exit criteria: an approved synthetic helper can process a copied fixture and
 produce independently verifiable output without changing the original.
+
+Implementation and real Docker contract tests are complete. Exit acceptance is
+pending one new dual-desktop-approved synthetic helper; the legacy smoke helper
+has no standard entrypoint and remains deliberately non-runnable.
 
 ## Phase 4: document preprocessing toolkit
 

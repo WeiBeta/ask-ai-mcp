@@ -19,6 +19,7 @@ from ask_ai_mcp.sandbox import docker_backend_status
 def smoke_spec() -> ToolBuildSpec:
     return ToolBuildSpec(
         name="normalize_synthetic_headers",
+        entrypoint="tool.py",
         category=ToolCategory.TEST_UTILITY,
         purpose=("Create a pure Python helper that normalizes synthetic table headers for tests."),
         input_contract=(
@@ -39,7 +40,10 @@ def smoke_spec() -> ToolBuildSpec:
             "environment_access",
             "subprocess_execution",
         ],
-        fixture_notes="All examples are synthetic and contain no user or business data.",
+        fixture_notes=(
+            "All examples are synthetic and contain no user or business data. The entrypoint "
+            "run(request, input_dir, output_dir) receives headers in request['headers']."
+        ),
     )
 
 

@@ -28,7 +28,10 @@ def payload(source: str, *, path: str = "tool.py") -> ToolCandidatePayload:
 def test_safe_standard_library_candidate_is_allowed() -> None:
     report = analyze_candidate(
         make_spec(),
-        payload("import json\n\ndef convert(value):\n    return json.loads(value)\n"),
+        payload(
+            "import json\n\ndef convert(value):\n    return json.loads(value)\n\n"
+            "def run(request, input_dir, output_dir):\n    return convert(request)\n"
+        ),
     )
     assert report.allowed is True
     assert report.scanned_python_files == 1
@@ -38,7 +41,10 @@ def test_safe_standard_library_candidate_is_allowed() -> None:
 def test_declared_document_package_import_is_allowed() -> None:
     report = analyze_candidate(
         make_spec(allowed_packages=["python-docx"]),
-        payload("from docx import Document\n\ndef load(path):\n    return Document(path)\n"),
+        payload(
+            "from docx import Document\n\ndef load(path):\n    return Document(path)\n\n"
+            "def run(request, input_dir, output_dir):\n    return {'ok': True}\n"
+        ),
     )
     assert report.allowed is True
 
@@ -71,8 +77,23 @@ def test_local_candidate_module_import_is_allowed() -> None:
     candidate = ToolCandidatePayload(
         summary="Two local modules.",
         files=[
-            CandidateFile(path="tool.py", content="import helper\n"),
+            CandidateFile(
+                path="tool.py",
+                content=(
+                    "import helper\n\n"
+                    "def run(request, input_dir, output_dir):\n    return helper.VALUE\n"
+                ),
+            ),
             CandidateFile(path="helper.py", content="VALUE = 1\n"),
         ],
     )
     assert analyze_candidate(make_spec(), candidate).allowed is True
+
+
+def test_entrypoint_requires_exact_run_signature() -> None:
+    report = analyze_candidate(
+        make_spec(),
+        payload("def run(value):\n    return value\n"),
+    )
+    assert report.allowed is False
+    assert "invalid_run_signature" in {finding.code for finding in report.findings}

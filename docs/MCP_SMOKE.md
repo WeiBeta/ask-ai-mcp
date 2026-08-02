@@ -35,5 +35,7 @@ After review, the exact candidate was registered as `0.0.1-smoke`, approved by
 the server-configured `codex_desktop` identity. The only capability label is
 `read_synthetic_inputs`. Registry reload and per-file hash verification passed.
 
-This approval does not authorize real-file processing and the project still
-exposes no `run_verified_tool` operation.
+At the time of this 0.2.0 smoke, the project exposed no `run_verified_tool`
+operation. Version 0.3.0 retains this legacy registration for audit visibility,
+but it remains non-runnable because it has no standard execution contract,
+dedicated-output capability, or second desktop approval.

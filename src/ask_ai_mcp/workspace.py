@@ -70,6 +70,12 @@ class CandidateWorkspaceManager:
                 file.path: hashlib.sha256(file.content.encode("utf-8")).hexdigest()
                 for file in result.payload.files
             },
+            build_model=result.model,
+            entrypoint=spec.entrypoint,
+            execution_contract=spec.execution_contract,
+        )
+        (job_root / "control" / "spec.json").write_text(
+            spec.model_dump_json(indent=2), encoding="utf-8"
         )
         (job_root / "control" / "manifest.json").write_text(
             manifest.model_dump_json(indent=2), encoding="utf-8"

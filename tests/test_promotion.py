@@ -37,7 +37,14 @@ def make_executed_job(tmp_path: Path):
     payload = ToolCandidatePayload(
         summary="A bounded synthetic fixture counter.",
         files=[
-            CandidateFile(path="tool.py", content="def count(items):\n    return len(items)\n"),
+            CandidateFile(
+                path="tool.py",
+                content=(
+                    "def count(items):\n    return len(items)\n\n"
+                    "def run(request, input_dir, output_dir):\n"
+                    "    return {'count': count(request.get('items', []))}\n"
+                ),
+            ),
             CandidateFile(
                 path="test_tool.py",
                 content=(
@@ -162,3 +169,23 @@ def test_registered_file_change_invalidates_record(tmp_path: Path) -> None:
 
     with pytest.raises(CandidatePromotionError, match="no longer match"):
         registry.load(name=record.name, version=record.version, candidate_sha256=record.sha256)
+
+
+def test_second_desktop_approval_is_appended_without_changing_candidate(
+    tmp_path: Path,
+) -> None:
+    job_root, manifest = make_executed_job(tmp_path)
+    registry = VerifiedToolRegistry(tmp_path / "verified", jobs_root=tmp_path / "jobs")
+    _, first = registry.approve(
+        job_root=job_root,
+        request=approval(manifest, approved_by="codex_desktop"),
+    )
+    _, second = registry.approve(
+        job_root=job_root,
+        request=approval(manifest, approved_by="claude_desktop"),
+    )
+
+    assert first.approval_identities == ["codex_desktop"]
+    assert second.approval_identities == ["codex_desktop", "claude_desktop"]
+    assert second.file_sha256 == first.file_sha256
+    assert registry.list_records() == [second]

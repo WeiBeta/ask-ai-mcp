@@ -24,9 +24,11 @@ a digest-pinned Docker/WSL 2 candidate runner.
 
 The lifecycle permits one build plus at most two repair rounds, returns a
 patch-and-test review bundle, and requires explicit hash-matched promotion.
-The development MCP surface exposes `usage_status`, `build_helper_tool`,
-`review_tool_candidate`, and `approve_tool_candidate`. Verified tools still
-cannot process real files; `run_verified_tool` remains disabled.
+The development MCP surface exposes six narrow tools: usage, candidate build,
+review, approval, registry listing, and verified execution. Verified execution
+requires a standard callable contract, exact registry hash, dual Claude/Codex
+approval for output-producing tools, Docker isolation, and explicitly
+configured narrow input roots. No real input root is enabled by default.
 
 The first full billed lifecycle smoke passed on 2026-08-02 in one Flash call:
 the generated synthetic helper passed four isolated tests, was reviewed, and

@@ -26,6 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
 def smoke_spec() -> ToolBuildSpec:
     return ToolBuildSpec(
         name="split_synthetic_fields",
+        entrypoint="tool.py",
         category=ToolCategory.TEST_UTILITY,
         purpose="Create a pure Python helper for a synthetic delimiter parsing fixture.",
         input_contract="A synthetic UTF-8 string containing pipe-delimited test fields.",
@@ -40,6 +41,10 @@ def smoke_spec() -> ToolBuildSpec:
             "subprocess execution",
             "environment-variable access",
         ],
+        fixture_notes=(
+            "The entrypoint must define run(request, input_dir, output_dir); request contains "
+            "a synthetic text field and the result is a JSON-compatible list."
+        ),
     )
 
 

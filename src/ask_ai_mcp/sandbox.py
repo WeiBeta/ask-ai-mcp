@@ -18,6 +18,7 @@ from ask_ai_mcp.models import (
     CandidateJobManifest,
     CandidateJobState,
     SandboxBackendStatus,
+    VerifiedToolContainerReport,
 )
 
 DEFAULT_RUNNER_IMAGE = (
@@ -29,6 +30,7 @@ _TEST_COUNT = re.compile(r"Ran (\d+) tests? in")
 _PINNED_IMAGE = re.compile(r"^[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$")
 _CONTAINER_HARNESS = """
 import pathlib
+import runpy
 import sys
 import unittest
 
@@ -41,7 +43,39 @@ if count == 0:
     print("No unittest-compatible tests were discovered.", file=sys.stderr)
     raise SystemExit(3)
 result = unittest.TextTestRunner(verbosity=2).run(suite)
-raise SystemExit(0 if result.wasSuccessful() else 1)
+if not result.wasSuccessful():
+    raise SystemExit(1)
+entrypoint = sys.argv[1]
+if entrypoint:
+    namespace = runpy.run_path(str(root / entrypoint))
+    if not callable(namespace.get("run")):
+        print("Entrypoint does not define callable run().", file=sys.stderr)
+        raise SystemExit(4)
+raise SystemExit(0)
+""".strip()
+
+_VERIFIED_TOOL_HARNESS = """
+import json
+import pathlib
+import runpy
+import sys
+
+candidate_root = pathlib.Path("/workspace/candidate")
+input_root = pathlib.Path("/workspace/input")
+output_root = pathlib.Path("/workspace/output")
+entrypoint = pathlib.PurePosixPath(sys.argv[1])
+if entrypoint.is_absolute() or ".." in entrypoint.parts:
+    raise SystemExit("Invalid registered entrypoint")
+namespace = runpy.run_path(str(candidate_root.joinpath(*entrypoint.parts)))
+runner = namespace.get("run")
+if not callable(runner):
+    raise SystemExit("Registered entrypoint does not define callable run()")
+request = json.loads((input_root / "request.json").read_text(encoding="utf-8"))
+result = runner(request, input_root / "files", output_root)
+serialized = json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+if len(serialized.encode("utf-8")) > 1048576:
+    raise SystemExit("Tool result JSON exceeds 1 MiB")
+(output_root / "_ask_ai_result.json").write_text(serialized, encoding="utf-8")
 """.strip()
 
 
@@ -192,6 +226,7 @@ class DockerCandidateExecutor:
             candidate_root=candidate_root,
             input_root=input_root,
             output_root=output_root,
+            entrypoint=manifest.entrypoint or "",
         )
         process = subprocess.Popen(
             command,
@@ -258,6 +293,7 @@ class DockerCandidateExecutor:
         candidate_root: Path,
         input_root: Path,
         output_root: Path,
+        entrypoint: str,
     ) -> list[str]:
         assert self.docker_cli is not None
         return [
@@ -306,6 +342,7 @@ class DockerCandidateExecutor:
             "-B",
             "-c",
             _CONTAINER_HARNESS,
+            entrypoint,
         ]
 
     @staticmethod
@@ -363,3 +400,162 @@ class DockerCandidateExecutor:
         temporary = path.with_suffix(f"{path.suffix}.tmp")
         temporary.write_text(content, encoding="utf-8")
         temporary.replace(path)
+
+
+class DockerVerifiedToolExecutor:
+    """Run one exact registered Python entrypoint in the hardened container."""
+
+    def __init__(
+        self,
+        *,
+        docker_cli: Path | None = None,
+        runner_image: str = DEFAULT_RUNNER_IMAGE,
+        limits: SandboxLimits | None = None,
+    ) -> None:
+        self.docker_cli = docker_cli or find_docker_cli()
+        if not _PINNED_IMAGE.fullmatch(runner_image):
+            raise ValueError("runner_image must use a sha256 content digest")
+        self.runner_image = runner_image
+        self.limits = limits or SandboxLimits(timeout_seconds=120)
+
+    def execute(
+        self,
+        *,
+        run_id: str,
+        candidate_root: Path,
+        input_root: Path,
+        output_root: Path,
+        entrypoint: str,
+    ) -> VerifiedToolContainerReport:
+        if UUID(run_id).version != 4 or str(UUID(run_id)) != run_id:
+            raise CandidateExecutionError("verified run ID is invalid")
+        if self.docker_cli is None:
+            raise CandidateExecutionError("Docker CLI is not available")
+        candidate = DockerCandidateExecutor._require_plain_directory(
+            candidate_root.parent, candidate_root.name
+        )
+        inputs = DockerCandidateExecutor._require_plain_directory(
+            input_root.parent, input_root.name
+        )
+        outputs = DockerCandidateExecutor._require_plain_directory(
+            output_root.parent, output_root.name
+        )
+        entrypoint_path = (candidate / entrypoint).resolve(strict=True)
+        if not entrypoint_path.is_relative_to(candidate) or not entrypoint_path.is_file():
+            raise CandidateExecutionError("registered entrypoint is missing or unsafe")
+        if any(outputs.iterdir()):
+            raise CandidateExecutionError("verified output directory must be empty")
+
+        container_name = f"ask-ai-run-{run_id}"
+        command = self._docker_command(
+            container_name=container_name,
+            candidate_root=candidate,
+            input_root=inputs,
+            output_root=outputs,
+            entrypoint=entrypoint,
+        )
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        assert process.stdout is not None
+        assert process.stderr is not None
+        stdout = _BoundedCapture(self.limits.max_output_bytes)
+        stderr = _BoundedCapture(self.limits.max_output_bytes)
+        threads = [
+            threading.Thread(target=stdout.drain, args=(process.stdout,), daemon=True),
+            threading.Thread(target=stderr.drain, args=(process.stderr,), daemon=True),
+        ]
+        for thread in threads:
+            thread.start()
+
+        timed_out = False
+        try:
+            exit_code = process.wait(timeout=self.limits.timeout_seconds)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            self._remove_container(container_name)
+            process.kill()
+            exit_code = None
+        finally:
+            for thread in threads:
+                thread.join(timeout=5)
+
+        return VerifiedToolContainerReport(
+            run_id=run_id,
+            exit_code=exit_code,
+            timed_out=timed_out,
+            stdout=stdout.text(),
+            stderr=stderr.text(),
+            output_truncated=stdout.truncated or stderr.truncated,
+            backend=BACKEND_NAME,
+            runner_image=self.runner_image,
+        )
+
+    def _docker_command(
+        self,
+        *,
+        container_name: str,
+        candidate_root: Path,
+        input_root: Path,
+        output_root: Path,
+        entrypoint: str,
+    ) -> list[str]:
+        assert self.docker_cli is not None
+        return [
+            str(self.docker_cli),
+            "run",
+            "--rm",
+            "--name",
+            container_name,
+            "--platform",
+            "linux/amd64",
+            "--network",
+            "none",
+            "--read-only",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges:true",
+            "--user",
+            "65532:65532",
+            "--pids-limit",
+            str(self.limits.pids),
+            "--ulimit",
+            "nofile=256:256",
+            "--ulimit",
+            "core=0:0",
+            "--memory",
+            f"{self.limits.memory_mb}m",
+            "--cpus",
+            str(self.limits.cpus),
+            "--tmpfs",
+            "/tmp:rw,noexec,nosuid,nodev,size=16m",
+            "--env",
+            "HOME=/tmp",
+            "--env",
+            "PYTHONDONTWRITEBYTECODE=1",
+            "--mount",
+            DockerCandidateExecutor._bind_mount(
+                candidate_root, "/workspace/candidate", read_only=True
+            ),
+            "--mount",
+            DockerCandidateExecutor._bind_mount(input_root, "/workspace/input", read_only=True),
+            "--mount",
+            DockerCandidateExecutor._bind_mount(output_root, "/workspace/output", read_only=False),
+            "--workdir",
+            "/workspace/candidate",
+            self.runner_image,
+            "python",
+            "-B",
+            "-c",
+            _VERIFIED_TOOL_HARNESS,
+            entrypoint,
+        ]
+
+    def _remove_container(self, container_name: str) -> None:
+        assert self.docker_cli is not None
+        subprocess.run(
+            [str(self.docker_cli), "rm", "--force", container_name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            check=False,
+        )

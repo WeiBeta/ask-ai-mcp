@@ -169,6 +169,16 @@ def analyze_candidate(
     )
     allowed_roots = _allowed_import_roots(spec)
 
+    if spec.entrypoint not in {file.path for file in python_files}:
+        findings.append(
+            StaticFinding(
+                file_path=spec.entrypoint,
+                code="missing_entrypoint",
+                severity=FindingSeverity.ERROR,
+                message="Candidate does not contain the declared Python entrypoint",
+            )
+        )
+
     for file in python_files:
         try:
             tree = ast.parse(file.content, filename=file.path)
@@ -190,6 +200,44 @@ def analyze_candidate(
         )
         visitor.visit(tree)
         findings.extend(visitor.findings)
+
+        if file.path == spec.entrypoint:
+            run_functions = [
+                node
+                for node in ast.walk(tree)
+                if isinstance(node, ast.FunctionDef) and node.name == "run"
+            ]
+            if not run_functions:
+                findings.append(
+                    StaticFinding(
+                        file_path=file.path,
+                        code="missing_run_function",
+                        severity=FindingSeverity.ERROR,
+                        message="Entrypoint must define run(request, input_dir, output_dir)",
+                    )
+                )
+            else:
+                arguments = run_functions[0].args
+                positional = [*arguments.posonlyargs, *arguments.args]
+                if (
+                    [argument.arg for argument in positional]
+                    != ["request", "input_dir", "output_dir"]
+                    or arguments.vararg is not None
+                    or arguments.kwarg is not None
+                    or arguments.kwonlyargs
+                ):
+                    findings.append(
+                        StaticFinding(
+                            file_path=file.path,
+                            code="invalid_run_signature",
+                            severity=FindingSeverity.ERROR,
+                            message=(
+                                "Entrypoint run function must accept exactly request, "
+                                "input_dir, output_dir"
+                            ),
+                            line=run_functions[0].lineno,
+                        )
+                    )
 
     return StaticAnalysisReport(
         candidate_sha256=candidate_payload_sha256(payload),

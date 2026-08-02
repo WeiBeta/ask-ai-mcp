@@ -41,7 +41,13 @@ def api_response(*, path: str = "tool.py", finish_reason: str = "stop") -> dict[
     candidate = {
         "summary": "A bounded DOCX table extractor and its tests.",
         "files": [
-            {"path": path, "content": "def extract_tables(path):\n    return []\n"},
+            {
+                "path": path,
+                "content": (
+                    "def extract_tables(path):\n    return []\n\n"
+                    "def run(request, input_dir, output_dir):\n    return []\n"
+                ),
+            },
             {"path": "test_tool.py", "content": "def test_placeholder():\n    assert True\n"},
         ],
         "risks": ["Merged-cell semantics require fixture coverage."],

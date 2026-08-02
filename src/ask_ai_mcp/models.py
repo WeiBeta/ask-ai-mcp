@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import PurePosixPath
@@ -19,6 +20,10 @@ class StrictModel(BaseModel):
 class RuntimeKind(StrEnum):
     PYTHON = "python"
     POWERSHELL = "powershell"
+
+
+class ExecutionContract(StrEnum):
+    JSON_FILES_V1 = "json_files_v1"
 
 
 class ToolCategory(StrEnum):
@@ -65,6 +70,11 @@ class CandidateLifecycleStatus(StrEnum):
     FAILED = "failed"
 
 
+class VerifiedToolExecutionStatus(StrEnum):
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
 class ToolCapability(StrEnum):
     READ_SYNTHETIC_INPUTS = "read_synthetic_inputs"
     READ_COPIED_INPUTS = "read_copied_inputs"
@@ -76,6 +86,13 @@ class ToolBuildSpec(StrictModel):
 
     name: str = Field(min_length=3, max_length=64, pattern=r"^[a-z][a-z0-9_]+$")
     category: ToolCategory
+    entrypoint: str = Field(
+        default="tool.py",
+        min_length=4,
+        max_length=80,
+        pattern=r"^[a-z][a-z0-9_]*\.py$",
+    )
+    execution_contract: ExecutionContract = ExecutionContract.JSON_FILES_V1
     purpose: str = Field(min_length=10, max_length=2_000)
     runtime: RuntimeKind = RuntimeKind.PYTHON
     input_contract: str = Field(min_length=10, max_length=4_000)
@@ -161,6 +178,9 @@ class CandidateJobManifest(StrictModel):
     candidate_files: list[str] = Field(min_length=1, max_length=20)
     candidate_file_sha256: dict[str, str] = Field(default_factory=dict, max_length=20)
     execution_backend: str | None = Field(default=None, max_length=64)
+    build_model: DeepSeekModel = DeepSeekModel.FLASH
+    entrypoint: str | None = Field(default=None, max_length=80)
+    execution_contract: ExecutionContract | None = None
 
     @field_validator("candidate_file_sha256")
     @classmethod
@@ -333,8 +353,12 @@ class VerifiedToolRecord(StrictModel):
     runtime: RuntimeKind
     approved_at: datetime
     approved_by: str = Field(min_length=1, max_length=64)
+    approval_identities: list[str] = Field(default_factory=list, max_length=2)
     decision: CandidateDecision
     allowed_capabilities: list[ToolCapability] = Field(default_factory=list, max_length=3)
+    build_model: DeepSeekModel = DeepSeekModel.FLASH
+    entrypoint: str | None = Field(default=None, max_length=80)
+    execution_contract: ExecutionContract | None = None
 
     @field_validator("file_sha256")
     @classmethod
@@ -345,6 +369,14 @@ class VerifiedToolRecord(StrictModel):
         ):
             raise ValueError("verified file hashes must be lowercase SHA-256 values")
         return value
+
+    @model_validator(mode="after")
+    def normalize_approval_identities(self) -> Self:
+        identities = list(dict.fromkeys([self.approved_by, *self.approval_identities]))
+        if len(identities) > 2:
+            raise ValueError("at most two desktop approval identities are supported")
+        self.approval_identities = identities
+        return self
 
 
 class CandidateApprovalRequest(StrictModel):
@@ -380,3 +412,87 @@ class CandidateApprovalCommand(StrictModel):
     candidate_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
     version: str = Field(min_length=1, max_length=32, pattern=r"^[0-9A-Za-z][0-9A-Za-z._-]*$")
     allowed_capabilities: list[ToolCapability] = Field(default_factory=list, max_length=3)
+
+
+class RegisteredToolSummary(StrictModel):
+    record: VerifiedToolRecord
+    runnable: bool
+    blocking_reasons: list[str] = Field(default_factory=list, max_length=10)
+    execution_count: int = Field(default=0, ge=0)
+
+
+class RegisteredToolList(StrictModel):
+    tools: list[RegisteredToolSummary] = Field(default_factory=list, max_length=500)
+
+
+class VerifiedToolExecutionCommand(StrictModel):
+    name: str = Field(min_length=3, max_length=64, pattern=r"^[a-z][a-z0-9_]+$")
+    version: str = Field(min_length=1, max_length=32, pattern=r"^[0-9A-Za-z][0-9A-Za-z._-]*$")
+    candidate_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    input_files: list[str] = Field(default_factory=list, max_length=50)
+    parameters_json: str = Field(default="{}", max_length=65_536)
+
+    @field_validator("input_files")
+    @classmethod
+    def validate_input_file_strings(cls, value: list[str]) -> list[str]:
+        if any(not path.strip() or len(path) > 1_024 for path in value):
+            raise ValueError("input file paths must be non-empty and at most 1024 characters")
+        if len({path.casefold() for path in value}) != len(value):
+            raise ValueError("input file paths must be unique")
+        return value
+
+    @field_validator("parameters_json")
+    @classmethod
+    def validate_parameters_json(cls, value: str) -> str:
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError as error:
+            raise ValueError("parameters_json must contain valid JSON") from error
+        if not isinstance(parsed, dict):
+            raise ValueError("parameters_json must contain one JSON object")
+        return value
+
+
+class VerifiedInputArtifact(StrictModel):
+    staged_name: str = Field(min_length=1, max_length=120)
+    sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    size_bytes: int = Field(ge=0)
+
+
+class VerifiedOutputArtifact(StrictModel):
+    relative_path: str = Field(min_length=1, max_length=240)
+    sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    size_bytes: int = Field(ge=0)
+
+
+class VerifiedToolContainerReport(StrictModel):
+    run_id: str = Field(min_length=36, max_length=36)
+    exit_code: int | None = None
+    timed_out: bool = False
+    stdout: str = Field(default="", max_length=65_536)
+    stderr: str = Field(default="", max_length=65_536)
+    output_truncated: bool = False
+    backend: str = Field(min_length=1, max_length=64)
+    runner_image: str = Field(min_length=1, max_length=255)
+
+
+class VerifiedToolExecutionReport(StrictModel):
+    run_id: str = Field(min_length=36, max_length=36)
+    status: VerifiedToolExecutionStatus
+    tool_name: str = Field(min_length=3, max_length=64)
+    version: str = Field(min_length=1, max_length=32)
+    candidate_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    executed_by: str = Field(min_length=1, max_length=64)
+    started_at: datetime
+    completed_at: datetime
+    backend: str = Field(min_length=1, max_length=64)
+    runner_image: str = Field(min_length=1, max_length=255)
+    exit_code: int | None = None
+    timed_out: bool = False
+    output_truncated: bool = False
+    input_artifacts: list[VerifiedInputArtifact] = Field(default_factory=list, max_length=50)
+    output_artifacts: list[VerifiedOutputArtifact] = Field(default_factory=list, max_length=100)
+    output_directory: str = Field(min_length=1, max_length=1_024)
+    stdout: str = Field(default="", max_length=65_536)
+    stderr: str = Field(default="", max_length=65_536)
+    failure_reason: str | None = Field(default=None, max_length=500)

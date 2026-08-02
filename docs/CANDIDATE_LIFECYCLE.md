@@ -24,6 +24,12 @@ stderr. Candidate-development jobs have empty or synthetic-only inputs, so
 repair feedback must never contain knowledge-base or real source-document text.
 There is no automatic escalation from Flash to Pro.
 
+New candidates declare one simple Python entrypoint and the fixed
+`json_files_v1` execution contract. Static analysis requires that entrypoint to
+define exactly `run(request, input_dir, output_dir)`, and isolated candidate
+testing verifies the callable exists. Arbitrary CLI commands and function names
+are not supported.
+
 ## Review bundle
 
 A passing candidate remains `review_pending`. The bundle returned to Sol/Opus
@@ -56,10 +62,17 @@ Every later registry read re-hashes the copied files. Any edit invalidates the
 record. “Approved with changes” is rejected: changes require a new candidate
 hash and a fresh isolated test run.
 
+An exact duplicate approval from the second desktop app adds its identity to
+the immutable-code record. It does not create a new candidate or rerun
+DeepSeek. Pro-built or dedicated-output tools require both desktop identities
+before verified execution.
+
 ## Current exposure
 
-MCP exposes separate build, review, and approval tools. Build accepts only a
-strict `ToolBuildSpec`; review accepts only a UUID job ID; approval accepts only
-the reviewed job ID, exact candidate SHA-256, version, and capability labels.
-The server supplies the configured desktop identity, so the caller cannot name
-its own approver. Verified execution and real-source processing remain absent.
+MCP exposes separate build, review, approval, registry-list, and verified-run
+tools. Build accepts only a strict `ToolBuildSpec`; review accepts only a UUID
+job ID; approval accepts only the reviewed job ID, exact candidate SHA-256,
+version, and capability labels. The server supplies the configured desktop
+identity, so the caller cannot name its own approver. Verified execution accepts
+only an exact registered identity, bounded JSON parameters, and allow-listed
+source paths that are copied before Docker execution.

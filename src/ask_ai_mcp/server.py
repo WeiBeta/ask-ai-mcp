@@ -18,14 +18,18 @@ from ask_ai_mcp.models import (
     CandidateDecision,
     CandidateLifecycleResult,
     CandidateReviewBundle,
+    RegisteredToolList,
     ToolBuildSpec,
     UsageSummary,
+    VerifiedToolExecutionCommand,
+    VerifiedToolExecutionReport,
     VerifiedToolRecord,
 )
 from ask_ai_mcp.promotion import VerifiedToolRegistry
 from ask_ai_mcp.review import CandidateReviewRepository
 from ask_ai_mcp.sandbox import docker_backend_status
 from ask_ai_mcp.usage import UsageStore
+from ask_ai_mcp.verified_execution import VerifiedToolRunner
 from ask_ai_mcp.workspace import CandidateWorkspaceManager
 
 SERVER_INSTRUCTIONS = """
@@ -71,6 +75,11 @@ def get_lifecycle() -> CandidateLifecycle:
 @lru_cache(maxsize=1)
 def get_registry() -> VerifiedToolRegistry:
     return VerifiedToolRegistry(jobs_root=get_workspace().jobs_root)
+
+
+@lru_cache(maxsize=1)
+def get_verified_runner() -> VerifiedToolRunner:
+    return VerifiedToolRunner(registry=get_registry())
 
 
 def get_client_name() -> str:
@@ -190,3 +199,50 @@ def approve_tool_candidate(command: CandidateApprovalCommand) -> VerifiedToolRec
         request=request,
     )
     return record
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="List hash-pinned registered tools",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
+def list_registered_tools() -> RegisteredToolList:
+    """List locally registered tools, execution counts, and blocking reasons.
+
+    This is a local, prompt-free registry read. Every candidate tree is
+    rehashed before it is returned. It does not call DeepSeek or inspect source
+    files.
+    """
+    return get_verified_runner().list_registered_tools()
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Run an exact approved tool on staged copies",
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=False,
+    )
+)
+def run_verified_tool(
+    command: VerifiedToolExecutionCommand,
+) -> VerifiedToolExecutionReport:
+    """Run one exact registered hash in Docker without modifying source files.
+
+    Source paths must be plain files under explicitly configured allowed roots.
+    The server copies them into a private run directory, mounts those copies
+    read-only, writes only to a dedicated output directory, and returns hashes
+    rather than file contents. Tools lacking the standard execution contract,
+    output capability, or required dual-desktop approval are rejected.
+    """
+    client_name = get_client_name()
+    backend = docker_backend_status()
+    if not backend.ready:
+        reasons = ",".join(backend.reasons) or "unknown"
+        raise RuntimeError(f"isolated runner is unavailable: {reasons}")
+    return get_verified_runner().run(command, client_name=client_name)

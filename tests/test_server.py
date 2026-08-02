@@ -15,6 +15,7 @@ from ask_ai_mcp.models import (
     DeepSeekModel,
     ToolBuildSpec,
     ToolCategory,
+    VerifiedToolExecutionCommand,
 )
 
 
@@ -38,6 +39,8 @@ def test_mcp_surface_and_raw_schema_are_narrow() -> None:
         "build_helper_tool",
         "review_tool_candidate",
         "approve_tool_candidate",
+        "list_registered_tools",
+        "run_verified_tool",
     }
     build_schema = by_name["build_helper_tool"].parameters
     assert set(build_schema["properties"]) == {"spec", "allow_pro"}
@@ -52,6 +55,14 @@ def test_mcp_surface_and_raw_schema_are_narrow() -> None:
         "read_synthetic_inputs",
         "read_copied_inputs",
         "write_dedicated_output",
+    }
+    run_schema = by_name["run_verified_tool"].parameters["properties"]["command"]
+    assert set(run_schema["properties"]) == {
+        "name",
+        "version",
+        "candidate_sha256",
+        "input_files",
+        "parameters_json",
     }
 
 
@@ -148,3 +159,39 @@ def test_approval_identity_comes_from_server_configuration(monkeypatch) -> None:
     assert request.approved_by == "codex_desktop"
     assert request.decision is CandidateDecision.APPROVED
     assert request.candidate_sha256 == candidate_hash
+
+
+def test_list_registered_tools_is_local_registry_read(monkeypatch) -> None:
+    monkeypatch.setattr(
+        server,
+        "get_verified_runner",
+        lambda: SimpleNamespace(list_registered_tools=lambda: "tools"),
+    )
+    assert server.list_registered_tools() == "tools"
+
+
+def test_verified_execution_binds_client_and_checks_backend(monkeypatch) -> None:
+    captured = {}
+
+    class FakeRunner:
+        def run(self, command, **kwargs):
+            captured["command"] = command
+            captured.update(kwargs)
+            return "report"
+
+    command = VerifiedToolExecutionCommand(
+        name="fixture_counter",
+        version="0.1.0",
+        candidate_sha256="a" * 64,
+    )
+    monkeypatch.setenv("ASK_AI_MCP_CLIENT_NAME", "claude_desktop")
+    monkeypatch.setattr(
+        server,
+        "docker_backend_status",
+        lambda: SimpleNamespace(ready=True, reasons=[]),
+    )
+    monkeypatch.setattr(server, "get_verified_runner", lambda: FakeRunner())
+
+    assert server.run_verified_tool(command) == "report"
+    assert captured["client_name"] == "claude_desktop"
+    assert captured["command"] == command

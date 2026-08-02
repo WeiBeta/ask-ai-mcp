@@ -22,7 +22,11 @@ from ask_ai_mcp.models import (
     ToolCandidateResult,
     ToolCategory,
 )
-from ask_ai_mcp.sandbox import DockerCandidateExecutor, docker_backend_status
+from ask_ai_mcp.sandbox import (
+    DockerCandidateExecutor,
+    DockerVerifiedToolExecutor,
+    docker_backend_status,
+)
 from ask_ai_mcp.workspace import CandidateWorkspaceManager
 
 pytestmark = pytest.mark.skipif(
@@ -112,7 +116,14 @@ def test_real_lifecycle_returns_only_a_review_pending_candidate(tmp_path: Path) 
     payload = ToolCandidatePayload(
         summary="A synthetic identity helper.",
         files=[
-            CandidateFile(path="tool.py", content="def identity(value):\n    return value\n"),
+            CandidateFile(
+                path="tool.py",
+                content=(
+                    "def identity(value):\n    return value\n\n"
+                    "def run(request, input_dir, output_dir):\n"
+                    "    return identity(request)\n"
+                ),
+            ),
             CandidateFile(
                 path="test_tool.py",
                 content=(
@@ -147,3 +158,37 @@ def test_real_lifecycle_returns_only_a_review_pending_candidate(tmp_path: Path) 
     assert result.review is not None
     assert result.review.execution.tests_run == 1
     assert result.review.candidate_sha256 == candidate.candidate_sha256
+
+
+def test_real_verified_executor_runs_json_files_contract(tmp_path: Path) -> None:
+    status = docker_backend_status()
+    assert status.ready, status.reasons
+
+    run_id = str(uuid4())
+    root = tmp_path / run_id
+    for name in ("candidate", "input", "output"):
+        (root / name).mkdir(parents=True)
+    (root / "candidate" / "tool.py").write_text(
+        (
+            "def run(request, input_dir, output_dir):\n"
+            "    return {'contract': request['contract'], 'files': len(request['inputs'])}\n"
+        ),
+        encoding="utf-8",
+    )
+    (root / "input" / "request.json").write_text(
+        '{"contract":"json_files_v1","parameters":{},"inputs":[]}',
+        encoding="utf-8",
+    )
+
+    report = DockerVerifiedToolExecutor().execute(
+        run_id=run_id,
+        candidate_root=root / "candidate",
+        input_root=root / "input",
+        output_root=root / "output",
+        entrypoint="tool.py",
+    )
+
+    assert report.exit_code == 0
+    assert report.timed_out is False
+    result = (root / "output" / "_ask_ai_result.json").read_text(encoding="utf-8")
+    assert '"contract":"json_files_v1"' in result
