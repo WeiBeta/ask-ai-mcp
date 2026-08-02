@@ -30,14 +30,18 @@ can generate a harmless candidate without logging secrets.
 
 Selected backend: all-users Docker Desktop with WSL 2 Linux containers.
 
-- Create per-job directories and immutable fixture inputs.
-- Add Python AST and dependency policy checks.
-- Add runtime, memory, process, and output limits.
-- Implement at most two automated repair rounds.
-- Return candidate patch, tests, and risk report for Sol review.
+- [x] Create per-job directories and immutable fixture inputs.
+- [x] Add Python AST and dependency policy checks.
+- [x] Add runtime, memory, process, and output limits.
+- [x] Implement at most two automated repair rounds.
+- [x] Return candidate patch, tests, and risk report for Sol review.
+- [x] Require explicit job ID and candidate hash for local promotion.
 
 Exit criteria: unsafe fixtures are rejected and safe candidates cannot escape
 the job directory or alter repository files.
+
+Status: completed internally on 2026-08-02. Candidate operations remain off the
+MCP surface until their schemas and a billed end-to-end smoke test are approved.
 
 ## Phase 3: document preprocessing toolkit
 

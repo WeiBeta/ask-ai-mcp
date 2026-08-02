@@ -48,7 +48,7 @@ def usage_status(days: Annotated[int, Field(ge=1, le=366)] = 15) -> UsageSummary
     """Return prompt-free DeepSeek usage totals for the requested period.
 
     This tool performs no external API call and never returns prompts, source
-    contents, responses, or credentials. Candidate-generation tools remain
-    disabled until the isolated runner and review gates are implemented.
+    contents, responses, or credentials. Candidate operations remain disabled
+    until their narrow MCP schemas and end-to-end smoke test are approved.
     """
     return get_usage_store().summarize(days=days)

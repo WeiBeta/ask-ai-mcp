@@ -16,13 +16,16 @@ layout, repository changes, and final acceptance.
 
 ## Current status
 
-Phase 0 and phase 1 are complete. The project includes Windows Credential
+Phases 0 through 2 are complete internally. The project includes Windows Credential
 Manager storage and an internal DeepSeek V4 client with schema-constrained JSON
 candidates, explicit Pro escalation, response-body-free errors, prompt-free
-usage accounting, and a successfully completed synthetic Flash smoke request.
+usage accounting, a successfully completed synthetic Flash smoke request, and
+a digest-pinned Docker/WSL 2 candidate runner.
 
-Only `usage_status` is currently exposed. Candidate generation and execution
-stay disabled until the isolated runner and review gates are implemented.
+The internal lifecycle permits one build plus at most two repair rounds, returns
+a patch-and-test review bundle, and requires explicit hash-matched promotion.
+Only `usage_status` is currently exposed over MCP; candidate operations remain
+disabled until the narrow MCP schemas and a billed end-to-end smoke test pass.
 
 ## Development
 
@@ -55,6 +58,7 @@ C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp.exe
 - `docs/DEEPSEEK_POLICY.md`: mandatory delegation and content boundaries
 - `docs/DEEPSEEK_CLIENT.md`: API contract, credential workflow, and safeguards
 - `docs/ISOLATION.md`: Docker/WSL candidate sandbox and workspace boundary
+- `docs/CANDIDATE_LIFECYCLE.md`: repair, review, and hash-pinned promotion gates
 - `docs/DESKTOP_SETUP.md`: Claude Desktop and Codex Desktop connection guide
 - `docs/ROADMAP.md`: staged implementation and exit criteria
 - `AGENTS.md`: repository rules for future model-driven development

@@ -1,6 +1,7 @@
 """Offline contract tests for the narrow DeepSeek V4 client."""
 
 import json
+import sqlite3
 from pathlib import Path
 
 import httpx
@@ -12,7 +13,12 @@ from ask_ai_mcp.deepseek import (
     DeepSeekClientError,
     ModelEscalationRequired,
 )
-from ask_ai_mcp.models import DeepSeekModel, ToolBuildSpec, ToolCategory
+from ask_ai_mcp.models import (
+    CandidateRepairFeedback,
+    DeepSeekModel,
+    ToolBuildSpec,
+    ToolCategory,
+)
 from ask_ai_mcp.usage import UsageStore
 
 
@@ -158,3 +164,48 @@ def test_http_error_does_not_expose_response_body(tmp_path: Path) -> None:
         client.build_candidate(make_spec(), client_name="codex")
     assert "HTTP 401" in str(captured.value)
     assert secret_body not in str(captured.value)
+
+
+def test_repair_uses_bounded_feedback_and_records_repair_round(tmp_path: Path) -> None:
+    requests: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        requests.append(body)
+        user_message = body["messages"][1]["content"]
+        assert "Previous candidate JSON" in user_message
+        assert "execution_exit_1" in user_message
+        assert "source documents" in user_message
+        return httpx.Response(200, json=api_response())
+
+    database = tmp_path / "usage.db"
+    client = DeepSeekClient(
+        api_key_provider=lambda: "sk-" + "x" * 40,
+        usage_store=UsageStore(database),
+        transport=httpx.MockTransport(handler),
+    )
+    previous = client._parse_candidate(api_response())
+    from ask_ai_mcp.hashing import candidate_payload_sha256
+    from ask_ai_mcp.models import ToolCandidateResult
+
+    result = client.repair_candidate(
+        make_spec(),
+        ToolCandidateResult(
+            candidate_sha256=candidate_payload_sha256(previous),
+            model=DeepSeekModel.FLASH,
+            thinking_enabled=True,
+            payload=previous,
+        ),
+        CandidateRepairFeedback(
+            repair_round=1,
+            reason_codes=["execution_exit_1"],
+            diagnostic_excerpt="one synthetic assertion failed",
+        ),
+        client_name="codex",
+    )
+
+    assert result.candidate_sha256 == candidate_payload_sha256(result.payload)
+    assert len(requests) == 1
+    with sqlite3.connect(database) as connection:
+        row = connection.execute("SELECT task_kind, retries FROM api_usage").fetchone()
+    assert row == ("tool_repair", 1)

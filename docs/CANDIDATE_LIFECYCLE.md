@@ -1,0 +1,64 @@
+# Candidate lifecycle and approval gate
+
+## Scope
+
+This lifecycle exists only for bounded helper-tool code. It does not authorize
+DeepSeek to draft final document prose, select facts, resolve source conflicts,
+or process real source files before promotion.
+
+## Attempts and repair limit
+
+The controller permits one initial DeepSeek candidate and at most two repair
+rounds. Every replacement candidate receives a new content hash and restarts
+the full sequence:
+
+1. validate the structured response and candidate hash;
+2. apply static AST and dependency policy;
+3. stage a new job outside the repository;
+4. run stdlib tests in the digest-pinned Docker sandbox;
+5. either stop as failed, request a bounded repair, or return a review bundle.
+
+Static failures send only finding codes and short messages. Runtime failures
+send reason codes plus at most the final 8,000 characters of isolated test
+stderr. Candidate-development jobs have empty or synthetic-only inputs, so
+repair feedback must never contain knowledge-base or real source-document text.
+There is no automatic escalation from Flash to Pro.
+
+## Review bundle
+
+A passing candidate remains `review_pending`. The bundle returned to Sol/Opus
+contains:
+
+- the exact candidate SHA-256 and source job ID;
+- a unified patch for every candidate file;
+- the test file list and bounded execution report;
+- static-analysis findings and DeepSeek-declared risks;
+- all attempt states, up to three total attempts.
+
+The bundle is evidence for review, not an approval. It cannot process real file
+copies and is not written into the repository.
+
+## Explicit promotion
+
+Promotion requires an explicit request containing the successful job ID, exact
+candidate SHA-256, version, controller identity, decision, and allowed
+capabilities. The registry then verifies:
+
+- job ID, workspace directory, manifest, and execution report agree;
+- isolated execution succeeded, did not time out, and ran at least one test;
+- the candidate file set and every per-file SHA-256 are unchanged;
+- the decision is a clean approval without untested modifications;
+- the target tool name, version, and content hash are not already registered.
+
+Approved bytes are copied to
+`%LOCALAPPDATA%\AskAIMCP\registry\<tool>\<version>\<candidate-sha256>`.
+Every later registry read re-hashes the copied files. Any edit invalidates the
+record. “Approved with changes” is rejected: changes require a new candidate
+hash and a fresh isolated test run.
+
+## Current exposure
+
+The lifecycle and registry are internal Python APIs. MCP still exposes only
+`usage_status`. Candidate build, review, approval, and verified execution will
+be added only through narrow schemas after an opt-in billed end-to-end smoke
+test succeeds.

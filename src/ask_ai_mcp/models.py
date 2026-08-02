@@ -52,6 +52,12 @@ class CandidateJobState(StrEnum):
     STATIC_REJECTED = "static_rejected"
     EXECUTED = "executed"
     EXECUTION_FAILED = "execution_failed"
+    APPROVED = "approved"
+
+
+class CandidateLifecycleStatus(StrEnum):
+    REVIEW_PENDING = "review_pending"
+    FAILED = "failed"
 
 
 class ToolBuildSpec(StrictModel):
@@ -157,7 +163,12 @@ class CandidateJobManifest(StrictModel):
 
 
 class CandidateExecutionReport(StrictModel):
-    job_id: str = Field(min_length=36, max_length=36)
+    job_id: str = Field(
+        min_length=36,
+        max_length=36,
+        pattern=r"^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+    )
+    candidate_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
     state: CandidateJobState
     backend: str = Field(min_length=1, max_length=64)
     runner_image: str = Field(min_length=1, max_length=255)
@@ -167,6 +178,71 @@ class CandidateExecutionReport(StrictModel):
     stdout: str = Field(default="", max_length=65_536)
     stderr: str = Field(default="", max_length=65_536)
     output_truncated: bool = False
+
+
+class CandidateRepairFeedback(StrictModel):
+    repair_round: int = Field(ge=1, le=2)
+    reason_codes: list[str] = Field(min_length=1, max_length=20)
+    diagnostic_excerpt: str = Field(default="", max_length=8_000)
+
+
+class CandidateAttemptReport(StrictModel):
+    attempt: int = Field(ge=1, le=3)
+    candidate_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    model: DeepSeekModel
+    state: CandidateJobState
+    job_id: str | None = Field(default=None, min_length=36, max_length=36)
+    static_analysis: StaticAnalysisReport
+    execution: CandidateExecutionReport | None = None
+
+    @model_validator(mode="after")
+    def validate_execution_identity(self) -> Self:
+        if self.execution is not None:
+            if self.job_id != self.execution.job_id:
+                raise ValueError("attempt and execution job IDs must match")
+            if self.candidate_sha256 != self.execution.candidate_sha256:
+                raise ValueError("attempt and execution candidate hashes must match")
+        return self
+
+
+class CandidateReviewBundle(StrictModel):
+    status: CandidateLifecycleStatus = CandidateLifecycleStatus.REVIEW_PENDING
+    tool_name: str = Field(min_length=3, max_length=64, pattern=r"^[a-z][a-z0-9_]+$")
+    spec_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    job_id: str = Field(min_length=36, max_length=36)
+    candidate_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    candidate_files: list[str] = Field(min_length=1, max_length=20)
+    test_files: list[str] = Field(min_length=1, max_length=20)
+    candidate_patch: str = Field(min_length=1, max_length=600_000)
+    declared_risks: list[str] = Field(default_factory=list, max_length=20)
+    static_analysis: StaticAnalysisReport
+    execution: CandidateExecutionReport
+    attempts: list[CandidateAttemptReport] = Field(min_length=1, max_length=3)
+
+    @model_validator(mode="after")
+    def validate_review_identity(self) -> Self:
+        if self.job_id != self.execution.job_id:
+            raise ValueError("review and execution job IDs must match")
+        if self.candidate_sha256 != self.execution.candidate_sha256:
+            raise ValueError("review and execution candidate hashes must match")
+        return self
+
+
+class CandidateLifecycleResult(StrictModel):
+    status: CandidateLifecycleStatus
+    tool_name: str = Field(min_length=3, max_length=64, pattern=r"^[a-z][a-z0-9_]+$")
+    spec_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    attempts: list[CandidateAttemptReport] = Field(min_length=1, max_length=3)
+    review: CandidateReviewBundle | None = None
+    failure_summary: str | None = Field(default=None, max_length=1_000)
+
+    @model_validator(mode="after")
+    def validate_outcome(self) -> Self:
+        if self.status is CandidateLifecycleStatus.REVIEW_PENDING and self.review is None:
+            raise ValueError("review-pending lifecycle result requires a review bundle")
+        if self.status is CandidateLifecycleStatus.FAILED and self.review is not None:
+            raise ValueError("failed lifecycle result cannot contain a review bundle")
+        return self
 
 
 class SandboxBackendStatus(StrictModel):
@@ -221,8 +297,45 @@ class VerifiedToolRecord(StrictModel):
     name: str = Field(min_length=3, max_length=64, pattern=r"^[a-z][a-z0-9_]+$")
     version: str = Field(min_length=1, max_length=32)
     sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    source_job_id: str = Field(min_length=36, max_length=36)
+    spec_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    runner_image: str = Field(min_length=1, max_length=255)
+    tests_run: int = Field(ge=1)
+    file_sha256: dict[str, str] = Field(min_length=1, max_length=20)
     runtime: RuntimeKind
     approved_at: datetime
     approved_by: str = Field(min_length=1, max_length=64)
     decision: CandidateDecision
     allowed_capabilities: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("file_sha256")
+    @classmethod
+    def validate_file_sha256(cls, value: dict[str, str]) -> dict[str, str]:
+        if any(
+            len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest)
+            for digest in value.values()
+        ):
+            raise ValueError("verified file hashes must be lowercase SHA-256 values")
+        return value
+
+
+class CandidateApprovalRequest(StrictModel):
+    job_id: str = Field(
+        min_length=36,
+        max_length=36,
+        pattern=r"^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+    )
+    candidate_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    version: str = Field(min_length=1, max_length=32, pattern=r"^[0-9A-Za-z][0-9A-Za-z._-]*$")
+    approved_by: str = Field(min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_-]+$")
+    decision: CandidateDecision
+    allowed_capabilities: list[str] = Field(default_factory=list, max_length=20)
+
+    @model_validator(mode="after")
+    def require_approval_decision(self) -> Self:
+        if self.decision not in {
+            CandidateDecision.APPROVED,
+            CandidateDecision.APPROVED_WITH_CHANGES,
+        }:
+            raise ValueError("promotion requires an approval decision")
+        return self

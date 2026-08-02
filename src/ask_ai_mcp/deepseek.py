@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from ask_ai_mcp.credentials import CredentialStore
 from ask_ai_mcp.hashing import candidate_payload_sha256
 from ask_ai_mcp.models import (
+    CandidateRepairFeedback,
     DeepSeekModel,
     ToolBuildSpec,
     ToolCandidatePayload,
@@ -94,20 +95,62 @@ class DeepSeekClient:
         if spec.model is DeepSeekModel.PRO and not allow_pro:
             raise ModelEscalationRequired("V4 Pro requires explicit Opus/Sol escalation")
 
-        request_body = self._request_body(spec)
+        return self._complete_candidate(
+            spec=spec,
+            client_name=client_name,
+            request_body=self._request_body(spec),
+            task_kind="tool_build",
+            retries=0,
+        )
+
+    def repair_candidate(
+        self,
+        spec: ToolBuildSpec,
+        previous: ToolCandidateResult,
+        feedback: CandidateRepairFeedback,
+        *,
+        client_name: str,
+        allow_pro: bool = False,
+    ) -> ToolCandidateResult:
+        """Repair one candidate from bounded, source-document-free diagnostics."""
+        require_tool_spec_allowed(spec)
+        if spec.model is DeepSeekModel.PRO and not allow_pro:
+            raise ModelEscalationRequired("V4 Pro requires explicit Opus/Sol escalation")
+        if previous.model is not spec.model:
+            raise DeepSeekClientError("repair model does not match the tool specification")
+        if candidate_payload_sha256(previous.payload) != previous.candidate_sha256:
+            raise DeepSeekClientError("previous candidate hash does not match its content")
+
+        return self._complete_candidate(
+            spec=spec,
+            client_name=client_name,
+            request_body=self._repair_request_body(spec, previous, feedback),
+            task_kind="tool_repair",
+            retries=feedback.repair_round,
+        )
+
+    def _complete_candidate(
+        self,
+        *,
+        spec: ToolBuildSpec,
+        client_name: str,
+        request_body: dict[str, Any],
+        task_kind: str,
+        retries: int,
+    ) -> ToolCandidateResult:
         started = perf_counter()
         try:
             data = self._request(request_body)
         except httpx.HTTPStatusError as error:
-            self._record_failure(spec, client_name, started, "http_error")
+            self._record_failure(spec, client_name, started, "http_error", task_kind, retries)
             raise DeepSeekClientError(
                 f"DeepSeek API returned HTTP {error.response.status_code}"
             ) from None
         except httpx.HTTPError:
-            self._record_failure(spec, client_name, started, "transport_error")
+            self._record_failure(spec, client_name, started, "transport_error", task_kind, retries)
             raise DeepSeekClientError("DeepSeek API transport failed") from None
         except (TypeError, ValueError):
-            self._record_failure(spec, client_name, started, "invalid_response")
+            self._record_failure(spec, client_name, started, "invalid_response", task_kind, retries)
             raise DeepSeekClientError("DeepSeek returned an invalid API response") from None
 
         cache_hit, cache_miss, completion, reasoning = _usage_counts(data)
@@ -123,6 +166,8 @@ class DeepSeekClient:
                 cache_miss=cache_miss,
                 completion=completion,
                 reasoning=reasoning,
+                task_kind=task_kind,
+                retries=retries,
             )
             raise DeepSeekClientError("DeepSeek returned an invalid candidate response") from None
 
@@ -137,6 +182,8 @@ class DeepSeekClient:
             completion=completion,
             reasoning=reasoning,
             candidate_hash=candidate_hash,
+            task_kind=task_kind,
+            retries=retries,
         )
         return ToolCandidateResult(
             candidate_sha256=candidate_hash,
@@ -160,6 +207,43 @@ class DeepSeekClient:
                     "content": (
                         "Generate a candidate that satisfies this bounded specification. "
                         f"Return JSON only. Specification JSON:\n{specification}"
+                    ),
+                },
+            ],
+            "thinking": {"type": "enabled"},
+            "reasoning_effort": "high",
+            "response_format": {"type": "json_object"},
+            "max_tokens": MAX_OUTPUT_TOKENS,
+            "stream": False,
+        }
+
+    def _repair_request_body(
+        self,
+        spec: ToolBuildSpec,
+        previous: ToolCandidateResult,
+        feedback: CandidateRepairFeedback,
+    ) -> dict[str, Any]:
+        schema = json.dumps(ToolCandidatePayload.model_json_schema(), ensure_ascii=False)
+        specification = spec.model_dump_json(exclude_none=True)
+        candidate = previous.payload.model_dump_json(exclude_none=True)
+        diagnostics = feedback.model_dump_json(exclude_none=True)
+        return {
+            "model": spec.model.value,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": f"{SYSTEM_PROMPT}\nRequired JSON schema:\n{schema}",
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "Repair the bounded candidate using only the supplied diagnostics. "
+                        "Do not expand its duties, dependencies, or access. Return the complete "
+                        "replacement candidate as JSON only. The diagnostics contain no source "
+                        "documents.\n"
+                        f"Specification JSON:\n{specification}\n"
+                        f"Previous candidate JSON:\n{candidate}\n"
+                        f"Bounded failure diagnostics JSON:\n{diagnostics}"
                     ),
                 },
             ],
@@ -209,6 +293,8 @@ class DeepSeekClient:
         client_name: str,
         started: float,
         status: Literal["http_error", "transport_error", "invalid_response"],
+        task_kind: str,
+        retries: int,
     ) -> None:
         self._record_usage(
             spec=spec,
@@ -219,6 +305,8 @@ class DeepSeekClient:
             cache_miss=0,
             completion=0,
             reasoning=0,
+            task_kind=task_kind,
+            retries=retries,
         )
 
     def _record_usage(
@@ -233,11 +321,13 @@ class DeepSeekClient:
         completion: int,
         reasoning: int,
         candidate_hash: str | None = None,
+        task_kind: str = "tool_build",
+        retries: int = 0,
     ) -> None:
         self.usage_store.record(
             UsageEvent(
                 client_name=client_name,
-                task_kind="tool_build",
+                task_kind=task_kind,
                 model=spec.model,
                 thinking_enabled=True,
                 prompt_cache_hit_tokens=cache_hit,
@@ -251,6 +341,7 @@ class DeepSeekClient:
                     completion_tokens=completion,
                 ),
                 latency_ms=max(0, round((perf_counter() - started) * 1_000)),
+                retries=retries,
                 status=status,
                 candidate_hash=candidate_hash,
             )

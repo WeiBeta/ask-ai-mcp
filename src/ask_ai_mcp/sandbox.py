@@ -231,6 +231,7 @@ class DockerCandidateExecutor:
         )
         report = CandidateExecutionReport(
             job_id=manifest.job_id,
+            candidate_sha256=manifest.candidate_sha256,
             state=state,
             backend=BACKEND_NAME,
             runner_image=self.runner_image,

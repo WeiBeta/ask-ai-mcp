@@ -9,8 +9,21 @@ from uuid import uuid4
 
 import pytest
 
-from ask_ai_mcp.models import CandidateJobManifest, CandidateJobState
+from ask_ai_mcp.hashing import candidate_payload_sha256
+from ask_ai_mcp.lifecycle import CandidateLifecycle
+from ask_ai_mcp.models import (
+    CandidateFile,
+    CandidateJobManifest,
+    CandidateJobState,
+    CandidateLifecycleStatus,
+    DeepSeekModel,
+    ToolBuildSpec,
+    ToolCandidatePayload,
+    ToolCandidateResult,
+    ToolCategory,
+)
 from ask_ai_mcp.sandbox import DockerCandidateExecutor, docker_backend_status
+from ask_ai_mcp.workspace import CandidateWorkspaceManager
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("ASK_AI_MCP_DOCKER_TESTS") != "1",
@@ -85,3 +98,52 @@ class TestBoundaries(unittest.TestCase):
     assert (root / "output" / "result.txt").read_text(encoding="utf-8") == "ok"
     assert not (root / "candidate" / "escape.txt").exists()
     assert not (root / "input" / "escape.txt").exists()
+
+
+def test_real_lifecycle_returns_only_a_review_pending_candidate(tmp_path: Path) -> None:
+    spec = ToolBuildSpec(
+        name="synthetic_identity",
+        category=ToolCategory.TEST_UTILITY,
+        purpose="Return synthetic values unchanged for isolated lifecycle testing.",
+        input_contract="No real documents, only values embedded in synthetic unit tests.",
+        output_contract="The unchanged synthetic value returned to the test harness.",
+        acceptance_tests=["A stdlib unittest verifies one synthetic value."],
+    )
+    payload = ToolCandidatePayload(
+        summary="A synthetic identity helper.",
+        files=[
+            CandidateFile(path="tool.py", content="def identity(value):\n    return value\n"),
+            CandidateFile(
+                path="test_tool.py",
+                content=(
+                    "import unittest\nfrom tool import identity\n\n"
+                    "class TestIdentity(unittest.TestCase):\n"
+                    "    def test_value(self):\n        self.assertEqual(identity('x'), 'x')\n"
+                ),
+            ),
+        ],
+    )
+    candidate = ToolCandidateResult(
+        candidate_sha256=candidate_payload_sha256(payload),
+        model=DeepSeekModel.FLASH,
+        thinking_enabled=True,
+        payload=payload,
+    )
+
+    class FixedClient:
+        def build_candidate(self, *_args, **_kwargs):
+            return candidate
+
+        def repair_candidate(self, *_args, **_kwargs):
+            raise AssertionError("a passing candidate must not trigger repair")
+
+    result = CandidateLifecycle(
+        client=FixedClient(),
+        workspace=CandidateWorkspaceManager(tmp_path / "lifecycle-jobs"),
+        executor=DockerCandidateExecutor(),
+    ).run(spec, client_name="integration_test")
+
+    assert result.status is CandidateLifecycleStatus.REVIEW_PENDING
+    assert result.review is not None
+    assert result.review.execution.tests_run == 1
+    assert result.review.candidate_sha256 == candidate.candidate_sha256
