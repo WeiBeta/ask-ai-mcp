@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -16,6 +17,7 @@ from ask_ai_mcp.deepseek import (
 from ask_ai_mcp.models import (
     CandidateRepairFeedback,
     DeepSeekModel,
+    PricingBand,
     ToolBuildSpec,
     ToolCategory,
 )
@@ -97,6 +99,7 @@ def test_flash_candidate_uses_thinking_json_and_records_prompt_free_usage(
     assert summary.prompt_cache_miss_tokens == 200
     assert summary.completion_tokens == 80
     assert summary.reasoning_tokens == 50
+    assert summary.by_client == {"codex": 1}
 
 
 def test_pro_requires_explicit_host_escalation(tmp_path: Path) -> None:
@@ -209,3 +212,20 @@ def test_repair_uses_bounded_feedback_and_records_repair_round(tmp_path: Path) -
     with sqlite3.connect(database) as connection:
         row = connection.execute("SELECT task_kind, retries FROM api_usage").fetchone()
     assert row == ("tool_repair", 1)
+
+
+def test_client_records_peak_price_metadata_from_request_start(tmp_path: Path) -> None:
+    request_time = datetime(2026, 8, 3, 2, 0, tzinfo=UTC)
+    client = DeepSeekClient(
+        api_key_provider=lambda: "sk-" + "x" * 40,
+        usage_store=UsageStore(tmp_path / "usage.db"),
+        transport=httpx.MockTransport(lambda _request: httpx.Response(200, json=api_response())),
+        clock=lambda: request_time,
+        peak_pricing_effective_at=request_time - timedelta(days=1),
+    )
+
+    client.build_candidate(make_spec(), client_name="claude_desktop")
+    summary = client.usage_store.summarize()
+
+    assert summary.by_pricing_band == {PricingBand.PEAK.value: 1}
+    assert summary.estimated_cost_cny == 0.000724

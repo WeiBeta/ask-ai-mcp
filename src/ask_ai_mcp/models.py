@@ -35,6 +35,11 @@ class DeepSeekModel(StrEnum):
     PRO = "deepseek-v4-pro"
 
 
+class PricingBand(StrEnum):
+    STANDARD = "standard"
+    PEAK = "peak"
+
+
 class CandidateDecision(StrEnum):
     PENDING = "pending"
     APPROVED = "approved"
@@ -274,6 +279,13 @@ class UsageEvent(StrictModel):
     task_kind: str = Field(min_length=1, max_length=64)
     model: DeepSeekModel
     thinking_enabled: bool
+    priced_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    pricing_band: PricingBand = PricingBand.STANDARD
+    pricing_multiplier: float = Field(default=1.0, ge=1.0)
+    pricing_schedule_version: str = Field(default="legacy_base", min_length=1, max_length=64)
+    cache_hit_price_cny_per_million: float = Field(default=0.0, ge=0)
+    cache_miss_price_cny_per_million: float = Field(default=0.0, ge=0)
+    output_price_cny_per_million: float = Field(default=0.0, ge=0)
     prompt_cache_hit_tokens: int = Field(default=0, ge=0)
     prompt_cache_miss_tokens: int = Field(default=0, ge=0)
     completion_tokens: int = Field(default=0, ge=0)
@@ -296,6 +308,15 @@ class UsageSummary(StrictModel):
     reasoning_tokens: int = Field(ge=0)
     estimated_cost_cny: float = Field(ge=0)
     by_model: dict[str, int] = Field(default_factory=dict)
+    by_client: dict[str, int] = Field(default_factory=dict)
+    by_pricing_band: dict[str, int] = Field(default_factory=dict)
+    estimated_cost_cny_by_model: dict[str, float] = Field(default_factory=dict)
+    estimated_cost_cny_by_client: dict[str, float] = Field(default_factory=dict)
+    estimated_cost_cny_by_pricing_band: dict[str, float] = Field(default_factory=dict)
+    current_pricing_band: PricingBand
+    peak_pricing_enabled: bool
+    pricing_schedule_version: str = Field(min_length=1, max_length=64)
+    current_beijing_time: datetime
 
 
 class VerifiedToolRecord(StrictModel):

@@ -23,7 +23,14 @@ an undefined working directory.
 ## Claude Desktop on Windows
 
 Open Claude Desktop, go to **Settings > Developer**, and select **Edit Config**.
-The Windows configuration file is normally:
+For the Microsoft Store/MSIX installation used on this workstation, **Edit
+Config** opens the active file at:
+
+```text
+C:\Users\user\AppData\Local\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Claude\claude_desktop_config.json
+```
+
+Other Claude Desktop distributions may instead use:
 
 ```text
 %APPDATA%\Claude\claude_desktop_config.json
@@ -81,12 +88,31 @@ tool_timeout_sec = 600
 
 [mcp_servers.ask_ai.env]
 ASK_AI_MCP_CLIENT_NAME = "codex_desktop"
+PYTHONUTF8 = "1"
+PYTHONIOENCODING = "utf-8"
 ```
 
 Restart Codex Desktop after saving, then use `/mcp` to confirm the server and
 four-tool catalog. Keep approval mode set to `prompt` during the trial. A build
 may make up to three billed API calls (one initial candidate and two repairs),
 while review and approval make no external model call.
+
+The UTF-8 environment settings are required on this workstation. Without them,
+Codex App Server can reject otherwise valid MCP startup because Python stderr
+contains bytes that are not valid UTF-8.
+
+## Controller instructions
+
+MCP configuration connects the executable but does not by itself define when a
+host model should delegate work. Apply the shared and client-specific
+instructions in `docs/CONTROLLER_PROMPTS.md`.
+
+Codex loads its adaptation from the user-level `%USERPROFILE%\.codex\AGENTS.md`
+on this workstation. Claude personal preferences or project instructions are
+managed by Claude's UI/account state and must not be injected into
+`claude_desktop_config.json` or an undocumented application database. Paste the
+shared policy and the Claude adaptation through the Claude UI, then start a new
+conversation so the instructions are in context.
 
 ## Credential rule
 

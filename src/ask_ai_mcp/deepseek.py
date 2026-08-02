@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from datetime import UTC, datetime
 from time import perf_counter
 from typing import Any, Literal
 
@@ -22,7 +23,7 @@ from ask_ai_mcp.models import (
     UsageEvent,
 )
 from ask_ai_mcp.policy import PolicyViolation, require_tool_spec_allowed
-from ask_ai_mcp.pricing import estimate_cost_cny
+from ask_ai_mcp.pricing import calculate_cost_estimate, load_peak_pricing_effective_at
 from ask_ai_mcp.usage import UsageStore
 
 DEEPSEEK_CHAT_COMPLETIONS_URL = "https://api.deepseek.com/chat/completions"
@@ -79,11 +80,19 @@ class DeepSeekClient:
         usage_store: UsageStore | None = None,
         transport: httpx.BaseTransport | None = None,
         timeout_seconds: float = 120.0,
+        clock: Callable[[], datetime] | None = None,
+        peak_pricing_effective_at: datetime | None = None,
     ) -> None:
         self.api_key_provider = api_key_provider or CredentialStore().get_api_key
         self.usage_store = usage_store or UsageStore()
         self.transport = transport
         self.timeout = httpx.Timeout(timeout_seconds, connect=10.0)
+        self.clock = clock or (lambda: datetime.now(UTC))
+        self.peak_pricing_effective_at = (
+            peak_pricing_effective_at
+            if peak_pricing_effective_at is not None
+            else load_peak_pricing_effective_at()
+        )
 
     def build_candidate(
         self,
@@ -140,18 +149,25 @@ class DeepSeekClient:
         retries: int,
     ) -> ToolCandidateResult:
         started = perf_counter()
+        priced_at = self.clock()
         try:
             data = self._request(request_body)
         except httpx.HTTPStatusError as error:
-            self._record_failure(spec, client_name, started, "http_error", task_kind, retries)
+            self._record_failure(
+                spec, client_name, started, priced_at, "http_error", task_kind, retries
+            )
             raise DeepSeekClientError(
                 f"DeepSeek API returned HTTP {error.response.status_code}"
             ) from None
         except httpx.HTTPError:
-            self._record_failure(spec, client_name, started, "transport_error", task_kind, retries)
+            self._record_failure(
+                spec, client_name, started, priced_at, "transport_error", task_kind, retries
+            )
             raise DeepSeekClientError("DeepSeek API transport failed") from None
         except (TypeError, ValueError):
-            self._record_failure(spec, client_name, started, "invalid_response", task_kind, retries)
+            self._record_failure(
+                spec, client_name, started, priced_at, "invalid_response", task_kind, retries
+            )
             raise DeepSeekClientError("DeepSeek returned an invalid API response") from None
 
         cache_hit, cache_miss, completion, reasoning = _usage_counts(data)
@@ -162,6 +178,7 @@ class DeepSeekClient:
                 spec=spec,
                 client_name=client_name,
                 started=started,
+                priced_at=priced_at,
                 status="invalid_response",
                 cache_hit=cache_hit,
                 cache_miss=cache_miss,
@@ -177,6 +194,7 @@ class DeepSeekClient:
             spec=spec,
             client_name=client_name,
             started=started,
+            priced_at=priced_at,
             status="success",
             cache_hit=cache_hit,
             cache_miss=cache_miss,
@@ -293,6 +311,7 @@ class DeepSeekClient:
         spec: ToolBuildSpec,
         client_name: str,
         started: float,
+        priced_at: datetime,
         status: Literal["http_error", "transport_error", "invalid_response"],
         task_kind: str,
         retries: int,
@@ -301,6 +320,7 @@ class DeepSeekClient:
             spec=spec,
             client_name=client_name,
             started=started,
+            priced_at=priced_at,
             status=status,
             cache_hit=0,
             cache_miss=0,
@@ -316,6 +336,7 @@ class DeepSeekClient:
         spec: ToolBuildSpec,
         client_name: str,
         started: float,
+        priced_at: datetime,
         status: str,
         cache_hit: int,
         cache_miss: int,
@@ -325,22 +346,32 @@ class DeepSeekClient:
         task_kind: str = "tool_build",
         retries: int = 0,
     ) -> None:
+        cost = calculate_cost_estimate(
+            spec.model,
+            prompt_cache_hit_tokens=cache_hit,
+            prompt_cache_miss_tokens=cache_miss,
+            completion_tokens=completion,
+            priced_at=priced_at,
+            peak_pricing_effective_at=self.peak_pricing_effective_at,
+        )
         self.usage_store.record(
             UsageEvent(
                 client_name=client_name,
                 task_kind=task_kind,
                 model=spec.model,
                 thinking_enabled=True,
+                priced_at=cost.priced_at,
+                pricing_band=cost.pricing_band,
+                pricing_multiplier=cost.pricing_multiplier,
+                pricing_schedule_version=cost.pricing_schedule_version,
+                cache_hit_price_cny_per_million=cost.prices.cache_hit_input,
+                cache_miss_price_cny_per_million=cost.prices.cache_miss_input,
+                output_price_cny_per_million=cost.prices.output,
                 prompt_cache_hit_tokens=cache_hit,
                 prompt_cache_miss_tokens=cache_miss,
                 completion_tokens=completion,
                 reasoning_tokens=reasoning,
-                estimated_cost_cny=estimate_cost_cny(
-                    spec.model,
-                    prompt_cache_hit_tokens=cache_hit,
-                    prompt_cache_miss_tokens=cache_miss,
-                    completion_tokens=completion,
-                ),
+                estimated_cost_cny=cost.cost_cny,
                 latency_ms=max(0, round((perf_counter() - started) * 1_000)),
                 retries=retries,
                 status=status,

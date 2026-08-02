@@ -100,10 +100,31 @@ the audit store.
 
 The initial fifteen-day trial tracks:
 
-- calls and cost by task kind and model;
+- calls and cost by task kind, client, model, and pricing band;
 - cache hit, miss, output, and reasoning tokens;
 - candidate first-pass success rate;
 - repair rounds and escalation rate;
 - static-policy rejection reasons;
 - approved, modified, and rejected candidate counts;
 - verified-tool execution and validation failures.
+
+The current MCP surface does not expose source-structuring execution yet.
+`build_helper_tool` must not be used as a substitute channel for source text.
+
+## Delegation threshold and approval completion
+
+Delegate only mechanically verifiable work that is expected to require at
+least three implementation/debugging rounds or will produce a registered,
+reusable tool. Otherwise the controller performs the work directly.
+
+A candidate is approval-ready only when its patch is readable and unobfuscated,
+its tests cover every declared acceptance test, every dependency is allowed,
+static analysis has no error-level finding, and the candidate hash matches the
+revalidated review bundle. Rejection sends control back to specification
+revision and a fresh build; old candidate bytes are never edited in place.
+
+Synthetic-only candidates need one controller review. Copied-input candidates
+need one controller review and an audit record. Dedicated-output or Pro-built
+candidates require independent Claude and Codex review before real-file
+execution is enabled. Server-side dual-review enforcement is planned with the
+verified execution surface.
