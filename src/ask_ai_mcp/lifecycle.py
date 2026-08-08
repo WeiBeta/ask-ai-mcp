@@ -174,7 +174,16 @@ class CandidateLifecycle:
                         attempts=attempts,
                     )
                     self.review_repository.save(review)
-                    summary = review_summary(review, spec)
+                    summary = review_summary(review, spec).model_copy(
+                        update={
+                            "created_by": client_name,
+                            "blocking_reasons": ["candidate_not_registered"],
+                            "next_action": (
+                                "Review the exact candidate as needed, then approve its exact "
+                                "hash and least-privilege capabilities."
+                            ),
+                        }
+                    )
                     result = CandidateLifecycleResult(
                         lifecycle_id=lifecycle_id,
                         budget_session_id=budget_session_id,
@@ -405,6 +414,8 @@ class CandidateLifecycle:
             return
         source_chars = 0
         test_chars = 0
+        source_bytes = 0
+        test_bytes = 0
         file_count = 0
         candidate_hash = None
         if candidate is not None:
@@ -413,16 +424,24 @@ class CandidateLifecycle:
             for file in candidate.payload.files:
                 if PurePosixPath(file.path).name.startswith("test_"):
                     test_chars += len(file.content)
+                    test_bytes += len(file.content.encode("utf-8"))
                 else:
                     source_chars += len(file.content)
+                    source_bytes += len(file.content.encode("utf-8"))
         review_summary_chars = 0
+        review_summary_bytes = 0
         patch_chars = 0
+        patch_bytes = 0
         final_job_id = attempts[-1].job_id if attempts else None
         if review is not None:
             summary = review_summary(review, spec)
-            review_summary_chars = len(summary.model_dump_json(exclude_none=True))
+            serialized_summary = summary.model_dump_json(exclude_none=True)
+            review_summary_chars = len(serialized_summary)
+            review_summary_bytes = len(serialized_summary.encode("utf-8"))
             patch_chars = len(review.candidate_patch)
+            patch_bytes = len(review.candidate_patch.encode("utf-8"))
             final_job_id = review.job_id
+        serialized_spec = spec.model_dump_json(exclude_none=True)
         self.audit_store.record_lifecycle(
             LifecycleAuditEvent(
                 lifecycle_id=lifecycle_id,
@@ -434,17 +453,29 @@ class CandidateLifecycle:
                 started_at=started_at,
                 completed_at=datetime.now(UTC),
                 status=(result.status if result is not None else CandidateLifecycleStatus.FAILED),
-                spec_total_chars=len(spec.model_dump_json(exclude_none=True)),
+                spec_total_chars=len(serialized_spec),
                 purpose_chars=len(spec.purpose),
                 input_contract_chars=len(spec.input_contract),
                 output_contract_chars=len(spec.output_contract),
                 fixture_notes_chars=len(spec.fixture_notes or ""),
                 acceptance_tests_chars=sum(len(item) for item in spec.acceptance_tests),
+                spec_total_bytes=len(serialized_spec.encode("utf-8")),
+                purpose_bytes=len(spec.purpose.encode("utf-8")),
+                input_contract_bytes=len(spec.input_contract.encode("utf-8")),
+                output_contract_bytes=len(spec.output_contract.encode("utf-8")),
+                fixture_notes_bytes=len((spec.fixture_notes or "").encode("utf-8")),
+                acceptance_tests_bytes=sum(
+                    len(item.encode("utf-8")) for item in spec.acceptance_tests
+                ),
                 candidate_source_chars=source_chars,
                 candidate_test_chars=test_chars,
+                candidate_source_bytes=source_bytes,
+                candidate_test_bytes=test_bytes,
                 candidate_file_count=file_count,
                 review_summary_chars=review_summary_chars,
                 patch_chars=patch_chars,
+                review_summary_bytes=review_summary_bytes,
+                patch_bytes=patch_bytes,
                 attempt_count=len(attempts),
                 repair_count=max(0, len(attempts) - 1),
                 final_job_id=final_job_id,

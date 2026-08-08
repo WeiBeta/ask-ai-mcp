@@ -1,12 +1,31 @@
 # MCP candidate surface
 
 The server deliberately has no arbitrary `ask_deepseek(prompt)` operation.
-Desktop hosts receive ten narrow tools.
+Desktop hosts receive twelve narrow tools.
 
 ## `usage_status`
 
 Reads prompt-free aggregate usage from local SQLite. It makes no API call and
-cannot read candidate or source contents.
+cannot read candidate or source contents. It includes at most twenty recent
+lifecycle-economics rows. API cache-hit, cache-miss, completion, and reasoning
+token counts are provider usage. Specification, candidate, test, summary, and
+patch sizes are separately labelled character or UTF-8 byte measurements, with
+byte ratios; they are not presented as tokens.
+
+## `workflow_guidance`
+
+Loads one local protocol topic on demand: `overview`, `budget`, `build`,
+`review`, `approval`, or `run`. It is read-only, prompt-free, and makes no API
+call. This avoids repeating detailed protocol in every persistent prompt or
+tool description.
+
+## `list_pending_reviews`
+
+Returns a compact local cross-desktop queue without patches or source content.
+It includes unregistered review-pending candidates and registered Pro or
+output-writing tools still waiting for the second desktop. Each item reports
+creator, model, hashes, registered versions, exact full-review attestation
+identities, approval identities, blocking reasons, and the next action.
 
 ## Budget-session tools
 
@@ -43,7 +62,8 @@ approval fields.
 Accepts one UUID job ID and `summary` or `full` mode. It performs no network or
 model call. Summary mode is the default and returns hashes, sizes, file lists,
 findings, tests, risks, and attempt summaries without returning the candidate
-patch. Full mode returns the exact patch and records a desktop-specific review
+patch. It also computes creator, attestation identities, approval identities,
+blocking reasons, and next action from local state. Full mode returns the exact patch and records a desktop-specific review
 attestation. Before either response it revalidates:
 
 - job, manifest, execution report, static report, and review identities;

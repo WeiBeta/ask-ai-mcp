@@ -26,11 +26,19 @@ The lifecycle permits one build plus at most two policy-routed repair rounds,
 returns a compact review summary by default, and requires explicit hash-matched
 promotion. Per-conversation budget sessions start with CNY 5 for Flash and CNY
 0 for Pro; either model is extended only in fixed CNY 5 blocks. The development
-MCP surface exposes ten narrow tools: usage, four local budget operations,
-candidate build, review, approval, registry listing, and verified execution. Verified execution
+MCP surface exposes twelve narrow tools: usage and lifecycle economics, on-demand
+workflow guidance, cross-desktop pending-review discovery, four local budget
+operations, candidate build, review, approval, registry listing, and verified execution. Verified execution
 requires a standard callable contract, exact registry hash, dual Claude/Codex
 approval for output-producing tools, Docker isolation, and explicitly
 configured narrow input roots. No real input root is enabled by default.
+
+Version 0.4.1 keeps detailed protocol text out of the always-loaded tool
+descriptions. Controllers request only the workflow topic they need. Review
+summaries and the local pending queue join creator, exact full-review
+attestations, approval identities, blocking reasons, and the next action without
+returning candidate content. Usage reporting keeps actual API token counts
+separate from structural character and UTF-8 byte measurements.
 
 The first full billed lifecycle smoke passed on 2026-08-02 in one Flash call:
 the generated synthetic helper passed four isolated tests, was reviewed, and

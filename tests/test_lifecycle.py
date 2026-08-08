@@ -7,10 +7,13 @@ from pathlib import Path
 
 import pytest
 
+from ask_ai_mcp.collaboration import ReviewCollaborationService
 from ask_ai_mcp.deepseek import InvalidCandidateResponse
 from ask_ai_mcp.hashing import candidate_payload_sha256
 from ask_ai_mcp.lifecycle import CandidateLifecycle, CandidateLifecycleError
 from ask_ai_mcp.models import (
+    CandidateApprovalRequest,
+    CandidateDecision,
     CandidateExecutionReport,
     CandidateFile,
     CandidateJobManifest,
@@ -22,8 +25,11 @@ from ask_ai_mcp.models import (
     ToolCandidatePayload,
     ToolCandidateResult,
     ToolCategory,
+    UsageEvent,
 )
+from ask_ai_mcp.promotion import VerifiedToolRegistry
 from ask_ai_mcp.review import CandidateReviewError, CandidateReviewRepository
+from ask_ai_mcp.review_attestation import ReviewAttestationStore
 from ask_ai_mcp.sandbox import DEFAULT_RUNNER_IMAGE
 from ask_ai_mcp.usage import UsageStore
 from ask_ai_mcp.workspace import CandidateWorkspaceManager
@@ -192,7 +198,10 @@ def test_static_failure_is_repaired_then_returned_for_review(tmp_path: Path) -> 
     repository = CandidateReviewRepository(tmp_path / "jobs")
     full_review = repository.load(result.review_summary.job_id)
     assert "+++ b/tool.py" in full_review.candidate_patch
-    assert repository.load_summary(result.review_summary.job_id) == result.review_summary
+    reloaded_summary = repository.load_summary(result.review_summary.job_id)
+    assert reloaded_summary.candidate_sha256 == result.review_summary.candidate_sha256
+    assert result.review_summary.created_by == "codex"
+    assert result.review_summary.blocking_reasons == ["candidate_not_registered"]
 
 
 def test_persisted_review_detects_candidate_tampering(tmp_path: Path) -> None:
@@ -227,7 +236,8 @@ def test_review_remains_revalidatable_for_second_desktop_approval(tmp_path: Path
         encoding="utf-8",
     )
 
-    assert repository.load_summary(result.review_summary.job_id) == result.review_summary
+    reloaded_summary = repository.load_summary(result.review_summary.job_id)
+    assert reloaded_summary.candidate_sha256 == result.review_summary.candidate_sha256
 
 
 def test_static_policy_failure_gets_only_one_repair(tmp_path: Path) -> None:
@@ -287,7 +297,9 @@ def test_lifecycle_records_structural_metrics_without_content(tmp_path: Path) ->
     )
 
     result = lifecycle.run(
-        make_spec(), client_name="codex_desktop", budget_session_id=BUDGET_SESSION_ID
+        make_spec().model_copy(update={"fixture_notes": "中文夹具"}),
+        client_name="codex_desktop",
+        budget_session_id=BUDGET_SESSION_ID,
     )
 
     with sqlite3.connect(database) as connection:
@@ -295,7 +307,10 @@ def test_lifecycle_records_structural_metrics_without_content(tmp_path: Path) ->
             """
             SELECT lifecycle_id, budget_session_id, client_name, status,
                    spec_total_chars, candidate_source_chars, candidate_test_chars,
-                   review_summary_chars, patch_chars, attempt_count, repair_count
+                   review_summary_chars, patch_chars, spec_total_bytes,
+                   fixture_notes_chars, fixture_notes_bytes,
+                   candidate_source_bytes, candidate_test_bytes, patch_bytes,
+                   attempt_count, repair_count
             FROM lifecycle_audit
             """
         ).fetchone()
@@ -305,8 +320,38 @@ def test_lifecycle_records_structural_metrics_without_content(tmp_path: Path) ->
         "codex_desktop",
         CandidateLifecycleStatus.REVIEW_PENDING.value,
     )
-    assert all(value > 0 for value in row[4:9])
-    assert row[9:] == (1, 0)
+    assert all(value > 0 for value in row[4:15])
+    assert row[11] > row[10]
+    assert row[15:] == (1, 0)
+
+    usage = UsageStore(database)
+    usage.record(
+        UsageEvent(
+            client_name="codex_desktop",
+            task_kind="tool_build",
+            model=DeepSeekModel.FLASH,
+            thinking_enabled=True,
+            prompt_cache_hit_tokens=120,
+            prompt_cache_miss_tokens=340,
+            completion_tokens=80,
+            reasoning_tokens=30,
+            estimated_cost_cny=0.01,
+            status="success",
+            budget_session_id=BUDGET_SESSION_ID,
+            lifecycle_id=result.lifecycle_id,
+        )
+    )
+    economics = usage.summarize(days=15).recent_lifecycle_economics[0]
+    assert economics.lifecycle_id == result.lifecycle_id
+    assert economics.structural_bytes_available is True
+    assert economics.api_call_count == 1
+    assert economics.prompt_cache_hit_tokens == 120
+    assert economics.prompt_cache_miss_tokens == 340
+    assert economics.completion_tokens == 80
+    assert economics.reasoning_tokens == 30
+    assert economics.estimated_cost_cny == 0.01
+    assert economics.spec_to_candidate_source_bytes_ratio is not None
+    assert economics.spec_to_candidate_total_bytes_ratio is not None
 
 
 def test_failed_repair_still_records_lifecycle_audit(tmp_path: Path) -> None:
@@ -344,6 +389,65 @@ def test_missing_tests_are_rejected_before_docker_and_repaired(tmp_path: Path) -
     assert result.attempts[0].state is CandidateJobState.STATIC_REJECTED
     assert "missing_test_file" in client.repair_feedback[0].reason_codes
     assert executor.calls == 1
+
+
+def test_v040_candidate_survives_review_attestation_and_dual_approval(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "usage.db"
+    jobs_root = tmp_path / "jobs"
+    repository = CandidateReviewRepository(jobs_root)
+    usage = UsageStore(database)
+    lifecycle = CandidateLifecycle(
+        client=FakeClient([make_candidate()]),
+        workspace=CandidateWorkspaceManager(jobs_root),
+        executor=PassingExecutor(),
+        review_repository=repository,
+        audit_store=usage,
+    )
+    result = lifecycle.run(
+        make_spec(), client_name="codex_desktop", budget_session_id=BUDGET_SESSION_ID
+    )
+    assert result.review_summary is not None
+    job_id = result.review_summary.job_id
+    review = repository.load(job_id)
+
+    # The persisted 0.4.0 bundle has no collaboration fields; 0.4.1 computes them.
+    persisted = (jobs_root / job_id / "control" / "review.json").read_text(encoding="utf-8")
+    assert "full_review_attestations" not in persisted
+    attestations = ReviewAttestationStore(database)
+    attestations.record(review, client_name="codex_desktop")
+    registry = VerifiedToolRegistry(tmp_path / "verified", jobs_root=jobs_root)
+    request = CandidateApprovalRequest(
+        job_id=job_id,
+        candidate_sha256=review.candidate_sha256,
+        version="0.1.0",
+        approved_by="codex_desktop",
+        decision=CandidateDecision.APPROVED,
+        allowed_capabilities=["read_copied_inputs", "write_dedicated_output"],
+    )
+    registry.approve(job_root=jobs_root / job_id, request=request)
+    service = ReviewCollaborationService(
+        repository=repository,
+        attestations=attestations,
+        registry=registry,
+        usage=usage,
+    )
+
+    pending = service.list_pending().items
+    assert len(pending) == 1
+    assert pending[0].created_by == "codex_desktop"
+    assert pending[0].full_review_attestations == ["codex_desktop"]
+    assert pending[0].approval_identities == ["codex_desktop"]
+    assert pending[0].blocking_reasons == ["dual_desktop_approval_required"]
+    assert "claude_desktop" in pending[0].next_action
+
+    attestations.record(review, client_name="claude_desktop")
+    registry.approve(
+        job_root=jobs_root / job_id,
+        request=request.model_copy(update={"approved_by": "claude_desktop"}),
+    )
+    assert service.list_pending().items == []
 
 
 def test_client_hash_mismatch_is_rejected_before_staging(tmp_path: Path) -> None:

@@ -58,6 +58,15 @@ class ReviewMode(StrEnum):
     FULL = "full"
 
 
+class WorkflowGuidanceTopic(StrEnum):
+    OVERVIEW = "overview"
+    BUDGET = "budget"
+    BUILD = "build"
+    REVIEW = "review"
+    APPROVAL = "approval"
+    RUN = "run"
+
+
 class RepairKind(StrEnum):
     STATIC_POLICY = "static_policy"
     SEMANTIC_TEST = "semantic_test"
@@ -313,6 +322,35 @@ class CandidateReviewSummary(StrictModel):
     static_finding_codes: list[str] = Field(default_factory=list, max_length=200)
     tests_run: int = Field(ge=1)
     attempts: list[CandidateAttemptSummary] = Field(min_length=1, max_length=3)
+    created_by: str | None = Field(default=None, max_length=64)
+    full_review_attestations: list[str] = Field(default_factory=list, max_length=2)
+    approval_identities: list[str] = Field(default_factory=list, max_length=2)
+    blocking_reasons: list[str] = Field(default_factory=list, max_length=10)
+    next_action: str | None = Field(default=None, max_length=240)
+
+
+class PendingReviewItem(StrictModel):
+    job_id: str = Field(min_length=36, max_length=36)
+    tool_name: str = Field(min_length=3, max_length=64, pattern=r"^[a-z][a-z0-9_]+$")
+    created_at: datetime
+    created_by: str | None = Field(default=None, max_length=64)
+    model: DeepSeekModel
+    spec_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    candidate_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    registered_versions: list[str] = Field(default_factory=list, max_length=20)
+    full_review_attestations: list[str] = Field(default_factory=list, max_length=2)
+    approval_identities: list[str] = Field(default_factory=list, max_length=2)
+    blocking_reasons: list[str] = Field(default_factory=list, max_length=10)
+    next_action: str = Field(min_length=1, max_length=240)
+
+
+class PendingReviewList(StrictModel):
+    items: list[PendingReviewItem] = Field(default_factory=list, max_length=500)
+
+
+class WorkflowGuidance(StrictModel):
+    topic: WorkflowGuidanceTopic
+    guidance: list[str] = Field(min_length=1, max_length=12)
 
 
 class CandidateLifecycleResult(StrictModel):
@@ -445,15 +483,62 @@ class LifecycleAuditEvent(StrictModel):
     output_contract_chars: int = Field(ge=0)
     fixture_notes_chars: int = Field(ge=0)
     acceptance_tests_chars: int = Field(ge=0)
+    spec_total_bytes: int = Field(default=0, ge=0)
+    purpose_bytes: int = Field(default=0, ge=0)
+    input_contract_bytes: int = Field(default=0, ge=0)
+    output_contract_bytes: int = Field(default=0, ge=0)
+    fixture_notes_bytes: int = Field(default=0, ge=0)
+    acceptance_tests_bytes: int = Field(default=0, ge=0)
     candidate_source_chars: int = Field(default=0, ge=0)
     candidate_test_chars: int = Field(default=0, ge=0)
+    candidate_source_bytes: int = Field(default=0, ge=0)
+    candidate_test_bytes: int = Field(default=0, ge=0)
     candidate_file_count: int = Field(default=0, ge=0)
     review_summary_chars: int = Field(default=0, ge=0)
     patch_chars: int = Field(default=0, ge=0)
+    review_summary_bytes: int = Field(default=0, ge=0)
+    patch_bytes: int = Field(default=0, ge=0)
     attempt_count: int = Field(default=0, ge=0)
     repair_count: int = Field(default=0, ge=0)
     final_job_id: str | None = Field(default=None, min_length=36, max_length=36)
     final_candidate_sha256: str | None = Field(default=None, min_length=64, max_length=64)
+
+
+class LifecycleEconomics(StrictModel):
+    lifecycle_id: str = Field(min_length=36, max_length=36)
+    budget_session_id: str = Field(min_length=36, max_length=36)
+    client_name: str = Field(min_length=1, max_length=64)
+    model: DeepSeekModel
+    tool_name: str = Field(min_length=3, max_length=64)
+    completed_at: datetime
+    status: CandidateLifecycleStatus
+    api_call_count: int = Field(default=0, ge=0)
+    prompt_cache_hit_tokens: int = Field(default=0, ge=0)
+    prompt_cache_miss_tokens: int = Field(default=0, ge=0)
+    completion_tokens: int = Field(default=0, ge=0)
+    reasoning_tokens: int = Field(default=0, ge=0)
+    estimated_cost_cny: float = Field(default=0.0, ge=0)
+    structural_bytes_available: bool = False
+    spec_total_chars: int = Field(default=0, ge=0)
+    spec_total_bytes: int = Field(default=0, ge=0)
+    purpose_chars: int = Field(default=0, ge=0)
+    purpose_bytes: int = Field(default=0, ge=0)
+    input_contract_chars: int = Field(default=0, ge=0)
+    input_contract_bytes: int = Field(default=0, ge=0)
+    output_contract_chars: int = Field(default=0, ge=0)
+    output_contract_bytes: int = Field(default=0, ge=0)
+    fixture_notes_chars: int = Field(default=0, ge=0)
+    fixture_notes_bytes: int = Field(default=0, ge=0)
+    acceptance_tests_chars: int = Field(default=0, ge=0)
+    acceptance_tests_bytes: int = Field(default=0, ge=0)
+    candidate_source_chars: int = Field(default=0, ge=0)
+    candidate_source_bytes: int = Field(default=0, ge=0)
+    candidate_test_chars: int = Field(default=0, ge=0)
+    candidate_test_bytes: int = Field(default=0, ge=0)
+    patch_chars: int = Field(default=0, ge=0)
+    patch_bytes: int = Field(default=0, ge=0)
+    spec_to_candidate_source_bytes_ratio: float | None = Field(default=None, ge=0)
+    spec_to_candidate_total_bytes_ratio: float | None = Field(default=None, ge=0)
 
 
 class UsageSummary(StrictModel):
@@ -476,6 +561,10 @@ class UsageSummary(StrictModel):
     peak_pricing_enabled: bool
     pricing_schedule_version: str = Field(min_length=1, max_length=64)
     current_beijing_time: datetime
+    lifecycle_count: int = Field(default=0, ge=0)
+    recent_lifecycle_economics: list[LifecycleEconomics] = Field(
+        default_factory=list, max_length=20
+    )
 
 
 class VerifiedToolRecord(StrictModel):

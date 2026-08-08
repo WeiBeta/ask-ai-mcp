@@ -110,3 +110,17 @@ class ReviewAttestationStore:
             reviewed_by=str(row["reviewed_by"]),
             reviewed_at=datetime.fromisoformat(str(row["reviewed_at"])),
         )
+
+    def list_identities(self, review: CandidateReviewBundle) -> list[str]:
+        """Return desktop identities that reviewed this exact patch."""
+        digest = patch_sha256(review.candidate_patch)
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT reviewed_by FROM review_attestations
+                WHERE job_id = ? AND candidate_sha256 = ? AND patch_sha256 = ?
+                ORDER BY reviewed_by
+                """,
+                (review.job_id, review.candidate_sha256, digest),
+            ).fetchall()
+        return [str(row["reviewed_by"]) for row in rows]

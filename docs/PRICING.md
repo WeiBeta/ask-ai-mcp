@@ -52,7 +52,10 @@ Every new external-call record preserves:
 The SQLite migration preserves existing history and labels legacy records as
 `standard` under `legacy_base`; their already-recorded cost is not recomputed.
 `usage_status` reports call counts and estimated cost by client, model, and
-pricing band, plus the current Beijing pricing state.
+pricing band, plus the current Beijing pricing state. It also reports at most
+twenty recent lifecycle rows. Provider token counts are whole-request actuals;
+specification and candidate field sizes are separately reported as characters
+and UTF-8 bytes. Ratios use bytes and are never labelled token ratios.
 
 These values are audit estimates. DeepSeek's account ledger remains the source
 of truth for actual deductions.

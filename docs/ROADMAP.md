@@ -1,7 +1,7 @@
 # Roadmap
 
 Current implementation status: phases 0 through 2 are complete, including the
-real opt-in synthetic Flash smoke request. The ten-tool desktop surface,
+real opt-in synthetic Flash smoke request. The twelve-tool desktop surface,
 conversation budget sessions, compact/full review split, and verified execution
 implementation are complete; cross-client Phase 3 acceptance and explicit
 real-input-root configuration remain pending.
@@ -91,6 +91,8 @@ verifiable outputs without arbitrary host automation.
 - [x] Add CNY 5 conversation budget blocks with separate Flash and Pro grants.
 - [x] Add policy-routed repair modes and prompt-free lifecycle size metrics.
 - [x] Require exact full-review attestations for Pro and output-producing tools.
+- [x] Add on-demand workflow guidance and cross-desktop pending-review discovery.
+- [x] Expose actual lifecycle API tokens separately from structural UTF-8 bytes.
 - Run the fifteen-day trial and review quality, cost, latency, and failure data.
 - Reassess the CNY 5 block size after observing real workloads.
 

@@ -10,7 +10,7 @@ from pathlib import Path
 
 from platformdirs import user_data_path
 
-from ask_ai_mcp.models import LifecycleAuditEvent, UsageEvent, UsageSummary
+from ask_ai_mcp.models import LifecycleAuditEvent, LifecycleEconomics, UsageEvent, UsageSummary
 from ask_ai_mcp.pricing import load_peak_pricing_effective_at, pricing_context
 
 
@@ -129,11 +129,21 @@ class UsageStore:
                     output_contract_chars INTEGER NOT NULL,
                     fixture_notes_chars INTEGER NOT NULL,
                     acceptance_tests_chars INTEGER NOT NULL,
+                    spec_total_bytes INTEGER NOT NULL DEFAULT 0,
+                    purpose_bytes INTEGER NOT NULL DEFAULT 0,
+                    input_contract_bytes INTEGER NOT NULL DEFAULT 0,
+                    output_contract_bytes INTEGER NOT NULL DEFAULT 0,
+                    fixture_notes_bytes INTEGER NOT NULL DEFAULT 0,
+                    acceptance_tests_bytes INTEGER NOT NULL DEFAULT 0,
                     candidate_source_chars INTEGER NOT NULL,
                     candidate_test_chars INTEGER NOT NULL,
+                    candidate_source_bytes INTEGER NOT NULL DEFAULT 0,
+                    candidate_test_bytes INTEGER NOT NULL DEFAULT 0,
                     candidate_file_count INTEGER NOT NULL,
                     review_summary_chars INTEGER NOT NULL,
                     patch_chars INTEGER NOT NULL,
+                    review_summary_bytes INTEGER NOT NULL DEFAULT 0,
+                    patch_bytes INTEGER NOT NULL DEFAULT 0,
                     attempt_count INTEGER NOT NULL,
                     repair_count INTEGER NOT NULL,
                     final_job_id TEXT,
@@ -141,6 +151,27 @@ class UsageStore:
                 )
                 """
             )
+            lifecycle_columns = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(lifecycle_audit)").fetchall()
+            }
+            lifecycle_migrations = {
+                "spec_total_bytes": "INTEGER NOT NULL DEFAULT 0",
+                "purpose_bytes": "INTEGER NOT NULL DEFAULT 0",
+                "input_contract_bytes": "INTEGER NOT NULL DEFAULT 0",
+                "output_contract_bytes": "INTEGER NOT NULL DEFAULT 0",
+                "fixture_notes_bytes": "INTEGER NOT NULL DEFAULT 0",
+                "acceptance_tests_bytes": "INTEGER NOT NULL DEFAULT 0",
+                "candidate_source_bytes": "INTEGER NOT NULL DEFAULT 0",
+                "candidate_test_bytes": "INTEGER NOT NULL DEFAULT 0",
+                "review_summary_bytes": "INTEGER NOT NULL DEFAULT 0",
+                "patch_bytes": "INTEGER NOT NULL DEFAULT 0",
+            }
+            for column_name, definition in lifecycle_migrations.items():
+                if column_name not in lifecycle_columns:
+                    connection.execute(
+                        f"ALTER TABLE lifecycle_audit ADD COLUMN {column_name} {definition}"
+                    )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_lifecycle_budget_session "
                 "ON lifecycle_audit(budget_session_id)"
@@ -201,11 +232,18 @@ class UsageStore:
                     spec_sha256, started_at, completed_at, status,
                     spec_total_chars, purpose_chars, input_contract_chars,
                     output_contract_chars, fixture_notes_chars,
-                    acceptance_tests_chars, candidate_source_chars,
-                    candidate_test_chars, candidate_file_count,
-                    review_summary_chars, patch_chars, attempt_count, repair_count,
+                    acceptance_tests_chars, spec_total_bytes, purpose_bytes,
+                    input_contract_bytes, output_contract_bytes, fixture_notes_bytes,
+                    acceptance_tests_bytes, candidate_source_chars,
+                    candidate_test_chars, candidate_source_bytes,
+                    candidate_test_bytes, candidate_file_count,
+                    review_summary_chars, patch_chars, review_summary_bytes,
+                    patch_bytes, attempt_count, repair_count,
                     final_job_id, final_candidate_sha256
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
                 """,
                 (
                     event.lifecycle_id,
@@ -223,11 +261,21 @@ class UsageStore:
                     event.output_contract_chars,
                     event.fixture_notes_chars,
                     event.acceptance_tests_chars,
+                    event.spec_total_bytes,
+                    event.purpose_bytes,
+                    event.input_contract_bytes,
+                    event.output_contract_bytes,
+                    event.fixture_notes_bytes,
+                    event.acceptance_tests_bytes,
                     event.candidate_source_chars,
                     event.candidate_test_chars,
+                    event.candidate_source_bytes,
+                    event.candidate_test_bytes,
                     event.candidate_file_count,
                     event.review_summary_chars,
                     event.patch_chars,
+                    event.review_summary_bytes,
+                    event.patch_bytes,
                     event.attempt_count,
                     event.repair_count,
                     event.final_job_id,
@@ -302,6 +350,29 @@ class UsageStore:
                 """,
                 (cutoff,),
             ).fetchall()
+            lifecycle_rows = connection.execute(
+                """
+                SELECT lifecycle_audit.*,
+                       COUNT(api_usage.id) AS api_call_count,
+                       COALESCE(SUM(api_usage.prompt_cache_hit_tokens), 0) AS cache_hit,
+                       COALESCE(SUM(api_usage.prompt_cache_miss_tokens), 0) AS cache_miss,
+                       COALESCE(SUM(api_usage.completion_tokens), 0) AS completion,
+                       COALESCE(SUM(api_usage.reasoning_tokens), 0) AS reasoning,
+                       COALESCE(SUM(api_usage.estimated_cost_cny), 0) AS cost
+                FROM lifecycle_audit
+                LEFT JOIN api_usage
+                  ON api_usage.lifecycle_id = lifecycle_audit.lifecycle_id
+                WHERE lifecycle_audit.completed_at >= ?
+                GROUP BY lifecycle_audit.lifecycle_id
+                ORDER BY lifecycle_audit.completed_at DESC
+                LIMIT 20
+                """,
+                (cutoff,),
+            ).fetchall()
+            lifecycle_count = connection.execute(
+                "SELECT COUNT(*) FROM lifecycle_audit WHERE completed_at >= ?",
+                (cutoff,),
+            ).fetchone()[0]
 
         now_utc = datetime.now(UTC)
         effective_at = load_peak_pricing_effective_at()
@@ -336,4 +407,69 @@ class UsageStore:
             peak_pricing_enabled=peak_enabled,
             pricing_schedule_version=schedule_version,
             current_beijing_time=beijing_time,
+            lifecycle_count=int(lifecycle_count),
+            recent_lifecycle_economics=[self._lifecycle_economics(row) for row in lifecycle_rows],
+        )
+
+    def client_for_job(self, job_id: str) -> str | None:
+        """Return the controller that created a final candidate job, if audited."""
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT client_name FROM lifecycle_audit
+                WHERE final_job_id = ?
+                ORDER BY completed_at DESC
+                LIMIT 1
+                """,
+                (job_id,),
+            ).fetchone()
+        return str(row["client_name"]) if row is not None else None
+
+    @staticmethod
+    def _lifecycle_economics(row: sqlite3.Row) -> LifecycleEconomics:
+        source_bytes = int(row["candidate_source_bytes"])
+        test_bytes = int(row["candidate_test_bytes"])
+        spec_bytes = int(row["spec_total_bytes"])
+        candidate_total_bytes = source_bytes + test_bytes
+        return LifecycleEconomics(
+            lifecycle_id=str(row["lifecycle_id"]),
+            budget_session_id=str(row["budget_session_id"]),
+            client_name=str(row["client_name"]),
+            model=str(row["model"]),
+            tool_name=str(row["tool_name"]),
+            completed_at=datetime.fromisoformat(str(row["completed_at"])),
+            status=str(row["status"]),
+            api_call_count=int(row["api_call_count"]),
+            prompt_cache_hit_tokens=int(row["cache_hit"]),
+            prompt_cache_miss_tokens=int(row["cache_miss"]),
+            completion_tokens=int(row["completion"]),
+            reasoning_tokens=int(row["reasoning"]),
+            estimated_cost_cny=round(float(row["cost"]), 8),
+            structural_bytes_available=spec_bytes > 0,
+            spec_total_chars=int(row["spec_total_chars"]),
+            spec_total_bytes=spec_bytes,
+            purpose_chars=int(row["purpose_chars"]),
+            purpose_bytes=int(row["purpose_bytes"]),
+            input_contract_chars=int(row["input_contract_chars"]),
+            input_contract_bytes=int(row["input_contract_bytes"]),
+            output_contract_chars=int(row["output_contract_chars"]),
+            output_contract_bytes=int(row["output_contract_bytes"]),
+            fixture_notes_chars=int(row["fixture_notes_chars"]),
+            fixture_notes_bytes=int(row["fixture_notes_bytes"]),
+            acceptance_tests_chars=int(row["acceptance_tests_chars"]),
+            acceptance_tests_bytes=int(row["acceptance_tests_bytes"]),
+            candidate_source_chars=int(row["candidate_source_chars"]),
+            candidate_source_bytes=source_bytes,
+            candidate_test_chars=int(row["candidate_test_chars"]),
+            candidate_test_bytes=test_bytes,
+            patch_chars=int(row["patch_chars"]),
+            patch_bytes=int(row["patch_bytes"]),
+            spec_to_candidate_source_bytes_ratio=(
+                round(spec_bytes / source_bytes, 6) if spec_bytes and source_bytes else None
+            ),
+            spec_to_candidate_total_bytes_ratio=(
+                round(spec_bytes / candidate_total_bytes, 6)
+                if spec_bytes and candidate_total_bytes
+                else None
+            ),
         )

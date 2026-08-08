@@ -27,6 +27,9 @@
 - DeepSeek-generated code must be created outside the repository, tested in an
   isolated candidate workspace, and returned as a candidate patch. It must not
   modify the working tree directly.
+- Delegate only mechanically verifiable work likely to need at least three
+  implementation rounds or to produce a reusable registered tool. The
+  specification must be clearly shorter than the expected artifact.
 
 ## Source and artifact safety
 
@@ -73,6 +76,11 @@ Build and summary-review responses must remain compact. A full review records a
 desktop-specific attestation bound to the exact job, candidate hash, and patch
 hash. Pro or `write_dedicated_output` approval requires this attestation from
 the approving desktop before promotion.
+
+Keep persistent controller instructions and MCP tool descriptions concise. Use
+`workflow_guidance` for detailed state-specific protocol and
+`list_pending_reviews` for cross-desktop handoff instead of duplicating the
+whole workflow in every prompt.
 
 ## Verification
 

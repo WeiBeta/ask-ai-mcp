@@ -1,5 +1,6 @@
 """Tests for concurrent-safe, content-free usage accounting."""
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 from ask_ai_mcp.models import DeepSeekModel, PricingBand, UsageEvent
@@ -115,3 +116,59 @@ def test_existing_usage_database_is_migrated_without_losing_history(tmp_path: Pa
     assert summary.total_calls == 1
     assert summary.by_client == {"codex_desktop": 1}
     assert summary.by_pricing_band == {"standard": 1}
+
+
+def test_v040_lifecycle_metrics_are_migrated_without_fake_byte_values(tmp_path: Path) -> None:
+    import sqlite3
+
+    database = tmp_path / "legacy-lifecycle.db"
+    now = datetime.now(UTC).isoformat()
+    lifecycle_id = "11111111-1111-4111-8111-111111111111"
+    job_id = "22222222-2222-4222-8222-222222222222"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """
+            CREATE TABLE lifecycle_audit (
+                lifecycle_id TEXT PRIMARY KEY, budget_session_id TEXT NOT NULL,
+                client_name TEXT NOT NULL, model TEXT NOT NULL, tool_name TEXT NOT NULL,
+                spec_sha256 TEXT NOT NULL, started_at TEXT NOT NULL,
+                completed_at TEXT NOT NULL, status TEXT NOT NULL,
+                spec_total_chars INTEGER NOT NULL, purpose_chars INTEGER NOT NULL,
+                input_contract_chars INTEGER NOT NULL, output_contract_chars INTEGER NOT NULL,
+                fixture_notes_chars INTEGER NOT NULL, acceptance_tests_chars INTEGER NOT NULL,
+                candidate_source_chars INTEGER NOT NULL, candidate_test_chars INTEGER NOT NULL,
+                candidate_file_count INTEGER NOT NULL, review_summary_chars INTEGER NOT NULL,
+                patch_chars INTEGER NOT NULL, attempt_count INTEGER NOT NULL,
+                repair_count INTEGER NOT NULL, final_job_id TEXT,
+                final_candidate_sha256 TEXT
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO lifecycle_audit VALUES (
+                ?, ?, 'codex_desktop', 'deepseek-v4-flash', 'legacy_tool', ?, ?, ?,
+                'review_pending', 500, 100, 120, 130, 0, 50, 900, 300, 2,
+                250, 1500, 1, 0, ?, ?
+            )
+            """,
+            (
+                lifecycle_id,
+                "33333333-3333-4333-8333-333333333333",
+                "a" * 64,
+                now,
+                now,
+                job_id,
+                "b" * 64,
+            ),
+        )
+
+    store = UsageStore(database)
+    economics = store.summarize(days=15).recent_lifecycle_economics[0]
+
+    assert economics.lifecycle_id == lifecycle_id
+    assert economics.spec_total_chars == 500
+    assert economics.spec_total_bytes == 0
+    assert economics.structural_bytes_available is False
+    assert economics.spec_to_candidate_total_bytes_ratio is None
+    assert store.client_for_job(job_id) == "codex_desktop"

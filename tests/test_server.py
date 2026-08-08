@@ -19,6 +19,7 @@ from ask_ai_mcp.models import (
     ToolBuildSpec,
     ToolCategory,
     VerifiedToolExecutionCommand,
+    WorkflowGuidanceTopic,
 )
 
 BUDGET_SESSION_ID = "a1c2e3f4-1234-4567-89ab-1234567890ab"
@@ -41,6 +42,8 @@ def test_mcp_surface_and_raw_schema_are_narrow() -> None:
     by_name = {tool.name: tool for tool in tools}
     assert set(by_name) == {
         "usage_status",
+        "workflow_guidance",
+        "list_pending_reviews",
         "open_budget_session",
         "budget_status",
         "add_budget_block",
@@ -77,6 +80,29 @@ def test_mcp_surface_and_raw_schema_are_narrow() -> None:
     assert review_annotations is not None
     assert review_annotations.readOnlyHint is False
     assert review_annotations.idempotentHint is False
+    guidance_schema = by_name["workflow_guidance"].parameters
+    assert set(guidance_schema["properties"]["topic"]["enum"]) == {
+        "overview",
+        "budget",
+        "build",
+        "review",
+        "approval",
+        "run",
+    }
+    assert all(len(tool.description or "") < 800 for tool in tools)
+
+
+def test_guidance_and_pending_queue_are_prompt_free_local_reads(monkeypatch) -> None:
+    guidance = server.workflow_guidance(WorkflowGuidanceTopic.OVERVIEW)
+    assert guidance.topic is WorkflowGuidanceTopic.OVERVIEW
+    assert any("final prose" in item for item in guidance.guidance)
+
+    monkeypatch.setattr(
+        server,
+        "get_review_collaboration",
+        lambda: SimpleNamespace(list_pending=lambda: "pending"),
+    )
+    assert server.list_pending_reviews() == "pending"
 
 
 def test_candidate_operations_require_configured_desktop_identity(monkeypatch) -> None:
@@ -136,6 +162,11 @@ def test_review_tool_only_loads_persisted_review(monkeypatch) -> None:
     job_id = "52efb642-6d4a-42ea-9bbf-da5197360c77"
     repository = SimpleNamespace(load_summary=lambda value: ("summary", value))
     monkeypatch.setattr(server, "get_review_repository", lambda: repository)
+    monkeypatch.setattr(
+        server,
+        "get_review_collaboration",
+        lambda: SimpleNamespace(enrich_summary=lambda value: value),
+    )
     assert server.review_tool_candidate(job_id) == ("summary", job_id)
 
 

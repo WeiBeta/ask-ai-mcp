@@ -12,6 +12,8 @@ from pydantic import Field
 
 from ask_ai_mcp import __version__
 from ask_ai_mcp.budget import BudgetStore
+from ask_ai_mcp.collaboration import ReviewCollaborationService
+from ask_ai_mcp.guidance import workflow_guidance_for
 from ask_ai_mcp.lifecycle import CandidateLifecycle
 from ask_ai_mcp.models import (
     BudgetIncrementCommand,
@@ -25,6 +27,7 @@ from ask_ai_mcp.models import (
     CandidateReviewBundle,
     CandidateReviewSummary,
     DeepSeekModel,
+    PendingReviewList,
     RegisteredToolList,
     ReviewMode,
     ToolBuildSpec,
@@ -33,6 +36,8 @@ from ask_ai_mcp.models import (
     VerifiedToolExecutionCommand,
     VerifiedToolExecutionReport,
     VerifiedToolRecord,
+    WorkflowGuidance,
+    WorkflowGuidanceTopic,
 )
 from ask_ai_mcp.promotion import VerifiedToolRegistry
 from ask_ai_mcp.review import CandidateReviewRepository
@@ -106,6 +111,16 @@ def get_verified_runner() -> VerifiedToolRunner:
     return VerifiedToolRunner(registry=get_registry())
 
 
+@lru_cache(maxsize=1)
+def get_review_collaboration() -> ReviewCollaborationService:
+    return ReviewCollaborationService(
+        repository=get_review_repository(),
+        attestations=get_review_attestation_store(),
+        registry=get_registry(),
+        usage=get_usage_store(),
+    )
+
+
 def get_client_name() -> str:
     value = os.environ.get("ASK_AI_MCP_CLIENT_NAME", "")
     if value not in _DESKTOP_CLIENT_NAMES:
@@ -126,13 +141,36 @@ def get_client_name() -> str:
     )
 )
 def usage_status(days: Annotated[int, Field(ge=1, le=366)] = 15) -> UsageSummary:
-    """Return prompt-free DeepSeek usage totals for the requested period.
-
-    This tool performs no external API call and never returns prompts, source
-    contents, responses, or credentials. Candidate build, review, and approval
-    are separate tools; this status call cannot trigger any of them.
-    """
+    """Return local usage totals and recent lifecycle economics; never calls a model."""
     return get_usage_store().summarize(days=days)
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Read Ask AI workflow guidance",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
+def workflow_guidance(topic: WorkflowGuidanceTopic) -> WorkflowGuidance:
+    """Load one local protocol topic on demand; never calls DeepSeek."""
+    return workflow_guidance_for(topic)
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="List cross-desktop pending reviews",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
+def list_pending_reviews() -> PendingReviewList:
+    """Return a compact local queue with hashes, identities, blockers, and next action."""
+    return get_review_collaboration().list_pending()
 
 
 @mcp.tool(
@@ -287,7 +325,7 @@ def review_tool_candidate(
     """
     repository = get_review_repository()
     if mode is ReviewMode.SUMMARY:
-        return repository.load_summary(job_id)
+        return get_review_collaboration().enrich_summary(repository.load_summary(job_id))
     review = repository.load(job_id)
     get_review_attestation_store().record(review, client_name=get_client_name())
     return review

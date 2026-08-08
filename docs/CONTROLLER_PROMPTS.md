@@ -30,6 +30,9 @@ expects three or more implementation/debugging rounds, or the result will be
 registered for repeated use.
 
 `usage_status` is a local, prompt-free read and may be called when useful.
+Load detailed state-machine instructions only when needed through
+`workflow_guidance`. Use `list_pending_reviews` to discover review or second-
+desktop approval work without loading candidate patches.
 Budget-session tools, review, approval, registry listing, and verified execution
 do not call DeepSeek. At the start of a Claude/Codex conversation that needs
 Ask AI, call `open_budget_session` once and retain its opaque ID. Flash receives
@@ -144,7 +147,7 @@ the other. The acceptance workflow still verifies this behavior end to end.
 
 ## Not-yet-exposed roles
 
-The policy permits source-faithful structuring, but the ten-tool MCP surface has
+The policy permits source-faithful structuring, but the twelve-tool MCP surface has
 no production source-structuring model call. Verified tools execute locally and
 offline; they do not make DeepSeek a source-content author. Do not route source
 content through `build_helper_tool` as a workaround.
