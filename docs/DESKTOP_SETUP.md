@@ -1,5 +1,9 @@
 # Desktop setup
 
+For the current workstation's Simplified Chinese operating procedure, standard
+handoff directory, backup boundaries, and migration checklist, see
+`USER_MANUAL_ZH-CN.md`.
+
 ## Status and safety
 
 Both desktop clients use the same local STDIO executable and the same

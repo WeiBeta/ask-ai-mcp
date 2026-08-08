@@ -81,6 +81,7 @@ C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp.exe
 - `docs/MCP_SMOKE.md`: first billed build-review-approval evidence
 - `docs/DESKTOP_SETUP.md`: Claude Desktop and Codex Desktop connection guide
 - `docs/CONTROLLER_PROMPTS.md`: shared delegation rules and desktop adaptations
+- `docs/USER_MANUAL_ZH-CN.md`: Simplified Chinese user, handoff, backup, and migration manual
 - `docs/ROADMAP.md`: staged implementation and exit criteria
 - `AGENTS.md`: repository rules for future model-driven development
 
