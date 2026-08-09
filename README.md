@@ -34,7 +34,7 @@ requires a standard callable contract, exact registry hash, dual Claude/Codex
 approval for output-producing tools, Docker isolation, and explicitly
 configured narrow input roots. No real input root is enabled by default.
 
-Version 0.6.1 keeps detailed protocol text out of the always-loaded tool
+Version 0.6.2 keeps detailed protocol text out of the always-loaded tool
 descriptions. Controllers request only the workflow topic they need. Review
 summaries and the local pending queue join creator, exact full-review
 attestations, approval identities, blocking reasons, and the next action without

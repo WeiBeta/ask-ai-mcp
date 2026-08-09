@@ -1,7 +1,7 @@
 # MiniMax H3 本地部署与 MCP 开发交接
 
 更新日期：2026-08-08（Asia/Shanghai）
-适用版本：Ask AI MCP 0.6.1
+适用版本：Ask AI MCP 0.6.2
 目标主机：Windows 11、NVIDIA GeForce RTX 3090 24GB
 
 本文是当前工作站 H3 部署与 MCP 接口的交接基线。后续开发会话应先阅读
@@ -94,7 +94,9 @@ SeedVR2 ComfyUI 重打包标注 Apache-2.0，帧插值仓库包含 MIT/Apache-2.
 Ask AI MCP 当前共 16 个工具，其中 H3 工具为：
 
 - `h3_backend_status`：检查 ComfyUI、GPU、4 个 H3 权重和 5 个后处理权重。
-- `h3_generate_video`：提交 4–15 秒的 H3 原片生成任务。
+- `h3_generate_video`：硬限制为 4–15 秒；MCP 按 24fps 换算并向上对齐到
+  `17k+5` 网格。4 秒对应 107 帧，技术上有效；推荐使用 5–15 秒，对应约
+  124–362 帧训练范围。
 - `h3_postprocess_video`：处理人工选中的原片。
 - `h3_job_status`：轮询生成或后处理任务并返回本地路径与 loopback 查看地址；任务进入
   成功或失败终态且 ComfyUI 全局队列空闲后，调用本机 `/free` 卸载模型并释放显存。
@@ -224,7 +226,7 @@ uv lock
 uv sync --all-groups
 uv run ruff check .       -> All checks passed
 uv run pytest             -> 136 passed, 3 skipped
-fastmcp inspect           -> Ask AI MCP 0.6.1，共 16 个工具
+fastmcp inspect           -> Ask AI MCP 0.6.2，共 16 个工具
 ```
 
 普通 pytest 不运行外部 API 集成测试，符合仓库规则。当前 H3 相关修改仍在工作树中，

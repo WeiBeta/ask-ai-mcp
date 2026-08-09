@@ -427,6 +427,25 @@ def test_h3_generation_only_exposes_480p_presets() -> None:
     }
 
 
+def test_h3_duration_maps_to_recommended_trained_frame_range() -> None:
+    with pytest.raises(ValueError):
+        H3GenerationCommand(
+            prompt="A cinematic landscape with natural stereo ambience.",
+            duration_seconds=3.99,
+        )
+
+    assert (
+        H3GenerationCommand(
+            prompt="A cinematic landscape with natural stereo ambience.",
+            duration_seconds=4,
+        ).duration_seconds
+        == 4
+    )
+    assert H3ComfyClient.frame_count(4) == 107
+    assert H3ComfyClient.frame_count(5) == 124
+    assert H3ComfyClient.frame_count(15) == 362
+
+
 def test_postprocess_command_rejects_cross_style_models() -> None:
     with pytest.raises(ValueError, match="SeedVR2"):
         H3PostprocessCommand(

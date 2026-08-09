@@ -61,6 +61,7 @@ RESOLUTIONS = {
     H3ResolutionPreset.SQUARE_480P: (480, 480),
 }
 _FALSE_VALUES = frozenset({"0", "false", "no", "off"})
+H3_FPS = 24
 
 
 class H3ClientError(RuntimeError):
@@ -445,7 +446,7 @@ class H3ComfyClient:
 
     @staticmethod
     def frame_count(duration_seconds: float) -> int:
-        base = max(5, round(duration_seconds * 24))
+        base = max(5, round(duration_seconds * H3_FPS))
         return base + (5 - (base % 17)) % 17
 
     @staticmethod

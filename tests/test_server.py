@@ -58,6 +58,12 @@ def test_full_mcp_surface_and_raw_schema_are_narrow() -> None:
         "list_registered_tools",
         "run_verified_tool",
     }
+    duration_schema = by_name["h3_generate_video"].parameters["properties"]["command"][
+        "properties"
+    ]["duration_seconds"]
+    assert duration_schema["minimum"] == 4.0
+    assert duration_schema["maximum"] == 15.0
+    assert "5-15 is recommended" in duration_schema["description"]
     build_schema = by_name["build_helper_tool"].parameters
     assert set(build_schema["properties"]) == {"budget_session_id", "spec"}
     assert (

@@ -12,7 +12,10 @@ processes are serialized by the launcher's named mutex. `h3_backend_status`
 therefore has a state-changing annotation even though its returned information
 is diagnostic. It checks the exact four-file
 FL2VA model set, and five explicit post-processing weights. `h3_generate_video`
-submits only a bounded 4–15 second 480p/24 fps original. After a person selects
+submits only a bounded 4–15 second 480p/24 fps original. Five to fifteen seconds
+is recommended because it maps to the model's approximate 124–362 trained frame
+range after `17k+5` alignment; four seconds is valid but aligns to 107 frames.
+After a person selects
 a usable original, `h3_postprocess_video` applies an explicit anime or realistic
 interpolation/upscale combination without asking ComfyUI to infer the style.
 `h3_job_status` polls either asynchronous job and returns validated local output

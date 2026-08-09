@@ -761,7 +761,12 @@ class H3GenerationCommand(StrictModel):
 
     prompt: str = Field(min_length=10, max_length=12_000)
     resolution: H3ResolutionPreset = H3ResolutionPreset.LANDSCAPE_480P
-    duration_seconds: float = Field(default=5.0, ge=4.0, le=15.0)
+    duration_seconds: float = Field(
+        default=5.0,
+        ge=4.0,
+        le=15.0,
+        description="Requested seconds; 5-15 is recommended for the trained frame range.",
+    )
     seed: int = Field(default=0, ge=0, le=9_007_199_254_740_991)
     first_frame: str | None = Field(default=None, max_length=1_024)
     last_frame: str | None = Field(default=None, max_length=1_024)

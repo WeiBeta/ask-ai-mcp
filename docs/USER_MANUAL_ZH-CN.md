@@ -1,6 +1,6 @@
 # Ask AI MCP 简中使用与运维说明书
 
-适用版本：Ask AI MCP 0.6.1
+适用版本：Ask AI MCP 0.6.2
 适用平台：Windows 11
 适用客户端：Codex Desktop、Claude Desktop
 仓库：`xujinglong8814-WeiBeta/ask-ai-mcp`（私有）
@@ -15,7 +15,7 @@ Ask AI MCP 已完成双端加载、跨客户端发现、独立完整审阅、双
 - **运行已验证工具**：`run_verified_tool` 在本机 Docker 中离线运行，不调用 DeepSeek，不产生模型费用。
 - **查询和审批**：用量、预算、操作指南、待审队列、摘要、完整审阅、批准和注册表查询都是本地操作，不调用 DeepSeek。
 
-0.6.1 没有开放任意提示词转发，也没有开放“把整份业务文件直接交给 DeepSeek 处理”的接口。DeepSeek 负责制造候选工具；经过验证的本地工具负责处理明确暂存的文件副本。
+0.6.2 没有开放任意提示词转发，也没有开放“把整份业务文件直接交给 DeepSeek 处理”的接口。DeepSeek 负责制造候选工具；经过验证的本地工具负责处理明确暂存的文件副本。
 
 ## 2. 不可突破的角色边界
 
