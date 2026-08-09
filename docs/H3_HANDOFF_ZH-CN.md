@@ -1,7 +1,7 @@
 # MiniMax H3 本地部署与 MCP 开发交接
 
 更新日期：2026-08-08（Asia/Shanghai）
-适用版本：Ask AI MCP 0.6.0
+适用版本：Ask AI MCP 0.6.1
 目标主机：Windows 11、NVIDIA GeForce RTX 3090 24GB
 
 本文是当前工作站 H3 部署与 MCP 接口的交接基线。后续开发会话应先阅读
@@ -44,7 +44,8 @@ pwsh -NoProfile -File C:\Dev\ask-ai-mcp\scripts\start_comfyui_h3.ps1
 ```
 
 当前脚本固定使用共享 `inputs`、`outputs`、`--reserve-vram 2`、无预览模式，
-并把进程隐藏启动。重复运行会识别现有 8188 实例，不会再起一个副本。
+并把进程隐藏启动。4 个 H3 MCP 接口会在回环后端不可用时自动调用此脚本并等待
+就绪；脚本使用命名互斥锁串行化来自多个 MCP 进程的启动请求，重复运行不会再起副本。
 
 常用只读检查：
 
@@ -136,7 +137,7 @@ Ask AI MCP 当前共 16 个工具，其中 H3 工具为：
 两个客户端均调用：
 
 ```text
-C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp.exe
+C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-full.exe
 ```
 
 当前有效配置文件：
@@ -148,6 +149,8 @@ C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp.exe
 
 ```text
 ASK_AI_MCP_H3_URL=http://127.0.0.1:8188
+ASK_AI_MCP_H3_START_SCRIPT=C:\Dev\ask-ai-mcp\scripts\start_comfyui_h3.ps1
+ASK_AI_MCP_H3_START_TIMEOUT_SECONDS=120
 ASK_AI_MCP_H3_WORKSPACE_ROOT=C:\Users\user\Documents\AskAI-Exchange\H3-Workspace
 ASK_AI_MCP_H3_COMFY_INPUT_ROOT=C:\Users\user\Documents\AskAI-Exchange\H3-Workspace\inputs
 ASK_AI_MCP_H3_OUTPUT_ROOT=C:\Users\user\Documents\AskAI-Exchange\H3-Workspace\outputs
@@ -155,7 +158,9 @@ ASK_AI_MCP_H3_INPUT_ROOTS=C:\Users\user\Documents\AskAI-Exchange\H3-Workspace\in
 ASK_AI_MCP_H3_AUTO_FREE_VRAM=1
 ```
 
-`ASK_AI_MCP_H3_AUTO_FREE_VRAM` 默认启用，不写入配置也会生效。设为 `0`、`false`、
+`ASK_AI_MCP_H3_AUTO_START` 默认启用；后端未监听时仅执行绝对路径的 `.ps1` 启动脚本，
+不会接受任意命令。启动超时允许 5–600 秒。`ASK_AI_MCP_H3_AUTO_FREE_VRAM` 也默认启用，
+不写入配置仍会生效；设为 `0`、`false`、
 `no` 或 `off` 可显式禁用。释放操作不会结束 ComfyUI 进程，只发送
 `{"unload_models": true, "free_memory": true}`；若仍有运行或排队任务则延后，最后一个
 终态任务再次轮询时会完成释放。
@@ -219,7 +224,7 @@ uv lock
 uv sync --all-groups
 uv run ruff check .       -> All checks passed
 uv run pytest             -> 136 passed, 3 skipped
-fastmcp inspect           -> Ask AI MCP 0.6.0，共 16 个工具
+fastmcp inspect           -> Ask AI MCP 0.6.1，共 16 个工具
 ```
 
 普通 pytest 不运行外部 API 集成测试，符合仓库规则。当前 H3 相关修改仍在工作树中，

@@ -46,9 +46,16 @@ def test_core_templates_expose_only_core_entrypoint_and_tools() -> None:
 
 def test_full_templates_reference_adapter_but_no_comfyui_payload() -> None:
     codex = (MIGRATION / "profiles/full/config-templates/codex.toml").read_text("utf-8")
+    claude = json.loads(
+        (MIGRATION / "profiles/full/config-templates/claude.json").read_text("utf-8")
+    )
     assert "__MCP_FULL_EXE__" in codex
     assert all(tool in codex for tool in CORE_TOOLS | H3_TOOLS)
     assert "ASK_AI_MCP_H3_URL" in codex
+    assert 'ASK_AI_MCP_H3_START_SCRIPT = "__H3_START_SCRIPT__"' in codex
+    assert claude["mcpServers"]["ask-ai"]["env"]["ASK_AI_MCP_H3_START_SCRIPT"] == (
+        "__H3_START_SCRIPT__"
+    )
     package_inputs = [path.name.casefold() for path in MIGRATION.rglob("*") if path.is_file()]
     assert not any(name.endswith((".safetensors", ".pth", ".ckpt")) for name in package_inputs)
 

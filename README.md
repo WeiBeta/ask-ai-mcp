@@ -34,7 +34,7 @@ requires a standard callable contract, exact registry hash, dual Claude/Codex
 approval for output-producing tools, Docker isolation, and explicitly
 configured narrow input roots. No real input root is enabled by default.
 
-Version 0.6.0 keeps detailed protocol text out of the always-loaded tool
+Version 0.6.1 keeps detailed protocol text out of the always-loaded tool
 descriptions. Controllers request only the workflow topic they need. Review
 summaries and the local pending queue join creator, exact full-review
 attestations, approval identities, blocking reasons, and the next action without
@@ -67,7 +67,7 @@ uv run fastmcp inspect src/ask_ai_mcp/server.py --format mcp
 The local MCP entry point is:
 
 ```text
-C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp.exe
+C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-full.exe
 ```
 
 Two explicit use-only profiles share the same codebase:
@@ -96,7 +96,9 @@ this repository. On the current workstation they live under
 `C:\AI\ComfyUI-H3`; only the small loopback adapter, tests, and operating
 documentation are versioned here.
 
-Start or verify the local backend with PowerShell 7:
+The four H3 tools automatically run the bounded PowerShell launcher when the
+loopback backend is unavailable, then wait for ComfyUI readiness. The launcher
+can also be run manually:
 
 ```powershell
 pwsh -NoProfile -File .\scripts\start_comfyui_h3.ps1

@@ -21,7 +21,7 @@ Real-file paths remain closed until narrow input roots are explicitly configured
 Use this absolute executable path:
 
 ```text
-C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp.exe
+C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-full.exe
 ```
 
 For new use-only deployments, select an explicit profile instead:
@@ -39,7 +39,9 @@ Absolute paths are required because a desktop MCP host may start a server with
 an undefined working directory.
 
 The ComfyUI/H3 runtime is installed outside the repository at
-`C:\AI\ComfyUI-H3`. Start it with PowerShell 7 before submitting an H3 task:
+`C:\AI\ComfyUI-H3`. Full automatically starts it through the bounded PowerShell
+launcher when the loopback service is unavailable. The same launcher can be run
+manually:
 
 ```powershell
 pwsh -NoProfile -File C:\Dev\ask-ai-mcp\scripts\start_comfyui_h3.ps1
@@ -72,11 +74,13 @@ configured servers:
 {
   "mcpServers": {
     "ask-ai": {
-      "command": "C:\\Dev\\ask-ai-mcp\\.venv\\Scripts\\ask-ai-mcp.exe",
+      "command": "C:\\Dev\\ask-ai-mcp\\.venv\\Scripts\\ask-ai-mcp-full.exe",
       "args": [],
       "env": {
         "ASK_AI_MCP_CLIENT_NAME": "claude_desktop",
         "ASK_AI_MCP_H3_URL": "http://127.0.0.1:8188",
+        "ASK_AI_MCP_H3_START_SCRIPT": "C:\\Dev\\ask-ai-mcp\\scripts\\start_comfyui_h3.ps1",
+        "ASK_AI_MCP_H3_START_TIMEOUT_SECONDS": "120",
         "ASK_AI_MCP_H3_WORKSPACE_ROOT": "C:\\Users\\user\\Documents\\AskAI-Exchange\\H3-Workspace",
         "ASK_AI_MCP_H3_COMFY_INPUT_ROOT": "C:\\Users\\user\\Documents\\AskAI-Exchange\\H3-Workspace\\inputs",
         "ASK_AI_MCP_H3_OUTPUT_ROOT": "C:\\Users\\user\\Documents\\AskAI-Exchange\\H3-Workspace\\outputs",
@@ -115,7 +119,7 @@ existing TOML file:
 
 ```toml
 [mcp_servers.ask_ai]
-command = "C:\\Dev\\ask-ai-mcp\\.venv\\Scripts\\ask-ai-mcp.exe"
+command = "C:\\Dev\\ask-ai-mcp\\.venv\\Scripts\\ask-ai-mcp-full.exe"
 cwd = "C:\\Dev\\ask-ai-mcp"
 enabled = true
 required = false
@@ -127,6 +131,8 @@ tool_timeout_sec = 600
 [mcp_servers.ask_ai.env]
 ASK_AI_MCP_CLIENT_NAME = "codex_desktop"
 ASK_AI_MCP_H3_URL = "http://127.0.0.1:8188"
+ASK_AI_MCP_H3_START_SCRIPT = "C:\\Dev\\ask-ai-mcp\\scripts\\start_comfyui_h3.ps1"
+ASK_AI_MCP_H3_START_TIMEOUT_SECONDS = "120"
 ASK_AI_MCP_H3_WORKSPACE_ROOT = "C:\\Users\\user\\Documents\\AskAI-Exchange\\H3-Workspace"
 ASK_AI_MCP_H3_COMFY_INPUT_ROOT = "C:\\Users\\user\\Documents\\AskAI-Exchange\\H3-Workspace\\inputs"
 ASK_AI_MCP_H3_OUTPUT_ROOT = "C:\\Users\\user\\Documents\\AskAI-Exchange\\H3-Workspace\\outputs"

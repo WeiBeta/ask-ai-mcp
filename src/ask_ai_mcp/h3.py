@@ -6,6 +6,8 @@ import mimetypes
 import os
 import re
 import shutil
+import subprocess
+import time
 from hashlib import sha256
 from pathlib import Path
 from threading import Lock
@@ -73,6 +75,8 @@ def load_h3_input_roots() -> list[Path]:
 class H3ComfyClient:
     """Submit and inspect bounded H3 jobs through a local ComfyUI server."""
 
+    _backend_start_lock = Lock()
+
     def __init__(
         self,
         *,
@@ -81,6 +85,10 @@ class H3ComfyClient:
         input_roots: list[Path] | None = None,
         workspace_root: Path | None = None,
         timeout_seconds: float = 20.0,
+        auto_start: bool | None = None,
+        start_script: Path | None = None,
+        start_timeout_seconds: float | None = None,
+        start_poll_interval_seconds: float = 1.0,
     ) -> None:
         self.base_url = (base_url or os.environ.get("ASK_AI_MCP_H3_URL", "")).rstrip(
             "/"
@@ -112,6 +120,23 @@ class H3ComfyClient:
             else None
         )
         self.timeout_seconds = timeout_seconds
+        self.auto_start = (
+            auto_start
+            if auto_start is not None
+            else os.environ.get("ASK_AI_MCP_H3_AUTO_START", "1").strip().lower()
+            not in _FALSE_VALUES
+        )
+        self.start_script = self._resolve_start_script(start_script)
+        self.start_timeout_seconds = (
+            start_timeout_seconds
+            if start_timeout_seconds is not None
+            else self._load_start_timeout()
+        )
+        if self.start_timeout_seconds <= 0:
+            raise H3ClientError("ComfyUI startup timeout must be positive")
+        if start_poll_interval_seconds < 0:
+            raise H3ClientError("ComfyUI startup poll interval cannot be negative")
+        self.start_poll_interval_seconds = start_poll_interval_seconds
         self.auto_free_vram = (
             os.environ.get("ASK_AI_MCP_H3_AUTO_FREE_VRAM", "1").strip().lower() not in _FALSE_VALUES
         )
@@ -120,6 +145,7 @@ class H3ComfyClient:
 
     def status(self) -> H3BackendStatus:
         try:
+            self._ensure_backend()
             with self._client() as client:
                 system = client.get("/system_stats").raise_for_status().json()
                 present: set[str] = set()
@@ -129,7 +155,8 @@ class H3ComfyClient:
                     values = response.json()
                     if isinstance(values, list):
                         present.update(str(item) for item in values)
-        except (httpx.HTTPError, ValueError, TypeError) as error:
+        except (H3ClientError, httpx.HTTPError, ValueError, TypeError) as error:
+            failure = str(error) if isinstance(error, H3ClientError) else type(error).__name__
             return H3BackendStatus(
                 backend_url=self.base_url,
                 reachable=False,
@@ -139,7 +166,7 @@ class H3ComfyClient:
                 postprocess_models=list(POSTPROCESS_MODELS),
                 missing_postprocess_models=list(POSTPROCESS_MODELS),
                 postprocess_ready=False,
-                detail=f"ComfyUI local backend unavailable: {type(error).__name__}",
+                detail=f"ComfyUI local backend unavailable: {failure}",
             )
 
         missing = [name for name in REQUIRED_MODELS if name not in present]
@@ -171,6 +198,7 @@ class H3ComfyClient:
         )
 
     def submit(self, command: H3GenerationCommand) -> H3JobSubmission:
+        self._ensure_backend()
         width, height = RESOLUTIONS[command.resolution]
         frame_count = self.frame_count(command.duration_seconds)
         with self._client() as client:
@@ -205,6 +233,7 @@ class H3ComfyClient:
         )
 
     def submit_postprocess(self, command: H3PostprocessCommand) -> H3PostprocessSubmission:
+        self._ensure_backend()
         source = self._validate_source_video(command.source_video)
         staged_source = self._stage_source_video(source)
         workflow = self.build_postprocess_workflow(command, source_video=staged_source.name)
@@ -234,6 +263,7 @@ class H3ComfyClient:
     def job_status(self, prompt_id: str) -> H3JobReport:
         if re.fullmatch(r"[A-Za-z0-9-]{1,128}", prompt_id) is None:
             raise H3ClientError("Invalid H3 prompt identifier")
+        self._ensure_backend()
         try:
             with self._client() as client:
                 response = client.get(f"/history/{prompt_id}")
@@ -274,6 +304,113 @@ class H3ComfyClient:
         if state in {H3JobState.SUCCEEDED, H3JobState.FAILED}:
             detail = f"{detail}; {self._release_vram_if_idle(prompt_id)}"
         return H3JobReport(prompt_id=prompt_id, state=state, assets=assets, detail=detail)
+
+    def _ensure_backend(self) -> None:
+        """Start the configured loopback ComfyUI service when it is not listening."""
+
+        if not self.auto_start:
+            return
+        if self._backend_is_ready():
+            return
+
+        with self._backend_start_lock:
+            if self._backend_is_ready():
+                return
+
+            self._start_backend()
+            deadline = time.monotonic() + self.start_timeout_seconds
+            last_error: httpx.HTTPError | None = None
+            while time.monotonic() < deadline:
+                try:
+                    self._probe_backend()
+                    return
+                except httpx.HTTPError as error:
+                    last_error = error
+                    if self.start_poll_interval_seconds:
+                        time.sleep(self.start_poll_interval_seconds)
+            error_name = type(last_error).__name__ if last_error is not None else "Timeout"
+            raise H3ClientError(
+                f"ComfyUI did not become ready within {self.start_timeout_seconds:g} seconds: "
+                f"{error_name}"
+            )
+
+    def _backend_is_ready(self) -> bool:
+        """Distinguish a stopped backend from a persistently unhealthy HTTP service."""
+
+        last_error: httpx.HTTPError | None = None
+        for attempt in range(3):
+            try:
+                self._probe_backend()
+                return True
+            except (httpx.ConnectError, httpx.ConnectTimeout):
+                return False
+            except httpx.HTTPError as error:
+                last_error = error
+                if attempt < 2:
+                    time.sleep(min(max(self.start_poll_interval_seconds, 0.1), 0.5))
+        error_name = type(last_error).__name__ if last_error is not None else "HTTPError"
+        raise H3ClientError(
+            f"ComfyUI responded but failed its readiness probe: {error_name}"
+        ) from last_error
+
+    def _probe_backend(self) -> None:
+        with self._client() as client:
+            client.get("/system_stats").raise_for_status()
+
+    def _start_backend(self) -> None:
+        if self.start_script is None:
+            raise H3ClientError(
+                "ComfyUI is unavailable and ASK_AI_MCP_H3_START_SCRIPT is not configured"
+            )
+        pwsh = shutil.which("pwsh")
+        if pwsh is None:
+            raise H3ClientError("PowerShell 7 (pwsh) is required to start ComfyUI")
+        try:
+            completed = subprocess.run(
+                [pwsh, "-NoProfile", "-NonInteractive", "-File", str(self.start_script)],
+                check=False,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                stderr=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                timeout=min(self.start_timeout_seconds, 30.0),
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            raise H3ClientError(f"Unable to start ComfyUI: {type(error).__name__}") from error
+        if completed.returncode != 0:
+            raise H3ClientError(
+                f"ComfyUI start script failed with exit code {completed.returncode}"
+            )
+
+    @staticmethod
+    def _resolve_start_script(start_script: Path | None) -> Path | None:
+        configured = os.environ.get("ASK_AI_MCP_H3_START_SCRIPT", "").strip()
+        candidate = (
+            start_script if start_script is not None else Path(configured) if configured else None
+        )
+        if candidate is None:
+            repository_candidate = (
+                Path(__file__).resolve().parents[2] / "scripts" / "start_comfyui_h3.ps1"
+            )
+            candidate = repository_candidate if repository_candidate.is_file() else None
+        if candidate is None:
+            return None
+        if not candidate.is_absolute():
+            raise H3ClientError("ComfyUI start script path must be absolute")
+        resolved = candidate.resolve()
+        if resolved.suffix.casefold() != ".ps1" or not resolved.is_file():
+            raise H3ClientError("Configured ComfyUI start script is not a readable .ps1 file")
+        return resolved
+
+    @staticmethod
+    def _load_start_timeout() -> float:
+        raw = os.environ.get("ASK_AI_MCP_H3_START_TIMEOUT_SECONDS", "120").strip()
+        try:
+            value = float(raw)
+        except ValueError as error:
+            raise H3ClientError("ComfyUI startup timeout must be numeric") from error
+        if not 5 <= value <= 600:
+            raise H3ClientError("ComfyUI startup timeout must be between 5 and 600 seconds")
+        return value
 
     def _release_vram_if_idle(self, prompt_id: str) -> str:
         """Ask ComfyUI to unload models only after its global queue is idle."""
@@ -554,7 +691,11 @@ class H3ComfyClient:
         return workflow
 
     def _client(self) -> httpx.Client:
-        return httpx.Client(base_url=self.base_url, timeout=self.timeout_seconds)
+        return httpx.Client(
+            base_url=self.base_url,
+            timeout=self.timeout_seconds,
+            trust_env=False,
+        )
 
     def _upload_image(self, client: httpx.Client, value: str) -> str:
         path = self._validate_input_file(value)

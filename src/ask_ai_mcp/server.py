@@ -168,14 +168,14 @@ def get_client_name() -> str:
 @mcp.tool(
     annotations=ToolAnnotations(
         title="MiniMax H3 本地后端状态",
-        readOnlyHint=True,
+        readOnlyHint=False,
         destructiveHint=False,
         idempotentHint=True,
         openWorldHint=False,
     )
 )
 def h3_backend_status() -> H3BackendStatus:
-    """检查本机 ComfyUI、GPU 信息和四个必需的 MiniMax H3 模型文件。"""
+    """必要时启动本机 ComfyUI, 再检查 GPU 和必需的 MiniMax H3 模型。"""
     return get_h3_client().status()
 
 

@@ -5,7 +5,12 @@ Desktop hosts receive sixteen narrow tools.
 
 ## Local MiniMax H3 video tools
 
-`h3_backend_status` checks the loopback ComfyUI server, the exact four-file
+All four H3 tools first check the loopback ComfyUI server. If it is unavailable,
+they run the absolute `.ps1` configured by `ASK_AI_MCP_H3_START_SCRIPT` once and
+wait up to `ASK_AI_MCP_H3_START_TIMEOUT_SECONDS` for readiness. Concurrent MCP
+processes are serialized by the launcher's named mutex. `h3_backend_status`
+therefore has a state-changing annotation even though its returned information
+is diagnostic. It checks the exact four-file
 FL2VA model set, and five explicit post-processing weights. `h3_generate_video`
 submits only a bounded 4–15 second 480p/24 fps original. After a person selects
 a usable original, `h3_postprocess_video` applies an explicit anime or realistic
