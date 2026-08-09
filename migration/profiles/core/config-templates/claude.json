@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "ask-ai": {
+      "command": "__MCP_CORE_EXE__",
+      "args": [],
+      "env": {
+        "ASK_AI_MCP_CLIENT_NAME": "claude_desktop",
+        "PYTHONUTF8": "1",
+        "PYTHONIOENCODING": "utf-8"
+      }
+    }
+  }
+}

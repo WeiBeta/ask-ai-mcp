@@ -26,14 +26,15 @@ The lifecycle permits one build plus at most two policy-routed repair rounds,
 returns a compact review summary by default, and requires explicit hash-matched
 promotion. Per-conversation budget sessions start with CNY 5 for Flash and CNY
 0 for Pro; either model is extended only in fixed CNY 5 blocks. The development
-MCP surface exposes twelve narrow tools: usage and lifecycle economics, on-demand
+MCP surface exposes sixteen narrow tools: four loopback-only MiniMax H3/ComfyUI
+video tools, usage and lifecycle economics, on-demand
 workflow guidance, cross-desktop pending-review discovery, four local budget
 operations, candidate build, review, approval, registry listing, and verified execution. Verified execution
 requires a standard callable contract, exact registry hash, dual Claude/Codex
 approval for output-producing tools, Docker isolation, and explicitly
 configured narrow input roots. No real input root is enabled by default.
 
-Version 0.4.1 keeps detailed protocol text out of the always-loaded tool
+Version 0.6.0 keeps detailed protocol text out of the always-loaded tool
 descriptions. Controllers request only the workflow topic they need. Review
 summaries and the local pending queue join creator, exact full-review
 attestations, approval identities, blocking reasons, and the next action without
@@ -69,6 +70,44 @@ The local MCP entry point is:
 C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp.exe
 ```
 
+Two explicit use-only profiles share the same codebase:
+
+- `ask-ai-mcp-core.exe` registers the twelve non-video tools only.
+- `ask-ai-mcp-full.exe` registers all sixteen tools, including the four H3 adapters.
+
+The legacy `ask-ai-mcp.exe` entry point defaults to Full and accepts
+`ASK_AI_MCP_PROFILE=core|full`. New desktop deployments should use the explicit
+profile executable so a missing environment variable cannot silently change the
+advertised tool surface.
+
+Build the two credential-free Windows migration packages with:
+
+```powershell
+pwsh -NoProfile -File .\scripts\build_migration_packages.ps1
+```
+
+The Core and Full archives contain only the MCP wheel, locked dependencies,
+configuration templates, verification scripts, hashes, and GPT handoff material.
+Neither archive contains ComfyUI, model weights, local application state, business
+files, desktop personal configuration, or credentials.
+
+The H3 runtime, model weights, and generated media are deliberately external to
+this repository. On the current workstation they live under
+`C:\AI\ComfyUI-H3`; only the small loopback adapter, tests, and operating
+documentation are versioned here.
+
+Start or verify the local backend with PowerShell 7:
+
+```powershell
+pwsh -NoProfile -File .\scripts\start_comfyui_h3.ps1
+```
+
+Reference frames belong in
+`C:\Users\user\Documents\AskAI-Exchange\H3-Workspace\inputs`; generated videos
+are written to the sibling `outputs` directory. This narrow shared workspace is
+writable by both Codex and Claude Desktop; the runtime and model weights remain
+isolated under `C:\AI\ComfyUI-H3`.
+
 ## Documentation
 
 - `docs/ARCHITECTURE.md`: system roles, data flow, isolation, and storage
@@ -79,6 +118,7 @@ C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp.exe
 - `docs/CANDIDATE_LIFECYCLE.md`: repair, review, and hash-pinned promotion gates
 - `docs/MCP_SURFACE.md`: public tool contracts and desktop identity boundary
 - `docs/MCP_SMOKE.md`: first billed build-review-approval evidence
+- `docs/H3_HANDOFF_ZH-CN.md`: verified H3 deployment, model hashes, MCP contract, and next-session handoff
 - `docs/DESKTOP_SETUP.md`: Claude Desktop and Codex Desktop connection guide
 - `docs/CONTROLLER_PROMPTS.md`: shared delegation rules and desktop adaptations
 - `docs/USER_MANUAL_ZH-CN.md`: Simplified Chinese user, handoff, backup, and migration manual

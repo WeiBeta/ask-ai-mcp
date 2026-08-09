@@ -1,6 +1,6 @@
 # Ask AI MCP 简中使用与运维说明书
 
-适用版本：Ask AI MCP 0.4.1
+适用版本：Ask AI MCP 0.6.0
 适用平台：Windows 11
 适用客户端：Codex Desktop、Claude Desktop
 仓库：`xujinglong8814-WeiBeta/ask-ai-mcp`（私有）
@@ -15,7 +15,7 @@ Ask AI MCP 已完成双端加载、跨客户端发现、独立完整审阅、双
 - **运行已验证工具**：`run_verified_tool` 在本机 Docker 中离线运行，不调用 DeepSeek，不产生模型费用。
 - **查询和审批**：用量、预算、操作指南、待审队列、摘要、完整审阅、批准和注册表查询都是本地操作，不调用 DeepSeek。
 
-0.4.1 没有开放任意提示词转发，也没有开放“把整份业务文件直接交给 DeepSeek 处理”的接口。DeepSeek 负责制造候选工具；经过验证的本地工具负责处理明确暂存的文件副本。
+0.6.0 没有开放任意提示词转发，也没有开放“把整份业务文件直接交给 DeepSeek 处理”的接口。DeepSeek 负责制造候选工具；经过验证的本地工具负责处理明确暂存的文件副本。
 
 ## 2. 不可突破的角色边界
 
@@ -345,11 +345,13 @@ https://github.com/xujinglong8814-WeiBeta/ask-ai-mcp
 7. 恢复漫游交接目录；
 8. 如需继承审阅、预算和注册工具，停机恢复 `%LOCALAPPDATA%\AskAIMCP`；
 9. 合并 Claude 与 Codex MCP 配置，修正绝对路径；
-10. 重启两个 GUI，确认 12 项工具；
+10. 重启两个 GUI，确认 Core 为 12 项工具或 Full 为 16 项工具；
 11. 调用 `workflow_guidance`、`list_pending_reviews`、`usage_status` 做无费用检查；
 12. 用合成 CSV 做一次 `run_verified_tool` 回归，不调用 DeepSeek。
 
-正式的自动化迁移包仍是后续事项。在迁移工具完成前，优先采用“Git 源码 + Documents 交接目录 + 停机状态备份 + 目标机重新录入密钥”的方式。
+自动化迁移包只迁移 MCP Server，并分为 Core 12 工具和 Full 16 工具两个配置。
+两个版本都不携带 ComfyUI、模型、业务文件、本机状态或凭据；目标机必须重新录入
+DeepSeek API 密钥。需要继承历史状态时，仍应采用单独的所有者专用停机冷备份。
 
 ## 11. 常见状态与处理
 

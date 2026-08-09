@@ -147,7 +147,7 @@ the other. The acceptance workflow still verifies this behavior end to end.
 
 ## Not-yet-exposed roles
 
-The policy permits source-faithful structuring, but the twelve-tool MCP surface has
+The policy permits source-faithful structuring, but the sixteen-tool MCP surface has
 no production source-structuring model call. Verified tools execute locally and
 offline; they do not make DeepSeek a source-content author. Do not route source
 content through `build_helper_tool` as a workaround.

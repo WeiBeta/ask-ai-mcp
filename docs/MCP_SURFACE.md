@@ -1,7 +1,30 @@
 # MCP candidate surface
 
 The server deliberately has no arbitrary `ask_deepseek(prompt)` operation.
-Desktop hosts receive twelve narrow tools.
+Desktop hosts receive sixteen narrow tools.
+
+## Local MiniMax H3 video tools
+
+`h3_backend_status` checks the loopback ComfyUI server, the exact four-file
+FL2VA model set, and five explicit post-processing weights. `h3_generate_video`
+submits only a bounded 4–15 second 480p/24 fps original. After a person selects
+a usable original, `h3_postprocess_video` applies an explicit anime or realistic
+interpolation/upscale combination without asking ComfyUI to infer the style.
+`h3_job_status` polls either asynchronous job and returns validated local output
+paths and loopback view URLs. When a job reaches a terminal state and the global
+ComfyUI queue is idle, it calls the loopback `/free` endpoint with both
+`unload_models` and `free_memory` enabled. This keeps ComfyUI running while
+unloading models and releasing GPU memory. Repeated terminal polling does not
+repeat a successful release request in the same MCP process.
+
+The adapter rejects non-loopback backend URLs, arbitrary output paths, and
+reference images outside `ASK_AI_MCP_H3_INPUT_ROOTS`. Reference images go in
+`C:\Users\user\Documents\AskAI-Exchange\H3-Workspace\inputs`; generated media
+goes in the sibling `outputs` directory. This shared workspace is the only H3
+task-data root granted to both desktop clients. The runtime and weights remain
+under `C:\AI\ComfyUI-H3`, outside this repository. Use is subject
+to the MiniMax H3 Community License Agreement, including its territory and
+acceptable-use terms.
 
 ## `usage_status`
 

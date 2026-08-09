@@ -10,7 +10,8 @@ Both desktop clients use the same local STDIO executable and the same
 prompt-free SQLite audit store. Each client starts its own process, so seeing
 two server processes is expected.
 
-The development server exposes usage and lifecycle economics, on-demand workflow
+The development server exposes four local H3 video tools, usage and lifecycle
+economics, on-demand workflow
 guidance, cross-desktop review discovery, four local budget-session tools,
 candidate build/review/approval, registry listing, and verified execution.
 `build_helper_tool` may incur DeepSeek charges. Budget operations, listing,
@@ -23,8 +24,30 @@ Use this absolute executable path:
 C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp.exe
 ```
 
+For new use-only deployments, select an explicit profile instead:
+
+```text
+C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-core.exe  # 12 non-video tools
+C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-full.exe  # all 16 tools
+```
+
+Core does not register H3 tools and therefore does not load their MCP descriptions
+into the desktop controller context. Full contains only the H3 adapter code; the
+ComfyUI executable, models, workspace, and media remain external.
+
 Absolute paths are required because a desktop MCP host may start a server with
 an undefined working directory.
+
+The ComfyUI/H3 runtime is installed outside the repository at
+`C:\AI\ComfyUI-H3`. Start it with PowerShell 7 before submitting an H3 task:
+
+```powershell
+pwsh -NoProfile -File C:\Dev\ask-ai-mcp\scripts\start_comfyui_h3.ps1
+```
+
+The server listens only on `127.0.0.1:8188`. Put optional first/last-frame
+images in `C:\Users\user\Documents\AskAI-Exchange\H3-Workspace\inputs`;
+generated media is written to the sibling `outputs` directory.
 
 ## Claude Desktop on Windows
 
@@ -52,7 +75,12 @@ configured servers:
       "command": "C:\\Dev\\ask-ai-mcp\\.venv\\Scripts\\ask-ai-mcp.exe",
       "args": [],
       "env": {
-        "ASK_AI_MCP_CLIENT_NAME": "claude_desktop"
+        "ASK_AI_MCP_CLIENT_NAME": "claude_desktop",
+        "ASK_AI_MCP_H3_URL": "http://127.0.0.1:8188",
+        "ASK_AI_MCP_H3_WORKSPACE_ROOT": "C:\\Users\\user\\Documents\\AskAI-Exchange\\H3-Workspace",
+        "ASK_AI_MCP_H3_COMFY_INPUT_ROOT": "C:\\Users\\user\\Documents\\AskAI-Exchange\\H3-Workspace\\inputs",
+        "ASK_AI_MCP_H3_OUTPUT_ROOT": "C:\\Users\\user\\Documents\\AskAI-Exchange\\H3-Workspace\\outputs",
+        "ASK_AI_MCP_H3_INPUT_ROOTS": "C:\\Users\\user\\Documents\\AskAI-Exchange\\H3-Workspace\\inputs"
       }
     }
   }
@@ -60,8 +88,10 @@ configured servers:
 ```
 
 Save the file, fully quit Claude Desktop, and reopen it. Closing only the window
-is not sufficient. Confirm that `ask-ai` advertises exactly twelve tools:
-`usage_status`, `workflow_guidance`, `list_pending_reviews`,
+is not sufficient. Confirm that `ask-ai` advertises exactly sixteen tools:
+`h3_backend_status`, `h3_generate_video`, `h3_postprocess_video`,
+`h3_job_status`, `usage_status`,
+`workflow_guidance`, `list_pending_reviews`,
 `open_budget_session`, `budget_status`, `add_budget_block`,
 `close_budget_session`, `build_helper_tool`, `review_tool_candidate`,
 `approve_tool_candidate`, `list_registered_tools`, and `run_verified_tool`.
@@ -89,19 +119,24 @@ command = "C:\\Dev\\ask-ai-mcp\\.venv\\Scripts\\ask-ai-mcp.exe"
 cwd = "C:\\Dev\\ask-ai-mcp"
 enabled = true
 required = false
-enabled_tools = ["usage_status", "workflow_guidance", "list_pending_reviews", "open_budget_session", "budget_status", "add_budget_block", "close_budget_session", "build_helper_tool", "review_tool_candidate", "approve_tool_candidate", "list_registered_tools", "run_verified_tool"]
+enabled_tools = ["h3_backend_status", "h3_generate_video", "h3_postprocess_video", "h3_job_status", "usage_status", "workflow_guidance", "list_pending_reviews", "open_budget_session", "budget_status", "add_budget_block", "close_budget_session", "build_helper_tool", "review_tool_candidate", "approve_tool_candidate", "list_registered_tools", "run_verified_tool"]
 default_tools_approval_mode = "prompt"
 startup_timeout_sec = 20
 tool_timeout_sec = 600
 
 [mcp_servers.ask_ai.env]
 ASK_AI_MCP_CLIENT_NAME = "codex_desktop"
+ASK_AI_MCP_H3_URL = "http://127.0.0.1:8188"
+ASK_AI_MCP_H3_WORKSPACE_ROOT = "C:\\Users\\user\\Documents\\AskAI-Exchange\\H3-Workspace"
+ASK_AI_MCP_H3_COMFY_INPUT_ROOT = "C:\\Users\\user\\Documents\\AskAI-Exchange\\H3-Workspace\\inputs"
+ASK_AI_MCP_H3_OUTPUT_ROOT = "C:\\Users\\user\\Documents\\AskAI-Exchange\\H3-Workspace\\outputs"
+ASK_AI_MCP_H3_INPUT_ROOTS = "C:\\Users\\user\\Documents\\AskAI-Exchange\\H3-Workspace\\inputs"
 PYTHONUTF8 = "1"
 PYTHONIOENCODING = "utf-8"
 ```
 
 Restart Codex Desktop after saving, then use `/mcp` to confirm the server and
-twelve-tool catalog. Keep approval mode set to `prompt` during the trial. Open one
+sixteen-tool catalog. Keep approval mode set to `prompt` during the trial. Open one
 opaque budget session per conversation that needs Ask AI. Flash starts with CNY
 5, Pro with CNY 0, and either model is extended only in CNY 5 blocks after the
 required confirmation. A normal build may make up to three billed API calls

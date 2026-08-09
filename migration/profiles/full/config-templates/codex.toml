@@ -1,0 +1,18 @@
+[mcp_servers.ask_ai]
+command = "__MCP_FULL_EXE__"
+enabled = true
+required = false
+enabled_tools = ["h3_backend_status", "h3_generate_video", "h3_postprocess_video", "h3_job_status", "usage_status", "workflow_guidance", "list_pending_reviews", "open_budget_session", "budget_status", "add_budget_block", "close_budget_session", "build_helper_tool", "review_tool_candidate", "approve_tool_candidate", "list_registered_tools", "run_verified_tool"]
+default_tools_approval_mode = "prompt"
+startup_timeout_sec = 20
+tool_timeout_sec = 600
+
+[mcp_servers.ask_ai.env]
+ASK_AI_MCP_CLIENT_NAME = "codex_desktop"
+ASK_AI_MCP_H3_URL = "http://127.0.0.1:8188"
+ASK_AI_MCP_H3_WORKSPACE_ROOT = "__H3_WORKSPACE_ROOT__"
+ASK_AI_MCP_H3_COMFY_INPUT_ROOT = "__H3_INPUT_ROOT__"
+ASK_AI_MCP_H3_OUTPUT_ROOT = "__H3_OUTPUT_ROOT__"
+ASK_AI_MCP_H3_INPUT_ROOTS = "__H3_INPUT_ROOT__"
+PYTHONUTF8 = "1"
+PYTHONIOENCODING = "utf-8"

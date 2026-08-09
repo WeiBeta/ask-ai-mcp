@@ -1,7 +1,7 @@
 # Roadmap
 
 Current implementation status: phases 0 through 2 are complete, including the
-real opt-in synthetic Flash smoke request. The twelve-tool desktop surface,
+real opt-in synthetic Flash smoke request. The sixteen-tool desktop surface,
 conversation budget sessions, compact/full review split, and verified execution
 implementation are complete; cross-client Phase 3 acceptance and explicit
 real-input-root configuration remain pending.

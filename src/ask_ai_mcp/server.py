@@ -14,6 +14,7 @@ from ask_ai_mcp import __version__
 from ask_ai_mcp.budget import BudgetStore
 from ask_ai_mcp.collaboration import ReviewCollaborationService
 from ask_ai_mcp.guidance import workflow_guidance_for
+from ask_ai_mcp.h3 import H3ComfyClient
 from ask_ai_mcp.lifecycle import CandidateLifecycle
 from ask_ai_mcp.models import (
     BudgetIncrementCommand,
@@ -27,6 +28,12 @@ from ask_ai_mcp.models import (
     CandidateReviewBundle,
     CandidateReviewSummary,
     DeepSeekModel,
+    H3BackendStatus,
+    H3GenerationCommand,
+    H3JobReport,
+    H3JobSubmission,
+    H3PostprocessCommand,
+    H3PostprocessSubmission,
     PendingReviewList,
     RegisteredToolList,
     ReviewMode,
@@ -40,6 +47,7 @@ from ask_ai_mcp.models import (
     WorkflowGuidanceTopic,
 )
 from ask_ai_mcp.promotion import VerifiedToolRegistry
+from ask_ai_mcp.protocol_audit import ProtocolAuditMiddleware
 from ask_ai_mcp.review import CandidateReviewRepository
 from ask_ai_mcp.review_attestation import ReviewAttestationStore
 from ask_ai_mcp.sandbox import docker_backend_status
@@ -62,6 +70,23 @@ mcp = FastMCP(
     instructions=SERVER_INSTRUCTIONS,
     version=__version__,
 )
+core_mcp = FastMCP(
+    "Ask AI MCP Core",
+    instructions=SERVER_INSTRUCTIONS,
+    version=__version__,
+)
+
+
+def core_tool(**kwargs):
+    """Register one shared tool on both the Core and Full servers."""
+
+    def decorator(function):
+        mcp.tool(**kwargs)(function)
+        core_mcp.tool(**kwargs)(function)
+        return function
+
+    return decorator
+
 
 _DESKTOP_CLIENT_NAMES = frozenset({"claude_desktop", "codex_desktop"})
 
@@ -70,6 +95,10 @@ _DESKTOP_CLIENT_NAMES = frozenset({"claude_desktop", "codex_desktop"})
 def get_usage_store() -> UsageStore:
     """Create the shared audit store lazily after MCP initialization."""
     return UsageStore()
+
+
+mcp.add_middleware(ProtocolAuditMiddleware(lambda: get_usage_store()))
+core_mcp.add_middleware(ProtocolAuditMiddleware(lambda: get_usage_store()))
 
 
 @lru_cache(maxsize=1)
@@ -121,6 +150,11 @@ def get_review_collaboration() -> ReviewCollaborationService:
     )
 
 
+@lru_cache(maxsize=1)
+def get_h3_client() -> H3ComfyClient:
+    return H3ComfyClient()
+
+
 def get_client_name() -> str:
     value = os.environ.get("ASK_AI_MCP_CLIENT_NAME", "")
     if value not in _DESKTOP_CLIENT_NAMES:
@@ -132,6 +166,72 @@ def get_client_name() -> str:
 
 
 @mcp.tool(
+    annotations=ToolAnnotations(
+        title="MiniMax H3 本地后端状态",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
+def h3_backend_status() -> H3BackendStatus:
+    """检查本机 ComfyUI、GPU 信息和四个必需的 MiniMax H3 模型文件。"""
+    return get_h3_client().status()
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="提交 MiniMax H3 本地视频生成",
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=False,
+    )
+)
+def h3_generate_video(command: H3GenerationCommand) -> H3JobSubmission:
+    """异步提交本地 H3 文生视频或首尾帧生视频任务。
+
+    仅连接本机回环地址, 输出含原生立体声音频。调用者须遵守 MiniMax H3
+    许可地域和可接受使用政策; 任务提交后使用 h3_job_status 轮询。
+    """
+    return get_h3_client().submit(command)
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="后处理已筛选的 MiniMax H3 原片",
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=False,
+    )
+)
+def h3_postprocess_video(command: H3PostprocessCommand) -> H3PostprocessSubmission:
+    """对共享工作区中的已筛选 H3 原片执行显式插帧、超分或组合任务。
+
+    调用者必须明确选择卡通或写实分组及具体模型; ComfyUI 不推断画风。
+    原片不会被覆盖, 最终资产写入共享 outputs/postprocessed 目录。
+    """
+    return get_h3_client().submit_postprocess(command)
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="查询 MiniMax H3 本地视频任务",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
+def h3_job_status(
+    prompt_id: Annotated[str, Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9-]+$")],
+) -> H3JobReport:
+    """查询异步 H3 任务并在完成后返回路径, 队列空闲时自动释放显存。"""
+    return get_h3_client().job_status(prompt_id)
+
+
+@core_tool(
     annotations=ToolAnnotations(
         title="DeepSeek usage status",
         readOnlyHint=True,
@@ -145,7 +245,7 @@ def usage_status(days: Annotated[int, Field(ge=1, le=366)] = 15) -> UsageSummary
     return get_usage_store().summarize(days=days)
 
 
-@mcp.tool(
+@core_tool(
     annotations=ToolAnnotations(
         title="Read Ask AI workflow guidance",
         readOnlyHint=True,
@@ -159,7 +259,7 @@ def workflow_guidance(topic: WorkflowGuidanceTopic) -> WorkflowGuidance:
     return workflow_guidance_for(topic)
 
 
-@mcp.tool(
+@core_tool(
     annotations=ToolAnnotations(
         title="List cross-desktop pending reviews",
         readOnlyHint=True,
@@ -173,7 +273,7 @@ def list_pending_reviews() -> PendingReviewList:
     return get_review_collaboration().list_pending()
 
 
-@mcp.tool(
+@core_tool(
     annotations=ToolAnnotations(
         title="Open a local DeepSeek budget session",
         readOnlyHint=False,
@@ -195,7 +295,7 @@ def open_budget_session(
     return get_budget_store().open_session(client_name=client_name, label=command.label)
 
 
-@mcp.tool(
+@core_tool(
     annotations=ToolAnnotations(
         title="Read a local DeepSeek budget session",
         readOnlyHint=True,
@@ -212,7 +312,7 @@ def budget_status(command: BudgetSessionCommand) -> BudgetSessionStatus:
     )
 
 
-@mcp.tool(
+@core_tool(
     annotations=ToolAnnotations(
         title="Add one confirmed CNY 5 budget block",
         readOnlyHint=False,
@@ -234,7 +334,7 @@ def add_budget_block(command: BudgetIncrementCommand) -> BudgetSessionStatus:
     )
 
 
-@mcp.tool(
+@core_tool(
     annotations=ToolAnnotations(
         title="Close a local DeepSeek budget session",
         readOnlyHint=False,
@@ -251,7 +351,7 @@ def close_budget_session(command: BudgetSessionCommand) -> BudgetSessionStatus:
     )
 
 
-@mcp.tool(
+@core_tool(
     annotations=ToolAnnotations(
         title="Build isolated helper-tool candidate",
         readOnlyHint=False,
@@ -297,7 +397,7 @@ def build_helper_tool(
     )
 
 
-@mcp.tool(
+@core_tool(
     annotations=ToolAnnotations(
         title="Review isolated tool candidate",
         readOnlyHint=False,
@@ -331,7 +431,7 @@ def review_tool_candidate(
     return review
 
 
-@mcp.tool(
+@core_tool(
     annotations=ToolAnnotations(
         title="Approve exact tested tool candidate",
         readOnlyHint=False,
@@ -372,7 +472,7 @@ def approve_tool_candidate(command: CandidateApprovalCommand) -> VerifiedToolRec
     return record
 
 
-@mcp.tool(
+@core_tool(
     annotations=ToolAnnotations(
         title="List hash-pinned registered tools",
         readOnlyHint=True,
@@ -391,7 +491,7 @@ def list_registered_tools() -> RegisteredToolList:
     return get_verified_runner().list_registered_tools()
 
 
-@mcp.tool(
+@core_tool(
     annotations=ToolAnnotations(
         title="Run an exact approved tool on staged copies",
         readOnlyHint=False,

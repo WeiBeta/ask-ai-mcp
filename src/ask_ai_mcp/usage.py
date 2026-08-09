@@ -12,6 +12,7 @@ from platformdirs import user_data_path
 
 from ask_ai_mcp.models import LifecycleAuditEvent, LifecycleEconomics, UsageEvent, UsageSummary
 from ask_ai_mcp.pricing import load_peak_pricing_effective_at, pricing_context
+from ask_ai_mcp.protocol_audit import ProtocolAuditEvent
 
 
 def default_usage_db_path() -> Path:
@@ -176,6 +177,45 @@ class UsageStore:
                 "CREATE INDEX IF NOT EXISTS idx_lifecycle_budget_session "
                 "ON lifecycle_audit(budget_session_id)"
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS mcp_protocol_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT NOT NULL,
+                    process_instance_id TEXT NOT NULL,
+                    session_id TEXT,
+                    request_id TEXT,
+                    configured_client_name TEXT,
+                    reported_client_name TEXT,
+                    client_version TEXT,
+                    protocol_version TEXT,
+                    method TEXT NOT NULL,
+                    tool_name TEXT,
+                    duration_ms INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    error_kind TEXT,
+                    tool_count INTEGER,
+                    tool_surface_bytes INTEGER,
+                    tool_surface_sha256 TEXT,
+                    arguments_bytes INTEGER,
+                    result_bytes INTEGER
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_mcp_protocol_timestamp "
+                "ON mcp_protocol_events(timestamp)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_mcp_protocol_session "
+                "ON mcp_protocol_events(session_id)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_mcp_protocol_method ON mcp_protocol_events(method)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_mcp_protocol_tool ON mcp_protocol_events(tool_name)"
+            )
 
     def record(self, event: UsageEvent) -> None:
         with self._connection() as connection:
@@ -280,6 +320,42 @@ class UsageStore:
                     event.repair_count,
                     event.final_job_id,
                     event.final_candidate_sha256,
+                ),
+            )
+
+    def record_protocol_event(self, event: ProtocolAuditEvent) -> None:
+        """Persist structural MCP metadata without prompt or payload content."""
+
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO mcp_protocol_events (
+                    timestamp, process_instance_id, session_id, request_id,
+                    configured_client_name, reported_client_name, client_version,
+                    protocol_version, method, tool_name, duration_ms, status,
+                    error_kind, tool_count, tool_surface_bytes,
+                    tool_surface_sha256, arguments_bytes, result_bytes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event.timestamp.astimezone(UTC).isoformat(),
+                    event.process_instance_id,
+                    event.session_id,
+                    event.request_id,
+                    event.configured_client_name,
+                    event.reported_client_name,
+                    event.client_version,
+                    event.protocol_version,
+                    event.method,
+                    event.tool_name,
+                    event.duration_ms,
+                    event.status,
+                    event.error_kind,
+                    event.tool_count,
+                    event.tool_surface_bytes,
+                    event.tool_surface_sha256,
+                    event.arguments_bytes,
+                    event.result_bytes,
                 ),
             )
 

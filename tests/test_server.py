@@ -37,10 +37,14 @@ def make_spec() -> ToolBuildSpec:
     )
 
 
-def test_mcp_surface_and_raw_schema_are_narrow() -> None:
+def test_full_mcp_surface_and_raw_schema_are_narrow() -> None:
     tools = asyncio.run(server.mcp.list_tools())
     by_name = {tool.name: tool for tool in tools}
     assert set(by_name) == {
+        "h3_backend_status",
+        "h3_generate_video",
+        "h3_postprocess_video",
+        "h3_job_status",
         "usage_status",
         "workflow_guidance",
         "list_pending_reviews",
@@ -90,6 +94,25 @@ def test_mcp_surface_and_raw_schema_are_narrow() -> None:
         "run",
     }
     assert all(len(tool.description or "") < 800 for tool in tools)
+
+
+def test_core_mcp_surface_excludes_h3_tools() -> None:
+    tools = asyncio.run(server.core_mcp.list_tools())
+    names = {tool.name for tool in tools}
+    assert names == {
+        "usage_status",
+        "workflow_guidance",
+        "list_pending_reviews",
+        "open_budget_session",
+        "budget_status",
+        "add_budget_block",
+        "close_budget_session",
+        "build_helper_tool",
+        "review_tool_candidate",
+        "approve_tool_candidate",
+        "list_registered_tools",
+        "run_verified_tool",
+    }
 
 
 def test_guidance_and_pending_queue_are_prompt_free_local_reads(monkeypatch) -> None:

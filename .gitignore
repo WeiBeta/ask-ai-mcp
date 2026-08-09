@@ -16,3 +16,7 @@ venv/
 .ruff_cache/
 .coverage
 htmlcov/
+
+# Reproducible local build outputs
+dist/
+artifacts/
