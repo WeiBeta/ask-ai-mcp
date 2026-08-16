@@ -1,0 +1,18 @@
+[mcp_servers.ask_ai_subagent]
+command = "__MCP_SUBAGENT_EXE__"
+enabled = false
+required = false
+enabled_tools = ["source_backend_status", "source_extract", "source_job_status", "usage_status", "workflow_guidance", "list_pending_reviews", "open_budget_session", "budget_status", "add_budget_block", "close_budget_session", "build_helper_tool", "review_tool_candidate", "approve_tool_candidate", "list_registered_tools", "run_verified_tool"]
+default_tools_approval_mode = "prompt"
+startup_timeout_sec = 20
+tool_timeout_sec = 600
+
+[mcp_servers.ask_ai_subagent.env]
+ASK_AI_MCP_CLIENT_NAME = "codex_desktop"
+ASK_AI_MCP_SOURCE_PROVIDER = "local_qwen"
+ASK_AI_MCP_SOURCE_INPUT_ROOTS = "__SOURCE_INPUT_ROOTS__"
+ASK_AI_MCP_QWEN_BASE_URL = "http://127.0.0.1:38827/v1"
+ASK_AI_MCP_QWEN_MODEL_ID = "qwen3.8-27b-local"
+ASK_AI_MCP_QWEN_UNLOAD_AFTER_TASK = "1"
+PYTHONUTF8 = "1"
+PYTHONIOENCODING = "utf-8"

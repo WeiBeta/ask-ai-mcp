@@ -37,6 +37,10 @@ from ask_ai_mcp.models import (
     PendingReviewList,
     RegisteredToolList,
     ReviewMode,
+    SourceBackendStatus,
+    SourceExtractionCommand,
+    SourceJobReport,
+    SourceJobSubmission,
     ToolBuildSpec,
     ToolCapability,
     UsageSummary,
@@ -48,9 +52,12 @@ from ask_ai_mcp.models import (
 )
 from ask_ai_mcp.promotion import VerifiedToolRegistry
 from ask_ai_mcp.protocol_audit import ProtocolAuditMiddleware
+from ask_ai_mcp.provider import create_toolsmith_client, load_toolsmith_provider
+from ask_ai_mcp.qwen_source import load_source_backend
 from ask_ai_mcp.review import CandidateReviewRepository
 from ask_ai_mcp.review_attestation import ReviewAttestationStore
 from ask_ai_mcp.sandbox import docker_backend_status
+from ask_ai_mcp.source import SourceJobManager
 from ask_ai_mcp.usage import UsageStore
 from ask_ai_mcp.verified_execution import VerifiedToolRunner
 from ask_ai_mcp.workspace import CandidateWorkspaceManager
@@ -65,6 +72,12 @@ Opus/Sol approval before it can process real file copies. Original source files
 are always read-only. Do not send secrets or entire knowledge bases.
 """.strip()
 
+H3_SERVER_INSTRUCTIONS = """
+Use these tools only for bounded local MiniMax H3 video generation and explicit
+ComfyUI post-processing. Poll submitted jobs with h3_job_status; terminal jobs
+release model GPU memory while leaving ComfyUI running.
+""".strip()
+
 mcp = FastMCP(
     "Ask AI MCP",
     instructions=SERVER_INSTRUCTIONS,
@@ -75,6 +88,16 @@ core_mcp = FastMCP(
     instructions=SERVER_INSTRUCTIONS,
     version=__version__,
 )
+subagent_mcp = FastMCP(
+    "Ask AI MCP Subagent",
+    instructions=SERVER_INSTRUCTIONS,
+    version=__version__,
+)
+h3_mcp = FastMCP(
+    "Ask AI MCP H3",
+    instructions=H3_SERVER_INSTRUCTIONS,
+    version=__version__,
+)
 
 
 def core_tool(**kwargs):
@@ -83,6 +106,29 @@ def core_tool(**kwargs):
     def decorator(function):
         mcp.tool(**kwargs)(function)
         core_mcp.tool(**kwargs)(function)
+        subagent_mcp.tool(**kwargs)(function)
+        return function
+
+    return decorator
+
+
+def source_tool(**kwargs):
+    """Register source-intelligence tools on Subagent and compatibility Full."""
+
+    def decorator(function):
+        mcp.tool(**kwargs)(function)
+        subagent_mcp.tool(**kwargs)(function)
+        return function
+
+    return decorator
+
+
+def h3_tool(**kwargs):
+    """Register local video tools on H3-only and compatibility Full."""
+
+    def decorator(function):
+        mcp.tool(**kwargs)(function)
+        h3_mcp.tool(**kwargs)(function)
         return function
 
     return decorator
@@ -99,11 +145,18 @@ def get_usage_store() -> UsageStore:
 
 mcp.add_middleware(ProtocolAuditMiddleware(lambda: get_usage_store()))
 core_mcp.add_middleware(ProtocolAuditMiddleware(lambda: get_usage_store()))
+subagent_mcp.add_middleware(ProtocolAuditMiddleware(lambda: get_usage_store()))
+h3_mcp.add_middleware(ProtocolAuditMiddleware(lambda: get_usage_store()))
 
 
 @lru_cache(maxsize=1)
 def get_budget_store() -> BudgetStore:
     return BudgetStore(get_usage_store().path)
+
+
+@lru_cache(maxsize=1)
+def get_toolsmith_provider():
+    return load_toolsmith_provider()
 
 
 @lru_cache(maxsize=1)
@@ -119,6 +172,7 @@ def get_review_repository() -> CandidateReviewRepository:
 @lru_cache(maxsize=1)
 def get_lifecycle() -> CandidateLifecycle:
     return CandidateLifecycle(
+        client=create_toolsmith_client(get_toolsmith_provider()),
         workspace=get_workspace(),
         review_repository=get_review_repository(),
         audit_store=get_usage_store(),
@@ -155,6 +209,11 @@ def get_h3_client() -> H3ComfyClient:
     return H3ComfyClient()
 
 
+@lru_cache(maxsize=1)
+def get_source_manager() -> SourceJobManager:
+    return SourceJobManager(backend=load_source_backend())
+
+
 def get_client_name() -> str:
     value = os.environ.get("ASK_AI_MCP_CLIENT_NAME", "")
     if value not in _DESKTOP_CLIENT_NAMES:
@@ -165,7 +224,7 @@ def get_client_name() -> str:
     return value
 
 
-@mcp.tool(
+@h3_tool(
     annotations=ToolAnnotations(
         title="MiniMax H3 本地后端状态",
         readOnlyHint=False,
@@ -179,7 +238,7 @@ def h3_backend_status() -> H3BackendStatus:
     return get_h3_client().status()
 
 
-@mcp.tool(
+@h3_tool(
     annotations=ToolAnnotations(
         title="提交 MiniMax H3 本地视频生成",
         readOnlyHint=False,
@@ -197,7 +256,7 @@ def h3_generate_video(command: H3GenerationCommand) -> H3JobSubmission:
     return get_h3_client().submit(command)
 
 
-@mcp.tool(
+@h3_tool(
     annotations=ToolAnnotations(
         title="后处理已筛选的 MiniMax H3 原片",
         readOnlyHint=False,
@@ -215,7 +274,7 @@ def h3_postprocess_video(command: H3PostprocessCommand) -> H3PostprocessSubmissi
     return get_h3_client().submit_postprocess(command)
 
 
-@mcp.tool(
+@h3_tool(
     annotations=ToolAnnotations(
         title="查询 MiniMax H3 本地视频任务",
         readOnlyHint=True,
@@ -229,6 +288,61 @@ def h3_job_status(
 ) -> H3JobReport:
     """查询异步 H3 任务并在完成后返回路径, 队列空闲时自动释放显存。"""
     return get_h3_client().job_status(prompt_id)
+
+
+@source_tool(
+    annotations=ToolAnnotations(
+        title="Local multimodal source backend status",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
+def source_backend_status() -> SourceBackendStatus:
+    """Check the configured local source backend and allow-listed input boundary."""
+    return get_source_manager().backend_status()
+
+
+@source_tool(
+    annotations=ToolAnnotations(
+        title="Submit bounded multimodal source extraction",
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=False,
+    )
+)
+def source_extract(command: SourceExtractionCommand) -> SourceJobSubmission:
+    """Queue source-faithful evidence extraction from staged allow-listed file copies.
+
+    This is not a general chat or writing tool. It accepts fixed extraction profiles,
+    writes a dedicated canonical-evidence bundle, and never modifies original files.
+    """
+    return get_source_manager().submit(command)
+
+
+@source_tool(
+    annotations=ToolAnnotations(
+        title="Read multimodal source extraction status",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
+def source_job_status(
+    job_id: Annotated[
+        str,
+        Field(
+            min_length=36,
+            max_length=36,
+            pattern=r"^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+        ),
+    ],
+) -> SourceJobReport:
+    """Return progress and hash-addressed evidence artifacts for one local source job."""
+    return get_source_manager().job_status(job_id)
 
 
 @core_tool(
@@ -384,11 +498,13 @@ def build_helper_tool(
     if not backend.ready:
         reasons = ",".join(backend.reasons) or "unknown"
         raise RuntimeError(f"isolated runner is unavailable: {reasons}")
-    get_budget_store().require_lifecycle_budget(
-        budget_session_id,
-        client_name=client_name,
-        model=spec.model,
-    )
+    provider = get_toolsmith_provider()
+    if provider.requires_budget_gate:
+        get_budget_store().require_lifecycle_budget(
+            budget_session_id,
+            client_name=client_name,
+            model=spec.model,
+        )
     return get_lifecycle().run(
         spec,
         client_name=client_name,

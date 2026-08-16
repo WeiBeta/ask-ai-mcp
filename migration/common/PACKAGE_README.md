@@ -7,7 +7,8 @@ registration, and verified local execution. DeepSeek is not a document co-author
 the desktop controller remains responsible for facts, reasoning, final prose, and
 delivery acceptance.
 
-The Core entry point registers twelve non-video tools. The Full entry point adds
-four adapters for an independently managed loopback ComfyUI service. Neither
-profile includes ComfyUI, model weights, media, credentials, personal application
-state, or business files.
+The Core entry point registers twelve controller tools. Subagent adds three
+bounded local-Qwen source tools. H3 registers only four adapters for an
+independently managed loopback ComfyUI service. Full is a nineteen-tool
+compatibility union. No profile includes ComfyUI, model weights, media,
+credentials, personal application state, or business files.

@@ -26,8 +26,9 @@ The lifecycle permits one build plus at most two policy-routed repair rounds,
 returns a compact review summary by default, and requires explicit hash-matched
 promotion. Per-conversation budget sessions start with CNY 5 for Flash and CNY
 0 for Pro; either model is extended only in fixed CNY 5 blocks. The development
-MCP surface exposes sixteen narrow tools: four loopback-only MiniMax H3/ComfyUI
-video tools, usage and lifecycle economics, on-demand
+compatibility Full surface exposes nineteen narrow tools: four loopback-only
+MiniMax H3/ComfyUI video tools, three pre-deployment multimodal source tools,
+usage and lifecycle economics, on-demand
 workflow guidance, cross-desktop pending-review discovery, four local budget
 operations, candidate build, review, approval, registry listing, and verified execution. Verified execution
 requires a standard callable contract, exact registry hash, dual Claude/Codex
@@ -64,31 +65,33 @@ uv run ruff format --check .
 uv run fastmcp inspect src/ask_ai_mcp/server.py --format mcp
 ```
 
-The local MCP entry point is:
+The recommended always-on MCP entry point is:
 
 ```text
-C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-full.exe
+C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-core.exe
 ```
 
-Two explicit use-only profiles share the same codebase:
+Four explicit profiles share the same codebase:
 
 - `ask-ai-mcp-core.exe` registers the twelve non-video tools only.
-- `ask-ai-mcp-full.exe` registers all sixteen tools, including the four H3 adapters.
+- `ask-ai-mcp-subagent.exe` registers Core plus three multimodal source tools, but no H3.
+- `ask-ai-mcp-h3.exe` registers only the four local video and ComfyUI tools.
+- `ask-ai-mcp-full.exe` registers all nineteen tools, including source and H3 adapters.
 
 The legacy `ask-ai-mcp.exe` entry point defaults to Full and accepts
-`ASK_AI_MCP_PROFILE=core|full`. New desktop deployments should use the explicit
+`ASK_AI_MCP_PROFILE=core|subagent|h3|full`. New desktop deployments should use the explicit
 profile executable so a missing environment variable cannot silently change the
 advertised tool surface.
 
-Build the two credential-free Windows migration packages with:
+Build the four credential-free Windows migration packages with:
 
 ```powershell
 pwsh -NoProfile -File .\scripts\build_migration_packages.ps1
 ```
 
-The Core and Full archives contain only the MCP wheel, locked dependencies,
+The Core, Subagent, H3, and Full archives contain only the MCP wheel, locked dependencies,
 configuration templates, verification scripts, hashes, and GPT handoff material.
-Neither archive contains ComfyUI, model weights, local application state, business
+No archive contains ComfyUI, Qwen, model weights, local application state, business
 files, desktop personal configuration, or credentials.
 
 The H3 runtime, model weights, and generated media are deliberately external to
@@ -121,6 +124,8 @@ isolated under `C:\AI\ComfyUI-H3`.
 - `docs/MCP_SURFACE.md`: public tool contracts and desktop identity boundary
 - `docs/MCP_SMOKE.md`: first billed build-review-approval evidence
 - `docs/H3_HANDOFF_ZH-CN.md`: verified H3 deployment, model hashes, MCP contract, and next-session handoff
+- `docs/QWEN_SUBAGENT_PREDEPLOY_ZH-CN.md`: replay capture, source contract, and exact Qwen integration stop point
+- `ask-ai-mcp-replay shadow-qwen --lifecycle-id <UUID>` replays a captured tool spec through local Qwen and records self-test plus reference-test evidence without treating DeepSeek tests as a gold oracle.
 - `docs/DESKTOP_SETUP.md`: Claude Desktop and Codex Desktop connection guide
 - `docs/CONTROLLER_PROMPTS.md`: shared delegation rules and desktop adaptations
 - `docs/USER_MANUAL_ZH-CN.md`: Simplified Chinese user, handoff, backup, and migration manual

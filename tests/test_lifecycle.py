@@ -28,6 +28,7 @@ from ask_ai_mcp.models import (
     UsageEvent,
 )
 from ask_ai_mcp.promotion import VerifiedToolRegistry
+from ask_ai_mcp.replay import LegacyReplayImporter, ReplayCaptureError, ReplayStore
 from ask_ai_mcp.review import CandidateReviewError, CandidateReviewRepository
 from ask_ai_mcp.review_attestation import ReviewAttestationStore
 from ask_ai_mcp.sandbox import DEFAULT_RUNNER_IMAGE
@@ -88,6 +89,7 @@ class FakeClient:
         self.candidates = candidates
         self.repair_feedback = []
         self.repair_kwargs = []
+        self.release_count = 0
 
     def build_candidate(self, *_args, **_kwargs) -> ToolCandidateResult:
         return self.candidates[0]
@@ -96,6 +98,9 @@ class FakeClient:
         self.repair_feedback.append(feedback)
         self.repair_kwargs.append(_kwargs)
         return self.candidates[len(self.repair_feedback)]
+
+    def release_resources(self) -> None:
+        self.release_count += 1
 
 
 class PassingExecutor:
@@ -169,6 +174,23 @@ class RegeneratingClient(FakeClient):
 class FailingRepairClient(FakeClient):
     def repair_candidate(self, *_args, **_kwargs) -> ToolCandidateResult:
         raise RuntimeError("synthetic repair transport failure")
+
+
+def test_provider_resources_are_released_once_after_complete_lifecycle(tmp_path: Path) -> None:
+    client = FakeClient([make_candidate()])
+    lifecycle = CandidateLifecycle(
+        client=client,
+        workspace=CandidateWorkspaceManager(tmp_path / "jobs"),
+        executor=PassingExecutor(),
+    )
+
+    lifecycle.run(
+        make_spec(),
+        client_name="codex_desktop",
+        budget_session_id=BUDGET_SESSION_ID,
+    )
+
+    assert client.release_count == 1
 
 
 def test_static_failure_is_repaired_then_returned_for_review(tmp_path: Path) -> None:
@@ -269,7 +291,7 @@ def test_semantic_failure_uses_thinking_high_repair(tmp_path: Path) -> None:
     assert result.status is CandidateLifecycleStatus.REVIEW_PENDING
     assert client.repair_feedback[0].repair_kind is RepairKind.SEMANTIC_TEST
     assert client.repair_kwargs[0]["thinking_enabled"] is True
-    assert client.repair_kwargs[0]["max_output_tokens"] == 16_384
+    assert client.repair_kwargs[0]["max_output_tokens"] == 65_536
     assert result.attempts[1].repair_kind is RepairKind.SEMANTIC_TEST
 
 
@@ -461,3 +483,97 @@ def test_client_hash_mismatch_is_rejected_before_staging(tmp_path: Path) -> None
     with pytest.raises(CandidateLifecycleError, match="hash"):
         lifecycle.run(make_spec(), client_name="codex", budget_session_id=BUDGET_SESSION_ID)
     assert not any((tmp_path / "jobs").iterdir())
+
+
+def test_replay_capsule_preserves_every_graded_candidate_and_feedback(tmp_path: Path) -> None:
+    replay = ReplayStore(tmp_path / "replay")
+    lifecycle = CandidateLifecycle(
+        client=FakeClient([make_candidate(unsafe=True), make_candidate()]),
+        workspace=CandidateWorkspaceManager(tmp_path / "jobs"),
+        executor=PassingExecutor(),
+        replay_store=replay,
+    )
+
+    result = lifecycle.run(
+        make_spec(),
+        client_name="codex_desktop",
+        budget_session_id=BUDGET_SESSION_ID,
+    )
+
+    capsule = replay.load(result.lifecycle_id)
+    assert capsule.spec == make_spec()
+    assert capsule.result == result
+    assert len(capsule.attempts) == 2
+    assert capsule.attempts[0].candidate.files[0].content == "import os"
+    assert capsule.attempts[0].feedback_for_next_attempt is not None
+    assert capsule.attempts[0].feedback_for_next_attempt.repair_kind is RepairKind.STATIC_POLICY
+    assert capsule.attempts[1].feedback_for_next_attempt is None
+    assert capsule.warnings == ["prompt_identity_unavailable"]
+    digest = (tmp_path / "replay" / result.lifecycle_id / "capsule.sha256").read_text(
+        encoding="ascii"
+    )
+    assert digest.endswith("  capsule.json\n")
+
+
+def test_replay_capture_failure_does_not_change_lifecycle_result(tmp_path: Path) -> None:
+    class FailingReplayStore:
+        def write(self, _capsule):
+            raise OSError("synthetic replay storage failure")
+
+    lifecycle = CandidateLifecycle(
+        client=FakeClient([make_candidate()]),
+        workspace=CandidateWorkspaceManager(tmp_path / "jobs"),
+        executor=PassingExecutor(),
+        replay_store=FailingReplayStore(),
+    )
+
+    result = lifecycle.run(make_spec(), client_name="codex", budget_session_id=BUDGET_SESSION_ID)
+
+    assert result.status is CandidateLifecycleStatus.REVIEW_PENDING
+
+
+def test_legacy_replay_import_recovers_exact_final_candidate(tmp_path: Path) -> None:
+    jobs_root = tmp_path / "jobs"
+    database = tmp_path / "usage.db"
+    lifecycle = CandidateLifecycle(
+        client=FakeClient([make_candidate()]),
+        workspace=CandidateWorkspaceManager(jobs_root),
+        executor=PassingExecutor(),
+        audit_store=UsageStore(database),
+    )
+    result = lifecycle.run(
+        make_spec(),
+        client_name="codex_desktop",
+        budget_session_id=BUDGET_SESSION_ID,
+    )
+    replay = ReplayStore(tmp_path / "imported-replay")
+
+    summary = LegacyReplayImporter(
+        jobs_root=jobs_root,
+        usage_database=database,
+        replay_store=replay,
+    ).import_all()
+
+    assert summary.imported_capsules == 1
+    assert summary.skipped_capsules == 0
+    capsule = replay.load(result.lifecycle_id)
+    assert capsule.reconstructed is True
+    assert capsule.client_name == "codex_desktop"
+    assert capsule.attempts[0].candidate == make_candidate().payload
+    assert "legacy_only_final_candidate" in capsule.warnings
+
+
+def test_replay_digest_detects_capsule_tampering(tmp_path: Path) -> None:
+    replay = ReplayStore(tmp_path / "replay")
+    lifecycle = CandidateLifecycle(
+        client=FakeClient([make_candidate()]),
+        workspace=CandidateWorkspaceManager(tmp_path / "jobs"),
+        executor=PassingExecutor(),
+        replay_store=replay,
+    )
+    result = lifecycle.run(make_spec(), client_name="codex", budget_session_id=BUDGET_SESSION_ID)
+    capsule_path = tmp_path / "replay" / result.lifecycle_id / "capsule.json"
+    capsule_path.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ReplayCaptureError, match="digest"):
+        replay.load(result.lifecycle_id)

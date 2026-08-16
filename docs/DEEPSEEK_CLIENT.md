@@ -25,8 +25,10 @@ Supported routes are pinned to:
 - `deepseek-v4-pro`: requires a CNY 5 Pro grant in the current budget session.
 
 Initial candidates and semantic-test repairs use thinking mode with
-`reasoning_effort` set to `high` and a 16,384-token output cap. A single
-static-policy repair disables thinking and uses a 4,096-token cap. Requests
+`reasoning_effort` set to `high` and a 65,536-token output cap. A single
+static-policy repair disables thinking and uses a 4,096-token cap. Static
+repair returns only a base-hash-bound list of exact unique text edits; semantic
+repair still returns a complete candidate. Requests
 also select JSON Output and explicitly instruct the model to return JSON
 matching the server-provided candidate schema. There is no automatic model
 upgrade from Flash to Pro.

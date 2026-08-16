@@ -18,22 +18,25 @@ candidate build/review/approval, registry listing, and verified execution.
 review, approval, and verified local execution make no external model call.
 Real-file paths remain closed until narrow input roots are explicitly configured.
 
-Use this absolute executable path:
+Keep Core always on with this absolute executable path:
 
 ```text
-C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-full.exe
+C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-core.exe
 ```
 
-For new use-only deployments, select an explicit profile instead:
+Register additional explicit profiles only where needed:
 
 ```text
 C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-core.exe  # 12 non-video tools
-C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-full.exe  # all 16 tools
+C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-subagent.exe  # Core + 3 Qwen source tools
+C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-h3.exe  # 4 H3 tools only
+C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-full.exe  # compatibility union, 19 tools
 ```
 
-Core does not register H3 tools and therefore does not load their MCP descriptions
-into the desktop controller context. Full contains only the H3 adapter code; the
-ComfyUI executable, models, workspace, and media remain external.
+Core does not register source or H3 tools. Subagent and H3 can be registered under
+separate server names and left disabled in clients that expose MCP switches. Full
+is retained for compatibility, not recommended as the default. All external model
+runtimes, workspaces, and media remain outside this repository.
 
 Absolute paths are required because a desktop MCP host may start a server with
 an undefined working directory.
@@ -74,17 +77,12 @@ configured servers:
 {
   "mcpServers": {
     "ask-ai": {
-      "command": "C:\\Dev\\ask-ai-mcp\\.venv\\Scripts\\ask-ai-mcp-full.exe",
+      "command": "C:\\Dev\\ask-ai-mcp\\.venv\\Scripts\\ask-ai-mcp-core.exe",
       "args": [],
       "env": {
         "ASK_AI_MCP_CLIENT_NAME": "claude_desktop",
-        "ASK_AI_MCP_H3_URL": "http://127.0.0.1:8188",
-        "ASK_AI_MCP_H3_START_SCRIPT": "C:\\Dev\\ask-ai-mcp\\scripts\\start_comfyui_h3.ps1",
-        "ASK_AI_MCP_H3_START_TIMEOUT_SECONDS": "120",
-        "ASK_AI_MCP_H3_WORKSPACE_ROOT": "C:\\Users\\user\\Documents\\AskAI-Exchange\\H3-Workspace",
-        "ASK_AI_MCP_H3_COMFY_INPUT_ROOT": "C:\\Users\\user\\Documents\\AskAI-Exchange\\H3-Workspace\\inputs",
-        "ASK_AI_MCP_H3_OUTPUT_ROOT": "C:\\Users\\user\\Documents\\AskAI-Exchange\\H3-Workspace\\outputs",
-        "ASK_AI_MCP_H3_INPUT_ROOTS": "C:\\Users\\user\\Documents\\AskAI-Exchange\\H3-Workspace\\inputs"
+        "PYTHONUTF8": "1",
+        "PYTHONIOENCODING": "utf-8"
       }
     }
   }
@@ -92,13 +90,9 @@ configured servers:
 ```
 
 Save the file, fully quit Claude Desktop, and reopen it. Closing only the window
-is not sufficient. Confirm that `ask-ai` advertises exactly sixteen tools:
-`h3_backend_status`, `h3_generate_video`, `h3_postprocess_video`,
-`h3_job_status`, `usage_status`,
-`workflow_guidance`, `list_pending_reviews`,
-`open_budget_session`, `budget_status`, `add_budget_block`,
-`close_budget_session`, `build_helper_tool`, `review_tool_candidate`,
-`approve_tool_candidate`, `list_registered_tools`, and `run_verified_tool`.
+is not sufficient. Confirm that `ask-ai` advertises exactly twelve Core tools.
+Use the profile templates under `migration/profiles` when Claude needs Subagent,
+H3, or compatibility Full.
 
 For later private packaging, Claude Desktop also supports a local desktop
 extension bundle. We will evaluate that only after the server workflow is
@@ -119,16 +113,29 @@ existing TOML file:
 
 ```toml
 [mcp_servers.ask_ai]
-command = "C:\\Dev\\ask-ai-mcp\\.venv\\Scripts\\ask-ai-mcp-full.exe"
+command = "C:\\Dev\\ask-ai-mcp\\.venv\\Scripts\\ask-ai-mcp-core.exe"
 cwd = "C:\\Dev\\ask-ai-mcp"
 enabled = true
 required = false
-enabled_tools = ["h3_backend_status", "h3_generate_video", "h3_postprocess_video", "h3_job_status", "usage_status", "workflow_guidance", "list_pending_reviews", "open_budget_session", "budget_status", "add_budget_block", "close_budget_session", "build_helper_tool", "review_tool_candidate", "approve_tool_candidate", "list_registered_tools", "run_verified_tool"]
+enabled_tools = ["usage_status", "workflow_guidance", "list_pending_reviews", "open_budget_session", "budget_status", "add_budget_block", "close_budget_session", "build_helper_tool", "review_tool_candidate", "approve_tool_candidate", "list_registered_tools", "run_verified_tool"]
 default_tools_approval_mode = "prompt"
 startup_timeout_sec = 20
 tool_timeout_sec = 600
 
 [mcp_servers.ask_ai.env]
+ASK_AI_MCP_CLIENT_NAME = "codex_desktop"
+
+[mcp_servers.ask_ai_h3]
+command = "C:\\Dev\\ask-ai-mcp\\.venv\\Scripts\\ask-ai-mcp-h3.exe"
+cwd = "C:\\Dev\\ask-ai-mcp"
+enabled = false
+required = false
+enabled_tools = ["h3_backend_status", "h3_generate_video", "h3_postprocess_video", "h3_job_status"]
+default_tools_approval_mode = "prompt"
+startup_timeout_sec = 20
+tool_timeout_sec = 600
+
+[mcp_servers.ask_ai_h3.env]
 ASK_AI_MCP_CLIENT_NAME = "codex_desktop"
 ASK_AI_MCP_H3_URL = "http://127.0.0.1:8188"
 ASK_AI_MCP_H3_START_SCRIPT = "C:\\Dev\\ask-ai-mcp\\scripts\\start_comfyui_h3.ps1"
@@ -141,8 +148,9 @@ PYTHONUTF8 = "1"
 PYTHONIOENCODING = "utf-8"
 ```
 
-Restart Codex Desktop after saving, then use `/mcp` to confirm the server and
-sixteen-tool catalog. Keep approval mode set to `prompt` during the trial. Open one
+Restart Codex Desktop after saving, then use the settings UI to confirm Core has
+twelve tools and H3 is registered but disabled. Keep approval mode set to `prompt`.
+Open one
 opaque budget session per conversation that needs Ask AI. Flash starts with CNY
 5, Pro with CNY 0, and either model is extended only in CNY 5 blocks after the
 required confirmation. A normal build may make up to three billed API calls

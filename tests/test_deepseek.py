@@ -7,6 +7,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
 from ask_ai_mcp.deepseek import (
     DEEPSEEK_CHAT_COMPLETIONS_URL,
@@ -16,6 +17,7 @@ from ask_ai_mcp.deepseek import (
     ModelEscalationRequired,
 )
 from ask_ai_mcp.models import (
+    CandidatePatchPayload,
     CandidateRepairFeedback,
     DeepSeekModel,
     PricingBand,
@@ -225,13 +227,69 @@ def test_repair_uses_bounded_feedback_and_records_repair_round(tmp_path: Path) -
     assert row == ("tool_repair", 1)
 
 
+def test_initial_build_allows_reasoning_and_structured_candidate_output(tmp_path: Path) -> None:
+    from ask_ai_mcp.deepseek import INITIAL_MAX_OUTPUT_TOKENS
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert body["thinking"] == {"type": "enabled"}
+        assert body["max_tokens"] == 65_536
+        assert body["max_tokens"] == INITIAL_MAX_OUTPUT_TOKENS
+        return httpx.Response(200, json=api_response())
+
+    client = DeepSeekClient(
+        api_key_provider=lambda: "sk-" + "x" * 40,
+        usage_store=UsageStore(tmp_path / "usage.db"),
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.build_candidate(make_spec(), client_name="codex_desktop")
+
+
 def test_static_repair_disables_thinking_and_uses_small_output_cap(tmp_path: Path) -> None:
+    previous_hash = ""
+
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         assert body["thinking"] == {"type": "disabled"}
         assert body["max_tokens"] == STATIC_REPAIR_MAX_OUTPUT_TOKENS
         assert "reasoning_effort" not in body
-        return httpx.Response(200, json=api_response())
+        assert "base_candidate_sha256" not in body["messages"][0]["content"]
+        assert '"edits"' in body["messages"][0]["content"]
+        assert "small hash-bound JSON patch" in body["messages"][1]["content"]
+        assert "summary is optional metadata" in body["messages"][1]["content"]
+        assert "controller binds the edit set" in body["messages"][1]["content"]
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "base_candidate_sha256": "model-supplied-value-is-ignored",
+                                    "summary": "Replace one exact construct.",
+                                    "edits": [
+                                        {
+                                            "file_path": "tool.py",
+                                            "old_text": "no-op",
+                                            "new_text": "no-op",
+                                        },
+                                        {
+                                            "file_path": "tool.py",
+                                            "old_text": "def extract_tables(path):",
+                                            "new_text": "def extract_tables(source_path):",
+                                        },
+                                    ],
+                                }
+                            )
+                        },
+                    }
+                ],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 20},
+            },
+        )
 
     database = tmp_path / "usage.db"
     client = DeepSeekClient(
@@ -243,7 +301,8 @@ def test_static_repair_disables_thinking_and_uses_small_output_cap(tmp_path: Pat
     from ask_ai_mcp.hashing import candidate_payload_sha256
     from ask_ai_mcp.models import ToolCandidateResult
 
-    client.repair_candidate(
+    previous_hash = candidate_payload_sha256(previous_payload)
+    result = client.repair_candidate(
         make_spec(),
         ToolCandidateResult(
             candidate_sha256=candidate_payload_sha256(previous_payload),
@@ -263,6 +322,9 @@ def test_static_repair_disables_thinking_and_uses_small_output_cap(tmp_path: Pat
         lifecycle_id="22222222-2222-4222-8222-222222222222",
     )
 
+    assert "def extract_tables(source_path):" in result.payload.files[0].content
+    assert result.candidate_sha256 != previous_hash
+
     with sqlite3.connect(database) as connection:
         row = connection.execute(
             """
@@ -278,6 +340,88 @@ def test_static_repair_disables_thinking_and_uses_small_output_cap(tmp_path: Pat
     )
     assert row[3] > 0
     assert row[4] > 0
+
+
+def test_static_patch_failure_records_safe_stage_without_response_content(tmp_path: Path) -> None:
+    database = tmp_path / "usage.db"
+    previous_payload = DeepSeekClient._parse_candidate(api_response())
+    from ask_ai_mcp.hashing import candidate_payload_sha256
+    from ask_ai_mcp.models import ToolCandidateResult
+
+    previous_hash = candidate_payload_sha256(previous_payload)
+    invalid_patch = {
+        "base_candidate_sha256": "0" * 64,
+        "summary": "Target text does not exist.",
+        "edits": [
+            {
+                "file_path": "tool.py",
+                "old_text": "def missing_function(path):",
+                "new_text": "def extract_tables(source_path):",
+            }
+        ],
+    }
+    client = DeepSeekClient(
+        api_key_provider=lambda: "sk-" + "x" * 40,
+        usage_store=UsageStore(database),
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "finish_reason": "stop",
+                            "message": {"content": json.dumps(invalid_patch)},
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 10, "completion_tokens": 20},
+                },
+            )
+        ),
+    )
+
+    with pytest.raises(DeepSeekClientError, match="invalid_patch_application"):
+        client.repair_candidate(
+            make_spec(),
+            ToolCandidateResult(
+                candidate_sha256=previous_hash,
+                model=DeepSeekModel.FLASH,
+                thinking_enabled=True,
+                payload=previous_payload,
+            ),
+            CandidateRepairFeedback(
+                repair_round=1,
+                repair_kind="static_policy",
+                reason_codes=["absolute_path_literal"],
+            ),
+            client_name="codex_desktop",
+            thinking_enabled=False,
+            max_output_tokens=STATIC_REPAIR_MAX_OUTPUT_TOKENS,
+        )
+
+    with sqlite3.connect(database) as connection:
+        status = connection.execute("SELECT status FROM api_usage").fetchone()[0]
+    assert status == "invalid_patch_application"
+
+
+def test_patch_schema_diagnostic_contains_only_locations_and_error_types() -> None:
+    with pytest.raises(ValidationError) as captured:
+        CandidatePatchPayload.model_validate(
+            {
+                "base_candidate_sha256": "0" * 64,
+                "edits": [
+                    {
+                        "file_path": "tool.py",
+                        "old_text": "same",
+                        "new_text": "same",
+                    }
+                ],
+            }
+        )
+
+    detail = DeepSeekClient._structured_failure_detail(captured.value, True)
+
+    assert detail == "; schema_hints=edits.0:value_error"
+    assert "same" not in detail
 
 
 def test_client_records_peak_price_metadata_from_request_start(tmp_path: Path) -> None:

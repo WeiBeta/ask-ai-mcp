@@ -91,7 +91,8 @@ SeedVR2 ComfyUI 重打包标注 Apache-2.0，帧插值仓库包含 MIT/Apache-2.
 
 ## 4. MCP 工具面与严格参数
 
-Ask AI MCP 当前共 16 个工具，其中 H3 工具为：
+Ask AI MCP 0.6.2 提供四个显式入口：Core 12、Subagent 15、H3 4、兼容 Full 19。
+H3 专用入口只注册以下 4 个工具：
 
 - `h3_backend_status`：检查 ComfyUI、GPU、4 个 H3 权重和 5 个后处理权重。
 - `h3_generate_video`：硬限制为 4–15 秒；MCP 按 24fps 换算并向上对齐到
@@ -136,10 +137,12 @@ Ask AI MCP 当前共 16 个工具，其中 H3 工具为：
 
 ## 5. 桌面客户端配置
 
-两个客户端均调用：
+当前工作站采用按需 profile：Claude 只启用 Core；Codex 启用 Core，并预注册但关闭 H3。
+入口分别为：
 
 ```text
-C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-full.exe
+C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-core.exe
+C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-h3.exe
 ```
 
 当前有效配置文件：
@@ -147,7 +150,7 @@ C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-full.exe
 - Codex Desktop：`C:\Users\user\.codex\config.toml`
 - Claude Desktop（MSIX）：`C:\Users\user\AppData\Local\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Claude\claude_desktop_config.json`
 
-两份配置中的以下环境变量已对齐：
+H3 环境变量只属于 H3 profile，不写入 Core：
 
 ```text
 ASK_AI_MCP_H3_URL=http://127.0.0.1:8188
@@ -225,8 +228,8 @@ API 密钥。配置变更后需完全重启对应桌面客户端以刷新 stdio 
 uv lock
 uv sync --all-groups
 uv run ruff check .       -> All checks passed
-uv run pytest             -> 136 passed, 3 skipped
-fastmcp inspect           -> Ask AI MCP 0.6.2，共 16 个工具
+uv run pytest             -> 以当前发布前全量回归为准
+profile inspect           -> Core 12、Subagent 15、H3 4、Full 19
 ```
 
 普通 pytest 不运行外部 API 集成测试，符合仓库规则。当前 H3 相关修改仍在工作树中，

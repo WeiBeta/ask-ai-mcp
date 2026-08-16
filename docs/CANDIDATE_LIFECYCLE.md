@@ -9,7 +9,7 @@ or process real source files before promotion.
 ## Attempts and repair limit
 
 The controller permits one initial DeepSeek candidate and at most two repair
-rounds, with no more than three candidate attempts total. Every replacement candidate receives a new content hash and restarts
+rounds, with no more than three candidate attempts total. Every repaired candidate receives a new content hash and restarts
 the full sequence:
 
 1. validate the structured response and candidate hash;
@@ -24,7 +24,11 @@ stderr. Candidate-development jobs have empty or synthetic-only inputs, so
 repair feedback must never contain knowledge-base or real source-document text.
 There is no automatic escalation from Flash to Pro. A static-policy failure may
 receive only one repair, with Thinking disabled and a 4,096-token output cap.
-An isolated-test semantic failure uses Thinking High and a 16,384-token output
+That response is a hash-bound set of exact text replacements against existing
+Python files, not a complete candidate retransmission. The controller requires
+each old string to match exactly once, preserves the file set, applies the edits,
+rehashes the result, and reruns all policy checks. An isolated-test semantic
+failure uses Thinking High and a 65,536-token output
 cap. An empty, truncated, or schema-invalid initial API response may be
 regenerated once without the invalid response body; it does not expand the
 three-attempt candidate policy.

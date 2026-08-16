@@ -145,9 +145,10 @@ Candidate jobs use one per-Windows-user data directory and are not partitioned
 by `ASK_AI_MCP_CLIENT_NAME`, so a job created by one desktop is addressable by
 the other. The acceptance workflow still verifies this behavior end to end.
 
-## Not-yet-exposed roles
+## Source-structuring role
 
-The policy permits source-faithful structuring, but the sixteen-tool MCP surface has
-no production source-structuring model call. Verified tools execute locally and
-offline; they do not make DeepSeek a source-content author. Do not route source
-content through `build_helper_tool` as a workaround.
+The optional Subagent and Full profiles expose bounded, source-faithful Qwen
+structuring for supported local documents and images. Core remains free of that
+surface. Verified tools execute locally and offline; they do not make DeepSeek a
+source-content author. Do not route source content through `build_helper_tool` as
+a workaround.

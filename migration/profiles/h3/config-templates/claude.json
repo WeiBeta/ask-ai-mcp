@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "ask-ai-h3": {
+      "command": "__MCP_H3_EXE__",
+      "args": [],
+      "env": {
+        "ASK_AI_MCP_CLIENT_NAME": "claude_desktop",
+        "ASK_AI_MCP_H3_URL": "http://127.0.0.1:8188",
+        "ASK_AI_MCP_H3_START_SCRIPT": "__H3_START_SCRIPT__",
+        "ASK_AI_MCP_H3_START_TIMEOUT_SECONDS": "120",
+        "ASK_AI_MCP_H3_WORKSPACE_ROOT": "__H3_WORKSPACE_ROOT__",
+        "ASK_AI_MCP_H3_COMFY_INPUT_ROOT": "__H3_INPUT_ROOT__",
+        "ASK_AI_MCP_H3_OUTPUT_ROOT": "__H3_OUTPUT_ROOT__",
+        "ASK_AI_MCP_H3_INPUT_ROOTS": "__H3_INPUT_ROOT__",
+        "PYTHONUTF8": "1",
+        "PYTHONIOENCODING": "utf-8"
+      }
+    }
+  }
+}

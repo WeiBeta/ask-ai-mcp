@@ -1,7 +1,32 @@
 # MCP candidate surface
 
-The server deliberately has no arbitrary `ask_deepseek(prompt)` operation.
-Desktop hosts receive sixteen narrow tools.
+The server deliberately has no arbitrary model-prompt forwarding operation.
+Core advertises twelve tools, Subagent advertises fifteen, and compatibility
+Full advertises nineteen. H3-only advertises exactly four local video tools.
+
+## Multimodal source tools
+
+Subagent and Full add exactly three asynchronous source tools:
+
+- `source_backend_status` reports local backend identity, readiness, fixed
+  extraction profiles, one-job GPU concurrency, and input-root configuration.
+- `source_extract` accepts allow-listed absolute file paths and one of
+  `document_evidence` or `visual_structure`. It has no arbitrary prompt field.
+- `source_job_status` returns progress and hash-addressed output artifacts.
+
+Inputs are copied into a private job directory and hashed before and after the
+copy. Originals are never mounted or modified. Backend output must validate as
+`canonical_evidence_v1`, preserve source hashes and locations, and contain
+source-faithful text or structured data rather than final conclusions. With
+`ASK_AI_MCP_SOURCE_PROVIDER=local_qwen`, PDF pages are rendered by locked
+PDFium and PPTX slides by a fixed, read-only PowerPoint COM exporter after macro,
+external-relationship, and package-safety checks. Document jobs are capped at
+32 selected visuals and use one visual per Qwen request because the current
+runtime did not preserve every image in a multi-image request. The real backend
+remains unavailable unless its loopback runtime and narrow input roots are configured.
+The 0.6.2 source surface deliberately does not advertise DOCX, XLSX, video,
+audio, media-timeline, or time-range inputs; those require separate validated
+preprocessors before they can return to the public schema.
 
 ## Local MiniMax H3 video tools
 
@@ -75,9 +100,11 @@ valid only for the desktop identity that created it.
 
 ## `build_helper_tool`
 
-Accepts one strict `ToolBuildSpec` and a `budget_session_id`. Before any
-billable call it verifies that the Linux Docker runner and pinned image are
-ready and the selected model has remaining session budget. It then permits one
+Accepts one strict `ToolBuildSpec` and a `budget_session_id`. Before a direct
+DeepSeek billable call it verifies that the Linux Docker runner and pinned image
+are ready and the selected model has remaining session budget. Provider selection
+is separate from MCP profiles; subscription and local providers do not inherit
+the DeepSeek CNY gate. It then permits one
 initial candidate and at most two repairs. A started lifecycle may finish after
 slightly crossing the grant; the next lifecycle is blocked until another CNY 5
 block is confirmed. The only successful outcome is `review_pending`; the tool
@@ -161,3 +188,12 @@ artifact metadata and hashes, not file contents.
 - Office COM or PowerShell automation;
 - network access from candidate containers;
 - direct repository edits by generated code.
+
+## Replay capture
+
+`ASK_AI_MCP_REPLAY_CAPTURE=1` enables content-bearing toolsmith replay capsules
+in a separate local replay root. Capsules contain sanitized specifications,
+every parsed candidate, bounded repair feedback, static findings, execution
+results, prompt-template identity, and terminal outcome. Each capsule has an
+independent SHA-256 file. They are never written into the prompt-free usage or
+MCP protocol audit tables. Storage failure is fail-open for live work.

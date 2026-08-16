@@ -79,6 +79,40 @@ def test_unsafe_constructs_are_rejected(source: str, code: str) -> None:
     assert code in {finding.code for finding in report.findings}
 
 
+def test_opc_part_separators_in_string_operations_are_not_filesystem_paths() -> None:
+    report = analyze_candidate(
+        make_spec(),
+        payload(
+            "def normalize(name, relationship_type):\n"
+            "    if '\\\\' in name:\n"
+            "        return ''\n"
+            "    if name.startswith('/'):\n"
+            "        name = name.lstrip('/')\n"
+            "    rels = '/'.join(name.split('/')) + '/_rels/'\n"
+            "    return rels, relationship_type.endswith('/officeDocument')\n\n"
+            "def run(request, input_dir, output_dir):\n"
+            "    return normalize(request, '')\n"
+        ),
+    )
+
+    assert report.allowed is True
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "value = open('/etc/passwd')\n",
+        "from pathlib import Path\nvalue = Path('/etc/passwd')\n",
+        "from pathlib import Path\nvalue = Path('/_rels/')\n",
+    ],
+)
+def test_absolute_paths_remain_rejected_when_used_for_io(source: str) -> None:
+    report = analyze_candidate(make_spec(), payload(source))
+
+    assert report.allowed is False
+    assert "absolute_path_literal" in {finding.code for finding in report.findings}
+
+
 def test_syntax_error_is_rejected_without_echoing_source() -> None:
     report = analyze_candidate(make_spec(), payload("def broken(:\n    pass\n"))
     assert report.allowed is False

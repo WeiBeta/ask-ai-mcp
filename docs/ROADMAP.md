@@ -1,7 +1,8 @@
 # Roadmap
 
 Current implementation status: phases 0 through 2 are complete, including the
-real opt-in synthetic Flash smoke request. The sixteen-tool desktop surface,
+real opt-in synthetic Flash smoke request. The four explicit MCP profiles
+(Core 12, Subagent 15, H3 4, and Full 19),
 conversation budget sessions, compact/full review split, and verified execution
 implementation are complete; cross-client Phase 3 acceptance and explicit
 real-input-root configuration remain pending.

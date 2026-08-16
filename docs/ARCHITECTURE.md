@@ -100,7 +100,7 @@ then renders and visually validates them.
 
 ## MCP surface
 
-The current public tool set is deliberately narrow:
+The Core public tool set is deliberately narrow:
 
 - `usage_status`
 - `workflow_guidance`
@@ -124,6 +124,11 @@ and closed to real files unless narrow input roots are explicitly configured.
 The server uses local STDIO for both desktop clients. Each client may start its
 own MCP process, so the audit database and verified-tool registry must support
 concurrent access. SQLite runs in WAL mode for shared metadata.
+
+Subagent adds `source_backend_status`, `source_extract`, and
+`source_job_status`. Toolsmith and source intelligence remain separate internal
+modules even when the same local Qwen backend serves both. H3 remains a separate
+GPU generation capability.
 
 ## Storage
 
@@ -149,3 +154,7 @@ separate measurements.
 
 It does not record API keys, full prompts, full source contents, or ordinary
 model responses by default.
+
+Explicit shadow testing uses a separate immutable replay store. It may retain
+sanitized tool specifications and parsed candidate code because those contents
+are the evaluation corpus; it never changes the prompt-free audit contract.

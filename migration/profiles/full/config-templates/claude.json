@@ -12,6 +12,11 @@
         "ASK_AI_MCP_H3_COMFY_INPUT_ROOT": "__H3_INPUT_ROOT__",
         "ASK_AI_MCP_H3_OUTPUT_ROOT": "__H3_OUTPUT_ROOT__",
         "ASK_AI_MCP_H3_INPUT_ROOTS": "__H3_INPUT_ROOT__",
+        "ASK_AI_MCP_SOURCE_PROVIDER": "local_qwen",
+        "ASK_AI_MCP_SOURCE_INPUT_ROOTS": "__SOURCE_INPUT_ROOTS__",
+        "ASK_AI_MCP_QWEN_BASE_URL": "http://127.0.0.1:38827/v1",
+        "ASK_AI_MCP_QWEN_MODEL_ID": "qwen3.8-27b-local",
+        "ASK_AI_MCP_QWEN_UNLOAD_AFTER_TASK": "1",
         "PYTHONUTF8": "1",
         "PYTHONIOENCODING": "utf-8"
       }

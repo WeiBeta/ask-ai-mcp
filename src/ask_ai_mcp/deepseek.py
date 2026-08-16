@@ -12,11 +12,16 @@ import httpx
 from pydantic import ValidationError
 
 from ask_ai_mcp import __version__
+from ask_ai_mcp.candidate_patch import CandidatePatchError, apply_candidate_patch
 from ask_ai_mcp.credentials import CredentialStore
-from ask_ai_mcp.hashing import candidate_payload_sha256
+from ask_ai_mcp.hashing import candidate_payload_sha256, sha256_text
 from ask_ai_mcp.models import (
+    CandidatePatchDraftPayload,
+    CandidatePatchPayload,
     CandidateRepairFeedback,
     DeepSeekModel,
+    ModelProvider,
+    RepairKind,
     ToolBuildSpec,
     ToolCandidatePayload,
     ToolCandidateResult,
@@ -27,9 +32,33 @@ from ask_ai_mcp.pricing import calculate_cost_estimate, load_peak_pricing_effect
 from ask_ai_mcp.usage import UsageStore
 
 DEEPSEEK_CHAT_COMPLETIONS_URL = "https://api.deepseek.com/chat/completions"
-INITIAL_MAX_OUTPUT_TOKENS = 16_384
+INITIAL_MAX_OUTPUT_TOKENS = 65_536
 STATIC_REPAIR_MAX_OUTPUT_TOKENS = 4_096
-SEMANTIC_REPAIR_MAX_OUTPUT_TOKENS = 16_384
+SEMANTIC_REPAIR_MAX_OUTPUT_TOKENS = 65_536
+PROMPT_TEMPLATE_VERSION = "toolsmith-json-v2"
+BUILD_INSTRUCTION = (
+    "Generate a candidate that satisfies this bounded specification. "
+    "Return JSON only. Specification JSON:\n"
+)
+REGENERATION_INSTRUCTION = (
+    "Regenerate the complete candidate because the previous API response was empty "
+    "or invalid JSON. Return JSON only and satisfy every specification and test-file "
+    "requirement. Specification JSON:\n"
+)
+REPAIR_INSTRUCTION = (
+    "Repair the bounded candidate using only the supplied diagnostics. "
+    "Do not expand its duties, dependencies, or access. Return the complete "
+    "replacement candidate as JSON only. The diagnostics contain no source "
+    "documents.\n"
+)
+STATIC_REPAIR_INSTRUCTION = (
+    "Repair only the reported static-policy findings. Return a small hash-bound JSON patch, "
+    "not a complete candidate. Each edit must identify an existing Python file and provide "
+    "old_text that occurs exactly once plus its replacement new_text. Do not add, remove, or "
+    "rename files, and do not change unrelated behavior. Return exactly the top-level "
+    "edits field; summary is optional metadata. The controller binds the edit set to the "
+    "exact candidate hash. The diagnostics contain no source documents.\n"
+)
 
 SYSTEM_PROMPT = """
 You are an untrusted auxiliary toolsmith. Return one JSON object only. You may
@@ -47,7 +76,7 @@ is a pathlib.Path containing staged read-only file copies, and `output_dir` is
 a pathlib.Path dedicated to this run. The callable must return a JSON-
 serializable value. Do not add a command-line or shell interface.
 
-Every complete candidate, including every repaired replacement, must contain
+Every initial candidate and complete semantic-test replacement must contain
 the declared entrypoint and at least one discoverable stdlib unittest file
 named `test_*.py`. Tests must define a `unittest.TestCase` subclass with one or
 more methods named `test_*`; plain pytest-style functions are not discoverable
@@ -55,7 +84,40 @@ by the runner. Tests may use `tempfile.TemporaryDirectory` and pathlib to make
 synthetic input and output directories. Do not use pytest, absolute path
 literals, external packages not listed in the specification, or omit tests
 when returning a repaired candidate.
+
+A static-policy repair is the sole exception: when the required schema contains
+`edits`, return only that bounded edit set. The controller binds it to the exact
+previous candidate hash, applies exact unique replacements, and revalidates the
+complete candidate from scratch.
 """.strip()
+
+
+def prompt_template_sha256() -> str:
+    """Hash controller-owned instructions and the exact structured output schema."""
+
+    schema = json.dumps(
+        ToolCandidatePayload.model_json_schema(),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    templates = "\n".join(
+        [
+            SYSTEM_PROMPT,
+            schema,
+            json.dumps(
+                CandidatePatchDraftPayload.model_json_schema(),
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            BUILD_INSTRUCTION,
+            REGENERATION_INSTRUCTION,
+            REPAIR_INSTRUCTION,
+            STATIC_REPAIR_INSTRUCTION,
+        ]
+    )
+    return sha256_text(templates)
 
 
 class DeepSeekClientError(RuntimeError):
@@ -94,6 +156,11 @@ def _usage_counts(data: dict[str, Any]) -> tuple[int, int, int, int]:
 class DeepSeekClient:
     """Create untrusted candidates without exposing an arbitrary chat surface."""
 
+    provider = ModelProvider.DEEPSEEK
+    provider_runtime = "chat_completions"
+    api_label = "DeepSeek API"
+    response_label = "DeepSeek"
+
     def __init__(
         self,
         *,
@@ -114,6 +181,12 @@ class DeepSeekClient:
             if peak_pricing_effective_at is not None
             else load_peak_pricing_effective_at()
         )
+
+    @staticmethod
+    def replay_prompt_metadata() -> tuple[str, str]:
+        """Return reconstructable prompt identity without returning prompt content."""
+
+        return PROMPT_TEMPLATE_VERSION, prompt_template_sha256()
 
     def build_candidate(
         self,
@@ -161,11 +234,8 @@ class DeepSeekClient:
             thinking_enabled=True,
             max_output_tokens=INITIAL_MAX_OUTPUT_TOKENS,
         )
-        body["messages"][1]["content"] = (
-            "Regenerate the complete candidate because the previous API response was empty "
-            "or invalid JSON. Return JSON only and satisfy every specification and test-file "
-            "requirement. Specification JSON:\n"
-            f"{spec.model_dump_json(exclude_none=True)}"
+        body["messages"][1]["content"] = REGENERATION_INSTRUCTION + spec.model_dump_json(
+            exclude_none=True
         )
         return self._complete_candidate(
             spec=spec,
@@ -200,6 +270,7 @@ class DeepSeekClient:
         if candidate_payload_sha256(previous.payload) != previous.candidate_sha256:
             raise DeepSeekClientError("previous candidate hash does not match its content")
 
+        static_patch = feedback.repair_kind is RepairKind.STATIC_POLICY
         return self._complete_candidate(
             spec=spec,
             client_name=client_name,
@@ -215,6 +286,7 @@ class DeepSeekClient:
             thinking_enabled=thinking_enabled,
             budget_session_id=budget_session_id,
             lifecycle_id=lifecycle_id,
+            patch_base=previous.payload if static_patch else None,
         )
 
     def _complete_candidate(
@@ -228,6 +300,7 @@ class DeepSeekClient:
         thinking_enabled: bool,
         budget_session_id: str | None,
         lifecycle_id: str | None,
+        patch_base: ToolCandidatePayload | None = None,
     ) -> ToolCandidateResult:
         started = perf_counter()
         priced_at = self.clock()
@@ -253,7 +326,7 @@ class DeepSeekClient:
                 request_chars,
             )
             raise DeepSeekClientError(
-                f"DeepSeek API returned HTTP {error.response.status_code}"
+                f"{self.api_label} returned HTTP {error.response.status_code}"
             ) from None
         except httpx.HTTPError:
             self._record_failure(
@@ -269,7 +342,7 @@ class DeepSeekClient:
                 lifecycle_id,
                 request_chars,
             )
-            raise DeepSeekClientError("DeepSeek API transport failed") from None
+            raise DeepSeekClientError(f"{self.api_label} transport failed") from None
         except (TypeError, ValueError):
             self._record_failure(
                 spec,
@@ -284,19 +357,29 @@ class DeepSeekClient:
                 lifecycle_id,
                 request_chars,
             )
-            raise DeepSeekClientError("DeepSeek returned an invalid API response") from None
+            raise DeepSeekClientError(
+                f"{self.response_label} returned an invalid API response"
+            ) from None
 
         cache_hit, cache_miss, completion, reasoning = _usage_counts(data)
         response_chars = self._response_chars(data)
         try:
-            payload = self._parse_candidate(data)
-        except (KeyError, TypeError, ValueError, ValidationError):
+            if patch_base is None:
+                payload = self._parse_candidate(data)
+            else:
+                payload = apply_candidate_patch(
+                    patch_base,
+                    self._parse_patch(data, candidate_payload_sha256(patch_base)),
+                )
+        except (IndexError, KeyError, TypeError, ValueError, ValidationError) as error:
+            failure_status = self._structured_failure_status(error, patch_base is not None)
+            failure_detail = self._structured_failure_detail(error, patch_base is not None)
             self._record_usage(
                 spec=spec,
                 client_name=client_name,
                 started=started,
                 priced_at=priced_at,
-                status="invalid_response",
+                status=failure_status,
                 cache_hit=cache_hit,
                 cache_miss=cache_miss,
                 completion=completion,
@@ -310,7 +393,8 @@ class DeepSeekClient:
                 response_chars=response_chars,
             )
             raise InvalidCandidateResponse(
-                "DeepSeek returned an invalid candidate response"
+                f"{self.response_label} returned an invalid candidate response "
+                f"({failure_status}{failure_detail})"
             ) from None
 
         candidate_hash = candidate_payload_sha256(payload)
@@ -336,6 +420,9 @@ class DeepSeekClient:
         return ToolCandidateResult(
             candidate_sha256=candidate_hash,
             model=spec.model,
+            provider=self.provider,
+            provider_model_id=self._provider_model_id(spec),
+            provider_runtime=self.provider_runtime,
             thinking_enabled=thinking_enabled,
             payload=payload,
         )
@@ -358,10 +445,7 @@ class DeepSeekClient:
                 },
                 {
                     "role": "user",
-                    "content": (
-                        "Generate a candidate that satisfies this bounded specification. "
-                        f"Return JSON only. Specification JSON:\n{specification}"
-                    ),
+                    "content": BUILD_INSTRUCTION + specification,
                 },
             ],
             "thinking": {"type": "enabled" if thinking_enabled else "disabled"},
@@ -373,6 +457,9 @@ class DeepSeekClient:
             body["reasoning_effort"] = "high"
         return body
 
+    def _provider_model_id(self, spec: ToolBuildSpec) -> str:
+        return spec.model.value
+
     def _repair_request_body(
         self,
         spec: ToolBuildSpec,
@@ -382,7 +469,9 @@ class DeepSeekClient:
         thinking_enabled: bool,
         max_output_tokens: int,
     ) -> dict[str, Any]:
-        schema = json.dumps(ToolCandidatePayload.model_json_schema(), ensure_ascii=False)
+        static_patch = feedback.repair_kind is RepairKind.STATIC_POLICY
+        response_model = CandidatePatchDraftPayload if static_patch else ToolCandidatePayload
+        schema = json.dumps(response_model.model_json_schema(), ensure_ascii=False)
         specification = spec.model_dump_json(exclude_none=True)
         candidate = previous.payload.model_dump_json(exclude_none=True)
         diagnostics = feedback.model_dump_json(exclude_none=True)
@@ -396,11 +485,8 @@ class DeepSeekClient:
                 {
                     "role": "user",
                     "content": (
-                        "Repair the bounded candidate using only the supplied diagnostics. "
-                        "Do not expand its duties, dependencies, or access. Return the complete "
-                        "replacement candidate as JSON only. The diagnostics contain no source "
-                        "documents.\n"
-                        f"Specification JSON:\n{specification}\n"
+                        (STATIC_REPAIR_INSTRUCTION if static_patch else REPAIR_INSTRUCTION)
+                        + f"Specification JSON:\n{specification}\n"
                         f"Previous candidate JSON:\n{candidate}\n"
                         f"Bounded failure diagnostics JSON:\n{diagnostics}"
                     ),
@@ -447,6 +533,68 @@ class DeepSeekClient:
         if not isinstance(content, str) or not content.strip():
             raise ValueError("candidate content is empty")
         return ToolCandidatePayload.model_validate(json.loads(content))
+
+    @staticmethod
+    def _parse_patch(
+        data: dict[str, Any],
+        base_candidate_sha256: str,
+    ) -> CandidatePatchPayload:
+        choice = data["choices"][0]
+        if choice.get("finish_reason") == "length":
+            raise ValueError("candidate patch JSON was truncated")
+        content = choice["message"]["content"]
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("candidate patch content is empty")
+        raw = json.loads(content)
+        if not isinstance(raw, dict):
+            raise ValueError("candidate patch must be a JSON object")
+        edits = raw.get("edits")
+        if isinstance(edits, list):
+            raw["edits"] = [
+                edit
+                for edit in edits
+                if not (
+                    isinstance(edit, dict)
+                    and isinstance(edit.get("old_text"), str)
+                    and edit.get("old_text") == edit.get("new_text")
+                )
+            ]
+        raw.pop("base_candidate_sha256", None)
+        draft = CandidatePatchDraftPayload.model_validate(raw)
+        return CandidatePatchPayload(
+            base_candidate_sha256=base_candidate_sha256,
+            summary=draft.summary,
+            edits=draft.edits,
+        )
+
+    @staticmethod
+    def _structured_failure_status(error: Exception, static_patch: bool) -> str:
+        if not static_patch:
+            return "invalid_response"
+        if isinstance(error, CandidatePatchError):
+            return "invalid_patch_application"
+        if isinstance(error, ValidationError):
+            return "invalid_patch_schema"
+        if isinstance(error, json.JSONDecodeError):
+            return "invalid_patch_json"
+        return "invalid_patch_response"
+
+    @staticmethod
+    def _structured_failure_detail(error: Exception, static_patch: bool) -> str:
+        """Return field/type-only diagnostics without model content or rejected values."""
+
+        if not static_patch or not isinstance(error, ValidationError):
+            return ""
+        hints: list[str] = []
+        for item in error.errors(
+            include_url=False,
+            include_context=False,
+            include_input=False,
+        )[:5]:
+            location = ".".join(str(part) for part in item.get("loc", ())) or "root"
+            error_type = str(item.get("type", "validation_error"))
+            hints.append(f"{location}:{error_type}")
+        return f"; schema_hints={','.join(hints)}" if hints else ""
 
     @staticmethod
     def _response_chars(data: dict[str, Any]) -> int:

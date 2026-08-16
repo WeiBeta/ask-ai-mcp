@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-from ask_ai_mcp.server import core_mcp, mcp
+from ask_ai_mcp.server import core_mcp, h3_mcp, mcp, subagent_mcp
 
 _PROFILE_ENV = "ASK_AI_MCP_PROFILE"
 
@@ -18,7 +18,11 @@ def selected_mcp(profile: str | None = None):
         return core_mcp
     if normalized == "full":
         return mcp
-    raise RuntimeError(f"{_PROFILE_ENV} must be core or full")
+    if normalized == "subagent":
+        return subagent_mcp
+    if normalized == "h3":
+        return h3_mcp
+    raise RuntimeError(f"{_PROFILE_ENV} must be core, subagent, h3, or full")
 
 
 def main() -> None:
@@ -34,6 +38,16 @@ def main_core() -> None:
 def main_full() -> None:
     """Run the Full profile including the H3 adapter tools."""
     mcp.run()
+
+
+def main_subagent() -> None:
+    """Run toolsmith plus source intelligence without H3 tools."""
+    subagent_mcp.run()
+
+
+def main_h3() -> None:
+    """Run only the four local H3 and ComfyUI tools."""
+    h3_mcp.run()
 
 
 if __name__ == "__main__":

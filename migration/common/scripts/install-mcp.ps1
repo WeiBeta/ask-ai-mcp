@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("core", "full")]
+    [ValidateSet("core", "subagent", "h3", "full")]
     [string]$Profile,
     [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA "Programs\AskAIMCP")
 )
@@ -50,11 +50,13 @@ if (-not (Test-Path -LiteralPath $entrypoint -PathType Leaf)) {
     throw "Expected profile entrypoint was not installed: $entrypoint"
 }
 
-$expectedCount = if ($Profile -eq "core") { 12 } else { 16 }
+$profileCounts = @{ core = 12; subagent = 15; h3 = 4; full = 19 }
+$expectedCount = $profileCounts[$Profile]
 $check = @"
 import asyncio
-from ask_ai_mcp.server import core_mcp, mcp
-server = core_mcp if '$Profile' == 'core' else mcp
+from ask_ai_mcp.server import core_mcp, h3_mcp, mcp, subagent_mcp
+servers = {'core': core_mcp, 'subagent': subagent_mcp, 'h3': h3_mcp, 'full': mcp}
+server = servers['$Profile']
 tools = asyncio.run(server.list_tools())
 assert len(tools) == $expectedCount, [tool.name for tool in tools]
 "@

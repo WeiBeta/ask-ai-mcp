@@ -270,8 +270,9 @@ Claude 是业务文档控制者。典型工作方式：
 ### 8.3 修复边界
 
 - 初始候选默认 Thinking High；
-- 静态策略修复最多一次，关闭 Thinking，输出上限 4096 token；
-- 语义测试修复使用 Thinking High，输出上限 16384 token；
+- 静态策略修复最多一次，关闭 Thinking，输出上限 4096 token，只返回绑定原候选哈希的精确文本补丁；
+- 控制器只接受现有 Python 文件内唯一匹配的替换，应用后重新哈希并从头检查；
+- 语义测试修复使用 Thinking High，输出上限 65536 token；
 - 一个生命周期最多三个候选尝试；
 - 无效的首次结构化响应可重新生成一次；
 - 生命周期数和 API 调用数是审计指标，不是额外硬上限。
@@ -345,12 +346,12 @@ https://github.com/xujinglong8814-WeiBeta/ask-ai-mcp
 7. 恢复漫游交接目录；
 8. 如需继承审阅、预算和注册工具，停机恢复 `%LOCALAPPDATA%\AskAIMCP`；
 9. 合并 Claude 与 Codex MCP 配置，修正绝对路径；
-10. 重启两个 GUI，确认 Core 为 12 项工具或 Full 为 16 项工具；
+10. 重启两个 GUI，确认 Core 12、Subagent 15、H3 4 或 Full 19 项工具；
 11. 调用 `workflow_guidance`、`list_pending_reviews`、`usage_status` 做无费用检查；
 12. 用合成 CSV 做一次 `run_verified_tool` 回归，不调用 DeepSeek。
 
-自动化迁移包只迁移 MCP Server，并分为 Core 12 工具和 Full 16 工具两个配置。
-两个版本都不携带 ComfyUI、模型、业务文件、本机状态或凭据；目标机必须重新录入
+自动化迁移包只迁移 MCP Server，并分为 Core 12、Subagent 15、H3 4 和 Full 19
+四个配置。所有版本都不携带 ComfyUI、Qwen、模型、业务文件、本机状态或凭据；目标机必须重新录入
 DeepSeek API 密钥。需要继承历史状态时，仍应采用单独的所有者专用停机冷备份。
 
 ## 11. 常见状态与处理

@@ -91,6 +91,10 @@ FORBIDDEN_ATTRIBUTES = frozenset(
 )
 
 _ABSOLUTE_PATH = re.compile(r"^(?:[a-zA-Z]:[\\/]|[\\/]{1,2})")
+_STRING_COMPONENT_METHODS = frozenset(
+    {"endswith", "join", "lstrip", "removeprefix", "removesuffix", "rstrip", "split", "startswith"}
+)
+_OPC_PATH_COMPONENT = re.compile(r"^/[A-Za-z0-9_.-]+/$")
 
 
 class _CandidateVisitor(ast.NodeVisitor):
@@ -105,6 +109,15 @@ class _CandidateVisitor(ast.NodeVisitor):
         self.allowed_import_roots = allowed_import_roots
         self.local_import_roots = local_import_roots
         self.findings: list[StaticFinding] = []
+        self.parent: ast.AST | None = None
+
+    def generic_visit(self, node: ast.AST) -> None:
+        previous_parent = self.parent
+        self.parent = node
+        try:
+            super().generic_visit(node)
+        finally:
+            self.parent = previous_parent
 
     def add(self, code: str, message: str, node: ast.AST) -> None:
         self.findings.append(
@@ -149,9 +162,38 @@ class _CandidateVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Constant(self, node: ast.Constant) -> None:
-        if isinstance(node.value, str) and _ABSOLUTE_PATH.match(node.value):
+        if (
+            isinstance(node.value, str)
+            and _ABSOLUTE_PATH.match(node.value)
+            and not self._is_string_component_argument(node)
+        ):
             self.add("absolute_path_literal", "Absolute path literals are forbidden", node)
         self.generic_visit(node)
+
+    def _is_string_component_argument(self, node: ast.Constant) -> bool:
+        """Allow separators and OPC URI suffixes used only by bounded string operations."""
+
+        parent = self.parent
+        if (
+            isinstance(parent, ast.Call)
+            and node in parent.args
+            and isinstance(parent.func, ast.Attribute)
+            and parent.func.attr in _STRING_COMPONENT_METHODS
+        ):
+            return True
+        if (
+            isinstance(parent, ast.Attribute)
+            and parent.value is node
+            and parent.attr in _STRING_COMPONENT_METHODS
+        ):
+            return True
+        if node.value in {"/", "\\"} and isinstance(parent, (ast.BinOp, ast.Compare)):
+            return True
+        return bool(
+            isinstance(parent, ast.BinOp)
+            and isinstance(parent.op, ast.Add)
+            and _OPC_PATH_COMPONENT.fullmatch(node.value)
+        )
 
 
 def _allowed_import_roots(spec: ToolBuildSpec) -> frozenset[str]:

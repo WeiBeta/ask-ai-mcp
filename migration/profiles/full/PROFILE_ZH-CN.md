@@ -1,6 +1,7 @@
 # Full 配置
 
-本配置注册全部 16 个 Ask AI MCP 工具，其中 4 个为外部 H3/ComfyUI 适配工具。
+本配置注册全部 19 个 Ask AI MCP 工具：Core 十二项、Subagent 来源三项及 H3 四项。
+这是兼容入口；新部署优先使用按需独立 profile。
 迁移包不包含也不安装 ComfyUI、模型、媒体文件或 H3 工作区。
 
 在桌面客户端中应直接调用：

@@ -12,7 +12,15 @@ def test_profile_defaults_to_full(monkeypatch) -> None:
 
 @pytest.mark.parametrize(
     ("value", "expected"),
-    [("core", server.core_mcp), ("CORE", server.core_mcp), ("full", server.mcp)],
+    [
+        ("core", server.core_mcp),
+        ("CORE", server.core_mcp),
+        ("subagent", server.subagent_mcp),
+        ("SUBAGENT", server.subagent_mcp),
+        ("h3", server.h3_mcp),
+        ("H3", server.h3_mcp),
+        ("full", server.mcp),
+    ],
 )
 def test_profile_environment_selects_server(monkeypatch, value, expected) -> None:
     monkeypatch.setenv("ASK_AI_MCP_PROFILE", value)
@@ -21,5 +29,5 @@ def test_profile_environment_selects_server(monkeypatch, value, expected) -> Non
 
 def test_invalid_profile_fails_closed(monkeypatch) -> None:
     monkeypatch.setenv("ASK_AI_MCP_PROFILE", "video-ish")
-    with pytest.raises(RuntimeError, match="must be core or full"):
+    with pytest.raises(RuntimeError, match="must be core, subagent, h3, or full"):
         __main__.selected_mcp()

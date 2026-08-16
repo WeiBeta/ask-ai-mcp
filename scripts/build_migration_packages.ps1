@@ -86,7 +86,13 @@ try {
             }
         }
 
-        $profiles = @("core", "full")
+        $profileToolCounts = @{
+            core = 12
+            subagent = 15
+            h3 = 4
+            full = 19
+        }
+        $profiles = @("core", "subagent", "h3", "full")
         foreach ($profile in $profiles) {
             $stagingRoot = Join-Path $temporaryRoot ("ask-ai-mcp-" + $profile)
             $payloadRoot = Join-Path $stagingRoot "payload"
@@ -103,7 +109,7 @@ try {
                 package = "ask-ai-mcp"
                 version = $version
                 profile = $profile
-                expected_tool_count = if ($profile -eq "core") { 12 } else { 16 }
+                expected_tool_count = $profileToolCounts[$profile]
                 git_commit = $commit
                 dirty_build = $isDirty
                 created_at = (Get-Date).ToUniversalTime().ToString("o")

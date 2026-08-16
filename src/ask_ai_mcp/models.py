@@ -8,7 +8,7 @@ from enum import StrEnum
 from pathlib import PurePosixPath
 from typing import Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
 
 class StrictModel(BaseModel):
@@ -38,6 +38,15 @@ class ToolCategory(StrEnum):
 class DeepSeekModel(StrEnum):
     FLASH = "deepseek-v4-flash"
     PRO = "deepseek-v4-pro"
+
+
+class ModelProvider(StrEnum):
+    """Execution provider identity kept separate from a model name or tier."""
+
+    DEEPSEEK = "deepseek"
+    OPENCODE = "opencode"
+    LOCAL_QWEN = "local_qwen"
+    UNKNOWN = "unknown"
 
 
 class PricingBand(StrEnum):
@@ -167,11 +176,59 @@ class ToolCandidatePayload(StrictModel):
         return self
 
 
+class CandidateTextEdit(StrictModel):
+    """One exact, bounded replacement inside an existing candidate file."""
+
+    file_path: str = Field(min_length=1, max_length=240)
+    old_text: str = Field(min_length=1, max_length=4_000)
+    new_text: str = Field(max_length=4_000)
+
+    @field_validator("file_path")
+    @classmethod
+    def validate_python_path(cls, value: str) -> str:
+        validated = CandidateFile.validate_relative_path(value)
+        if not validated.casefold().endswith(".py"):
+            raise ValueError("static repair edits are limited to Python files")
+        return validated
+
+    @model_validator(mode="after")
+    def validate_changed_text(self) -> Self:
+        if self.old_text == self.new_text:
+            raise ValueError("static repair edit must change text")
+        return self
+
+
+class CandidatePatchDraftPayload(StrictModel):
+    """Untrusted edit set before the controller binds it to a candidate hash."""
+
+    summary: str = Field(default="Static policy repair.", min_length=1, max_length=500)
+    edits: list[CandidateTextEdit] = Field(min_length=1, max_length=20)
+
+    @model_validator(mode="after")
+    def validate_patch_bounds(self) -> Self:
+        if sum(len(edit.old_text) + len(edit.new_text) for edit in self.edits) > 12_000:
+            raise ValueError("static repair patch is too large")
+        return self
+
+
+class CandidatePatchPayload(CandidatePatchDraftPayload):
+    """Controller-bound static-policy repair patch."""
+
+    base_candidate_sha256: str = Field(
+        min_length=64,
+        max_length=64,
+        pattern=r"^[a-f0-9]{64}$",
+    )
+
+
 class ToolCandidateResult(StrictModel):
     """Validated envelope returned to Sol without chain-of-thought content."""
 
     candidate_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
     model: DeepSeekModel
+    provider: ModelProvider = ModelProvider.DEEPSEEK
+    provider_model_id: str | None = Field(default=None, min_length=1, max_length=255)
+    provider_runtime: str | None = Field(default=None, min_length=1, max_length=120)
     thinking_enabled: bool
     payload: ToolCandidatePayload
 
@@ -205,7 +262,9 @@ class CandidateJobManifest(StrictModel):
     candidate_files: list[str] = Field(min_length=1, max_length=20)
     candidate_file_sha256: dict[str, str] = Field(default_factory=dict, max_length=20)
     execution_backend: str | None = Field(default=None, max_length=64)
+    build_provider: ModelProvider = ModelProvider.DEEPSEEK
     build_model: DeepSeekModel = DeepSeekModel.FLASH
+    build_model_id: str | None = Field(default=None, min_length=1, max_length=255)
     entrypoint: str | None = Field(default=None, max_length=80)
     execution_contract: ExecutionContract | None = None
 
@@ -249,6 +308,9 @@ class CandidateAttemptReport(StrictModel):
     attempt: int = Field(ge=1, le=3)
     candidate_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
     model: DeepSeekModel
+    provider: ModelProvider = ModelProvider.DEEPSEEK
+    provider_model_id: str | None = Field(default=None, min_length=1, max_length=255)
+    provider_runtime: str | None = Field(default=None, min_length=1, max_length=120)
     thinking_enabled: bool = True
     repair_kind: RepairKind | None = None
     state: CandidateJobState
@@ -270,6 +332,8 @@ class CandidateAttemptSummary(StrictModel):
     attempt: int = Field(ge=1, le=3)
     candidate_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
     model: DeepSeekModel
+    provider: ModelProvider = ModelProvider.DEEPSEEK
+    provider_model_id: str | None = Field(default=None, min_length=1, max_length=255)
     thinking_enabled: bool
     repair_kind: RepairKind | None = None
     state: CandidateJobState
@@ -724,6 +788,184 @@ class VerifiedToolExecutionReport(StrictModel):
     stdout: str = Field(default="", max_length=65_536)
     stderr: str = Field(default="", max_length=65_536)
     failure_reason: str | None = Field(default=None, max_length=500)
+
+
+class SourceExtractionProfile(StrEnum):
+    DOCUMENT_EVIDENCE = "document_evidence"
+    VISUAL_STRUCTURE = "visual_structure"
+
+
+class SourceDetailLevel(StrEnum):
+    COMPACT = "compact"
+    STANDARD = "standard"
+    DETAILED = "detailed"
+
+
+class SourceJobState(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+class SourceExtractionCommand(StrictModel):
+    """Bounded source-faithful extraction without an arbitrary prompt surface."""
+
+    source_files: list[str] = Field(min_length=1, max_length=20)
+    profile: SourceExtractionProfile
+    detail_level: SourceDetailLevel = SourceDetailLevel.STANDARD
+    page_start: int | None = Field(default=None, ge=1, le=100_000)
+    page_end: int | None = Field(default=None, ge=1, le=100_000)
+    language_hint: str | None = Field(
+        default=None,
+        min_length=2,
+        max_length=20,
+        pattern=r"^[A-Za-z0-9-]+$",
+    )
+
+    @field_validator("source_files")
+    @classmethod
+    def validate_source_file_strings(cls, values: list[str]) -> list[str]:
+        if any(not value.strip() or len(value) > 1_024 for value in values):
+            raise ValueError("source file paths must contain 1-1024 nonblank characters")
+        if len({value.casefold() for value in values}) != len(values):
+            raise ValueError("source file paths must be unique")
+        return values
+
+    @model_validator(mode="after")
+    def validate_ranges(self) -> Self:
+        if (self.page_start is None) != (self.page_end is None):
+            raise ValueError("page_start and page_end must be supplied together")
+        if self.page_start is not None and self.page_end < self.page_start:
+            raise ValueError("page_end must be at least page_start")
+        return self
+
+
+class SourceBackendStatus(StrictModel):
+    provider: ModelProvider = ModelProvider.LOCAL_QWEN
+    configured: bool
+    ready: bool
+    model_id: str | None = Field(default=None, min_length=1, max_length=255)
+    runtime: str | None = Field(default=None, min_length=1, max_length=120)
+    supported_profiles: list[SourceExtractionProfile] = Field(default_factory=list, max_length=2)
+    active_jobs: int = Field(default=0, ge=0, le=1)
+    detail: str = Field(min_length=1, max_length=500)
+
+
+class SourceJobSubmission(StrictModel):
+    job_id: str = Field(
+        min_length=36,
+        max_length=36,
+        pattern=r"^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
+    )
+    state: SourceJobState = SourceJobState.QUEUED
+    profile: SourceExtractionProfile
+    source_count: int = Field(ge=1, le=20)
+
+
+class SourceOutputArtifact(StrictModel):
+    relative_path: str = Field(min_length=1, max_length=512)
+    sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    size_bytes: int = Field(ge=0)
+    media_type: str = Field(min_length=1, max_length=120)
+
+
+class SourceJobReport(StrictModel):
+    job_id: str = Field(min_length=36, max_length=36)
+    state: SourceJobState
+    profile: SourceExtractionProfile
+    progress_percent: int = Field(ge=0, le=100)
+    detail: str = Field(min_length=1, max_length=500)
+    output_directory: str | None = Field(default=None, max_length=1_024)
+    artifacts: list[SourceOutputArtifact] = Field(default_factory=list, max_length=200)
+    warnings: list[str] = Field(default_factory=list, max_length=50)
+    failure_kind: str | None = Field(default=None, min_length=1, max_length=120)
+
+
+class EvidenceKind(StrEnum):
+    TEXT = "text"
+    TABLE = "table"
+    FIGURE = "figure"
+    DIAGRAM = "diagram"
+    TRANSCRIPT = "transcript"
+    TIMELINE_EVENT = "timeline_event"
+
+
+class EvidenceLocation(StrictModel):
+    whole_file: bool = False
+    page: int | None = Field(default=None, ge=1, le=100_000)
+    slide: int | None = Field(default=None, ge=1, le=100_000)
+    sheet: str | None = Field(default=None, min_length=1, max_length=255)
+    cell_or_range: str | None = Field(default=None, min_length=1, max_length=120)
+    paragraph: int | None = Field(default=None, ge=1, le=10_000_000)
+    object_id: str | None = Field(default=None, min_length=1, max_length=255)
+    region_xywh: list[float] | None = Field(default=None, min_length=4, max_length=4)
+    time_start_seconds: float | None = Field(default=None, ge=0, le=604_800)
+    time_end_seconds: float | None = Field(default=None, gt=0, le=604_800)
+
+    @model_validator(mode="after")
+    def validate_location(self) -> Self:
+        coordinates = (
+            self.page,
+            self.slide,
+            self.sheet,
+            self.cell_or_range,
+            self.paragraph,
+            self.object_id,
+            self.region_xywh,
+            self.time_start_seconds,
+            self.time_end_seconds,
+        )
+        if not self.whole_file and all(value is None for value in coordinates):
+            raise ValueError("evidence location requires a coordinate or whole_file")
+        if self.region_xywh is not None:
+            x, y, width, height = self.region_xywh
+            if any(value < 0 or value > 1 for value in self.region_xywh):
+                raise ValueError("region coordinates must be normalized to 0-1")
+            if width <= 0 or height <= 0 or x + width > 1 or y + height > 1:
+                raise ValueError("region must have positive dimensions within the source")
+        if (self.time_start_seconds is None) != (self.time_end_seconds is None):
+            raise ValueError("evidence time bounds must be supplied together")
+        if self.time_start_seconds is not None and self.time_end_seconds <= self.time_start_seconds:
+            raise ValueError("evidence end time must be greater than start time")
+        return self
+
+
+class EvidenceRecord(StrictModel):
+    evidence_id: str = Field(
+        min_length=1,
+        max_length=80,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
+    )
+    source_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    kind: EvidenceKind
+    location: EvidenceLocation
+    verbatim_text: str | None = Field(default=None, min_length=1, max_length=100_000)
+    data: dict[str, JsonValue] = Field(default_factory=dict)
+    extraction_method: str = Field(min_length=1, max_length=120)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    warnings: list[str] = Field(default_factory=list, max_length=20)
+
+    @model_validator(mode="after")
+    def require_evidence_content(self) -> Self:
+        if self.verbatim_text is None and not self.data:
+            raise ValueError("evidence requires verbatim_text or structured data")
+        return self
+
+
+class CanonicalEvidenceBundle(StrictModel):
+    contract: str = Field(default="canonical_evidence_v1", pattern=r"^canonical_evidence_v1$")
+    profile: SourceExtractionProfile
+    records: list[EvidenceRecord] = Field(default_factory=list, max_length=10_000)
+    warnings: list[str] = Field(default_factory=list, max_length=100)
+
+    @field_validator("records")
+    @classmethod
+    def require_unique_evidence_ids(cls, records: list[EvidenceRecord]) -> list[EvidenceRecord]:
+        identifiers = [record.evidence_id.casefold() for record in records]
+        if len(identifiers) != len(set(identifiers)):
+            raise ValueError("evidence identifiers must be unique")
+        return records
 
 
 class H3ResolutionPreset(StrEnum):

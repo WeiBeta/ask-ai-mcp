@@ -29,6 +29,11 @@ H3_TOOLS = {
     "h3_postprocess_video",
     "h3_job_status",
 }
+SOURCE_TOOLS = {
+    "source_backend_status",
+    "source_extract",
+    "source_job_status",
+}
 
 
 def test_core_templates_expose_only_core_entrypoint_and_tools() -> None:
@@ -50,7 +55,7 @@ def test_full_templates_reference_adapter_but_no_comfyui_payload() -> None:
         (MIGRATION / "profiles/full/config-templates/claude.json").read_text("utf-8")
     )
     assert "__MCP_FULL_EXE__" in codex
-    assert all(tool in codex for tool in CORE_TOOLS | H3_TOOLS)
+    assert all(tool in codex for tool in CORE_TOOLS | SOURCE_TOOLS | H3_TOOLS)
     assert "ASK_AI_MCP_H3_URL" in codex
     assert 'ASK_AI_MCP_H3_START_SCRIPT = "__H3_START_SCRIPT__"' in codex
     assert claude["mcpServers"]["ask-ai"]["env"]["ASK_AI_MCP_H3_START_SCRIPT"] == (
@@ -58,6 +63,31 @@ def test_full_templates_reference_adapter_but_no_comfyui_payload() -> None:
     )
     package_inputs = [path.name.casefold() for path in MIGRATION.rglob("*") if path.is_file()]
     assert not any(name.endswith((".safetensors", ".pth", ".ckpt")) for name in package_inputs)
+
+
+def test_subagent_templates_add_only_source_tools_and_qwen_boundary() -> None:
+    codex = (MIGRATION / "profiles/subagent/config-templates/codex.toml").read_text("utf-8")
+    claude = json.loads(
+        (MIGRATION / "profiles/subagent/config-templates/claude.json").read_text("utf-8")
+    )
+    assert "__MCP_SUBAGENT_EXE__" in codex
+    assert all(tool in codex for tool in CORE_TOOLS | SOURCE_TOOLS)
+    assert all(tool not in codex for tool in H3_TOOLS)
+    assert 'ASK_AI_MCP_SOURCE_PROVIDER = "local_qwen"' in codex
+    assert (
+        claude["mcpServers"]["ask-ai-subagent"]["env"]["ASK_AI_MCP_SOURCE_INPUT_ROOTS"]
+        == "__SOURCE_INPUT_ROOTS__"
+    )
+
+
+def test_h3_templates_are_standalone_and_disabled_by_default_for_codex() -> None:
+    codex = (MIGRATION / "profiles/h3/config-templates/codex.toml").read_text("utf-8")
+    claude = json.loads((MIGRATION / "profiles/h3/config-templates/claude.json").read_text("utf-8"))
+    assert "__MCP_H3_EXE__" in codex
+    assert "enabled = false" in codex
+    assert all(tool in codex for tool in H3_TOOLS)
+    assert all(tool not in codex for tool in CORE_TOOLS | SOURCE_TOOLS)
+    assert claude["mcpServers"]["ask-ai-h3"]["command"] == "__MCP_H3_EXE__"
 
 
 def test_common_package_inputs_contain_no_personal_state_files() -> None:
@@ -93,3 +123,13 @@ def test_builder_uses_sanitized_wheel_metadata_and_headerless_export() -> None:
     assert "migration\\common\\PACKAGE_README.md" in builder
     assert "--no-header" in builder
     assert "Sensitive value detected inside wheel" in builder
+    assert '$profiles = @("core", "subagent", "h3", "full")' in builder
+    assert "full = 19" in builder
+
+
+def test_installer_verifies_all_four_explicit_profiles() -> None:
+    installer = (MIGRATION / "common/scripts/install-mcp.ps1").read_text("utf-8")
+    assert '[ValidateSet("core", "subagent", "h3", "full")]' in installer
+    assert "subagent = 15" in installer
+    assert "h3 = 4" in installer
+    assert "full = 19" in installer

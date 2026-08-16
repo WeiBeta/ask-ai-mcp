@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
 from typing import Protocol
@@ -28,6 +29,7 @@ from ask_ai_mcp.models import (
     ToolBuildSpec,
     ToolCandidateResult,
 )
+from ask_ai_mcp.replay import ReplayAttempt, ReplayStore, ToolsmithReplayCapsule
 from ask_ai_mcp.review import (
     CandidateReviewRepository,
     attempt_summary,
@@ -42,6 +44,7 @@ from ask_ai_mcp.workspace import CandidateWorkspaceManager
 MAX_TOTAL_ATTEMPTS = 3
 MAX_STATIC_REPAIRS = 1
 MAX_SEMANTIC_REPAIRS = 2
+_LOGGER = logging.getLogger(__name__)
 
 
 class CandidateClient(Protocol):
@@ -99,6 +102,7 @@ class CandidateLifecycle:
         executor: CandidateExecutor | None = None,
         review_repository: CandidateReviewRepository | None = None,
         audit_store: UsageStore | None = None,
+        replay_store: ReplayStore | None = None,
     ) -> None:
         self.client = client if client is not None else DeepSeekClient()
         self.workspace = workspace if workspace is not None else CandidateWorkspaceManager()
@@ -107,6 +111,7 @@ class CandidateLifecycle:
             self.workspace.jobs_root
         )
         self.audit_store = audit_store
+        self.replay_store = replay_store or ReplayStore.from_environment()
 
     def run(
         self,
@@ -123,6 +128,8 @@ class CandidateLifecycle:
         static_repairs = 0
         semantic_repairs = 0
         candidate: ToolCandidateResult | None = None
+        candidate_history: list[ToolCandidateResult] = []
+        repair_feedback: list[CandidateRepairFeedback] = []
         review: CandidateReviewBundle | None = None
 
         try:
@@ -133,6 +140,7 @@ class CandidateLifecycle:
                 budget_session_id=budget_session_id,
                 lifecycle_id=lifecycle_id,
             )
+            candidate_history.append(candidate)
             generated_by: RepairKind | None = None
 
             for attempt_number in range(1, MAX_TOTAL_ATTEMPTS + 1):
@@ -153,6 +161,9 @@ class CandidateLifecycle:
                     attempt=attempt_number,
                     candidate_sha256=candidate.candidate_sha256,
                     model=candidate.model,
+                    provider=candidate.provider,
+                    provider_model_id=candidate.provider_model_id,
+                    provider_runtime=candidate.provider_runtime,
                     thinking_enabled=candidate.thinking_enabled,
                     repair_kind=generated_by,
                     state=state,
@@ -205,6 +216,16 @@ class CandidateLifecycle:
                         review=review,
                         result=result,
                     )
+                    self._record_replay(
+                        spec=spec,
+                        lifecycle_id=lifecycle_id,
+                        budget_session_id=budget_session_id,
+                        client_name=client_name,
+                        attempts=attempts,
+                        candidate_history=candidate_history,
+                        repair_feedback=repair_feedback,
+                        result=result,
+                    )
                     return result
 
                 if attempt_number >= MAX_TOTAL_ATTEMPTS:
@@ -231,6 +252,7 @@ class CandidateLifecycle:
                     static_report=static_report,
                     execution=execution,
                 )
+                repair_feedback.append(feedback)
                 candidate = self.client.repair_candidate(
                     spec,
                     candidate,
@@ -242,6 +264,7 @@ class CandidateLifecycle:
                     budget_session_id=budget_session_id,
                     lifecycle_id=lifecycle_id,
                 )
+                candidate_history.append(candidate)
                 generated_by = repair_kind
 
             result = CandidateLifecycleResult(
@@ -265,8 +288,18 @@ class CandidateLifecycle:
                 review=None,
                 result=result,
             )
+            self._record_replay(
+                spec=spec,
+                lifecycle_id=lifecycle_id,
+                budget_session_id=budget_session_id,
+                client_name=client_name,
+                attempts=attempts,
+                candidate_history=candidate_history,
+                repair_feedback=repair_feedback,
+                result=result,
+            )
             return result
-        except Exception:
+        except Exception as error:
             if self.audit_store is not None:
                 self._record_audit(
                     spec=spec,
@@ -280,7 +313,28 @@ class CandidateLifecycle:
                     review=None,
                     result=None,
                 )
+            self._record_replay(
+                spec=spec,
+                lifecycle_id=lifecycle_id,
+                budget_session_id=budget_session_id,
+                client_name=client_name,
+                attempts=attempts,
+                candidate_history=candidate_history,
+                repair_feedback=repair_feedback,
+                result=None,
+                failure_kind=type(error).__name__,
+            )
             raise
+        finally:
+            release = getattr(self.client, "release_resources", None)
+            if callable(release):
+                try:
+                    release()
+                except Exception as error:
+                    _LOGGER.warning(
+                        "failed to release provider resources: %s",
+                        type(error).__name__,
+                    )
 
     def _initial_candidate(
         self,
@@ -482,3 +536,55 @@ class CandidateLifecycle:
                 final_candidate_sha256=candidate_hash,
             )
         )
+
+    def _record_replay(
+        self,
+        *,
+        spec: ToolBuildSpec,
+        lifecycle_id: str,
+        budget_session_id: str,
+        client_name: str,
+        attempts: list[CandidateAttemptReport],
+        candidate_history: list[ToolCandidateResult],
+        repair_feedback: list[CandidateRepairFeedback],
+        result: CandidateLifecycleResult | None,
+        failure_kind: str | None = None,
+    ) -> None:
+        if self.replay_store is None:
+            return
+        metadata = getattr(self.client, "replay_prompt_metadata", None)
+        if callable(metadata):
+            prompt_version, prompt_hash = metadata()
+            warnings: list[str] = []
+        else:
+            prompt_version, prompt_hash = "unknown", "0" * 64
+            warnings = ["prompt_identity_unavailable"]
+        if len(candidate_history) != len(attempts):
+            warnings.append("candidate_history_incomplete")
+        replay_attempts = [
+            ReplayAttempt(
+                report=attempt,
+                candidate=candidate_history[index].payload,
+                feedback_for_next_attempt=(
+                    repair_feedback[index] if index < len(repair_feedback) else None
+                ),
+            )
+            for index, attempt in enumerate(attempts)
+            if index < len(candidate_history)
+        ]
+        capsule = ToolsmithReplayCapsule(
+            lifecycle_id=lifecycle_id,
+            budget_session_id=budget_session_id,
+            client_name=client_name,
+            prompt_template_version=prompt_version,
+            prompt_template_sha256=prompt_hash,
+            spec=spec,
+            attempts=replay_attempts,
+            result=result,
+            failure_kind=failure_kind,
+            warnings=warnings,
+        )
+        try:
+            self.replay_store.write(capsule)
+        except Exception as error:  # replay observability must not break the lifecycle
+            _LOGGER.warning("failed to persist replay capsule: %s", type(error).__name__)

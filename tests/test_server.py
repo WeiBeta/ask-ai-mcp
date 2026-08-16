@@ -45,6 +45,9 @@ def test_full_mcp_surface_and_raw_schema_are_narrow() -> None:
         "h3_generate_video",
         "h3_postprocess_video",
         "h3_job_status",
+        "source_backend_status",
+        "source_extract",
+        "source_job_status",
         "usage_status",
         "workflow_guidance",
         "list_pending_reviews",
@@ -64,6 +67,19 @@ def test_full_mcp_surface_and_raw_schema_are_narrow() -> None:
     assert duration_schema["minimum"] == 4.0
     assert duration_schema["maximum"] == 15.0
     assert "5-15 is recommended" in duration_schema["description"]
+    source_schema = by_name["source_extract"].parameters["properties"]["command"]["properties"]
+    assert set(source_schema) == {
+        "source_files",
+        "profile",
+        "detail_level",
+        "page_start",
+        "page_end",
+        "language_hint",
+    }
+    assert set(source_schema["profile"]["enum"]) == {
+        "document_evidence",
+        "visual_structure",
+    }
     build_schema = by_name["build_helper_tool"].parameters
     assert set(build_schema["properties"]) == {"budget_session_id", "spec"}
     assert (
@@ -119,6 +135,30 @@ def test_core_mcp_surface_excludes_h3_tools() -> None:
         "list_registered_tools",
         "run_verified_tool",
     }
+
+
+def test_subagent_surface_adds_source_tools_without_h3() -> None:
+    names = {tool.name for tool in asyncio.run(server.subagent_mcp.list_tools())}
+    core_names = {tool.name for tool in asyncio.run(server.core_mcp.list_tools())}
+
+    assert names == core_names | {
+        "source_backend_status",
+        "source_extract",
+        "source_job_status",
+    }
+    assert not any(name.startswith("h3_") for name in names)
+
+
+def test_h3_surface_contains_only_local_video_tools() -> None:
+    tools = asyncio.run(server.h3_mcp.list_tools())
+
+    assert {tool.name for tool in tools} == {
+        "h3_backend_status",
+        "h3_generate_video",
+        "h3_postprocess_video",
+        "h3_job_status",
+    }
+    assert all(len(tool.description or "") < 800 for tool in tools)
 
 
 def test_guidance_and_pending_queue_are_prompt_free_local_reads(monkeypatch) -> None:

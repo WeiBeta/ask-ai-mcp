@@ -70,7 +70,9 @@ class CandidateWorkspaceManager:
                 file.path: hashlib.sha256(file.content.encode("utf-8")).hexdigest()
                 for file in result.payload.files
             },
+            build_provider=result.provider,
             build_model=result.model,
+            build_model_id=result.provider_model_id,
             entrypoint=spec.entrypoint,
             execution_contract=spec.execution_contract,
         )

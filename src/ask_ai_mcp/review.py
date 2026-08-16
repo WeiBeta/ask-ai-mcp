@@ -54,6 +54,8 @@ def attempt_summary(attempt: CandidateAttemptReport) -> CandidateAttemptSummary:
         attempt=attempt.attempt,
         candidate_sha256=attempt.candidate_sha256,
         model=attempt.model,
+        provider=attempt.provider,
+        provider_model_id=attempt.provider_model_id,
         thinking_enabled=attempt.thinking_enabled,
         repair_kind=attempt.repair_kind,
         state=attempt.state,
