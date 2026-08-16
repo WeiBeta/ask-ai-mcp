@@ -18,6 +18,10 @@ venv/
 .coverage
 htmlcov/
 
+# Physical-host-only operator inventory and exact desktop configuration backups.
+# This directory must never enter Git, migration archives, or shared handoffs.
+/operator-archive/local-only/
+
 # Reproducible local build outputs
 dist/
 artifacts/

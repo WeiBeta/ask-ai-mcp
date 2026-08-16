@@ -128,6 +128,7 @@ isolated under `C:\AI\ComfyUI-H3`.
 - `docs/H3_HANDOFF_ZH-CN.md`: verified H3 deployment, model hashes, MCP contract, and next-session handoff
 - `docs/QWEN_SUBAGENT_PREDEPLOY_ZH-CN.md`: replay capture, source contract, and exact Qwen integration stop point
 - `docs/OPENCODE_GO_PREDEPLOY_ZH-CN.md`: OpenCode Go coding and Qwen3.8 Max perception routing
+- `operator-archive/`: Chinese module reference plus a generator for Git-ignored, physical-host-only runtime and GUI configuration snapshots
 - `ask-ai-mcp-replay shadow-qwen --lifecycle-id <UUID>` replays a captured tool spec through local Qwen and records self-test plus reference-test evidence without treating DeepSeek tests as a gold oracle.
 - `docs/DESKTOP_SETUP.md`: Claude Desktop and Codex Desktop connection guide
 - `docs/CONTROLLER_PROMPTS.md`: shared delegation rules and desktop adaptations
