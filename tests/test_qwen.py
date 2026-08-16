@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import base64
 import json
+from io import BytesIO
 from pathlib import Path
 
 import httpx
 import pytest
+from PIL import Image
 
 from ask_ai_mcp.document_preprocess import PreparedVisual
 from ask_ai_mcp.models import (
     CandidateRepairFeedback,
+    CanonicalEvidenceBundle,
     DeepSeekModel,
     ModelProvider,
     RepairKind,
@@ -19,6 +23,7 @@ from ask_ai_mcp.models import (
     ToolBuildSpec,
     ToolCandidateResult,
     ToolCategory,
+    VisualExtractionScope,
 )
 from ask_ai_mcp.qwen import (
     QwenClientError,
@@ -28,7 +33,7 @@ from ask_ai_mcp.qwen import (
 )
 from ask_ai_mcp.qwen_source import LocalQwenSourceBackend, _QwenVisual
 from ask_ai_mcp.qwen_toolsmith import LocalQwenToolsmithClient
-from ask_ai_mcp.source import StagedSource
+from ask_ai_mcp.source import SourceProcessingError, StagedSource
 from ask_ai_mcp.usage import UsageStore
 
 
@@ -286,7 +291,12 @@ def test_source_request_places_image_before_instruction_and_writes_evidence(
                     "source_sha256": "a" * 64,
                     "kind": "diagram",
                     "location": {"whole_file": True},
-                    "data": {"title": "Synthetic"},
+                    "data": {
+                        "title": "Synthetic",
+                        "regions": [],
+                        "interfaces": [{"id": "01", "name": "Lookup", "method": "GET"}],
+                        "decisions": [],
+                    },
                     "extraction_method": "local-qwen-test",
                 }
             ],
@@ -315,8 +325,181 @@ def test_source_request_places_image_before_instruction_and_writes_evidence(
     assert content[0]["type"] == "image_url"
     assert content[-1]["type"] == "text"
     assert seen[0]["reasoning_effort"] == "none"
+    assert seen[0]["max_tokens"] == 4_096
+    prompt = content[-1]["text"]
+    assert "Each interface may contain only id, name, and method" in prompt
+    assert "request-field" in prompt
     assert result.warnings == ()
     assert json.loads((output / "evidence.json").read_text(encoding="utf-8"))["records"]
+
+
+def test_visual_topology_has_a_separate_bounded_shape() -> None:
+    command = SourceExtractionCommand(
+        source_files=[r"C:\Source\diagram.png"],
+        profile=SourceExtractionProfile.VISUAL_STRUCTURE,
+        visual_scope=VisualExtractionScope.TOPOLOGY,
+    )
+    visual = _QwenVisual(
+        source_index=1,
+        original_name="diagram.png",
+        source_sha256="a" * 64,
+        media_type="image/png",
+        path=Path("diagram.png"),
+        source_kind="whole_file",
+        location_number=None,
+    )
+
+    instruction, contract = LocalQwenSourceBackend._response_contract(command, [visual], [])
+
+    assert "Do not return an interface catalog" in instruction
+    assert set(contract["records"][0]["data"]) == {
+        "title",
+        "regions",
+        "decisions",
+        "nodes",
+        "connectors",
+    }
+    assert LocalQwenSourceBackend._max_tokens(command) == 8_192
+
+
+def test_duplicate_interface_names_are_flagged_for_selected_review() -> None:
+    command = SourceExtractionCommand(
+        source_files=[r"C:\Source\diagram.png"],
+        profile=SourceExtractionProfile.VISUAL_STRUCTURE,
+    )
+    bundle = CanonicalEvidenceBundle.model_validate(
+        {
+            "profile": "visual_structure",
+            "records": [
+                {
+                    "evidence_id": "visual-index",
+                    "source_sha256": "a" * 64,
+                    "kind": "diagram",
+                    "location": {"whole_file": True},
+                    "data": {
+                        "title": "Synthetic",
+                        "regions": [],
+                        "interfaces": [
+                            {"id": "10", "name": "Repeated", "method": "POST"},
+                            {"id": "12", "name": "Repeated", "method": "POST"},
+                        ],
+                        "decisions": [],
+                    },
+                    "extraction_method": "local-qwen-test",
+                }
+            ],
+        }
+    )
+
+    LocalQwenSourceBackend._validate_visual_contract(command, bundle)
+
+    assert bundle.warnings == ["duplicate_interface_names_require_selected_details_review"]
+
+
+def test_selected_visual_details_are_bounded_to_explicit_focus_ids(tmp_path: Path) -> None:
+    source = tmp_path / "source.png"
+    Image.new("RGB", (100, 100), "white").save(source)
+    output = tmp_path / "output"
+    output.mkdir()
+    staged = StagedSource(
+        original_name="diagram.png",
+        staged_name="source-0001.png",
+        path=source,
+        sha256="a" * 64,
+        size_bytes=source.stat().st_size,
+        media_type="image/png",
+    )
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        records = []
+        for index, focus_id in enumerate(("08", "17"), start=1):
+            records.append(
+                {
+                    "evidence_id": f"detail-{index}",
+                    "source_sha256": "a" * 64,
+                    "kind": "diagram",
+                    "location": {"region_xywh": [0.5, 0.1, 0.4, 0.3]},
+                    "data": {
+                        "focus_id": focus_id,
+                        "title": f"Interface {focus_id}",
+                        "method": "POST",
+                        "sections": [{"name": "request", "items": ["field_a"]}],
+                        "relationships": [],
+                    },
+                    "extraction_method": "local-qwen-test",
+                }
+            )
+        evidence = {
+            "contract": "canonical_evidence_v1",
+            "profile": "visual_structure",
+            "records": records,
+            "warnings": [],
+        }
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"finish_reason": "stop", "message": {"content": json.dumps(evidence)}}]
+            },
+        )
+
+    backend = LocalQwenSourceBackend(
+        QwenOpenAIClient(runtime(), transport=httpx.MockTransport(handler))
+    )
+    backend.extract(
+        SourceExtractionCommand(
+            source_files=[str(source)],
+            profile=SourceExtractionProfile.VISUAL_STRUCTURE,
+            visual_scope=VisualExtractionScope.SELECTED_DETAILS,
+            focus_ids=["08", "17"],
+            focus_region_xywh=[0.5, 0.1, 0.4, 0.3],
+        ),
+        [staged],
+        output,
+    )
+
+    prompt = seen[0]["messages"][0]["content"][-1]["text"]
+    assert '"focus_ids": ["08", "17"]' in prompt
+    assert '"focus_region_xywh": [0.5, 0.1, 0.4, 0.3]' in prompt
+    assert "only the explicitly selected focus_ids" in prompt
+    encoded_url = seen[0]["messages"][0]["content"][0]["image_url"]["url"]
+    assert encoded_url.startswith("data:image/png;base64,")
+    with Image.open(BytesIO(base64.b64decode(encoded_url.split(",", 1)[1]))) as crop:
+        assert crop.size == (40, 30)
+    records = json.loads((output / "evidence.json").read_text(encoding="utf-8"))["records"]
+    assert [record["data"]["focus_id"] for record in records] == ["08", "17"]
+
+
+def test_selected_visual_details_reject_multiple_visuals(tmp_path: Path) -> None:
+    staged_sources = []
+    for index in range(2):
+        source = tmp_path / f"source-{index}.png"
+        Image.new("RGB", (10, 10), "white").save(source)
+        staged_sources.append(
+            StagedSource(
+                original_name=source.name,
+                staged_name=source.name,
+                path=source,
+                sha256=str(index + 1) * 64,
+                size_bytes=source.stat().st_size,
+                media_type="image/png",
+            )
+        )
+    backend = LocalQwenSourceBackend(QwenOpenAIClient(runtime()))
+
+    with pytest.raises(SourceProcessingError, match="exactly one visual"):
+        backend.extract(
+            SourceExtractionCommand(
+                source_files=[str(source.path) for source in staged_sources],
+                profile=SourceExtractionProfile.VISUAL_STRUCTURE,
+                visual_scope=VisualExtractionScope.SELECTED_DETAILS,
+                focus_ids=["08"],
+                focus_region_xywh=[0.0, 0.0, 1.0, 1.0],
+            ),
+            staged_sources,
+            tmp_path / "output",
+        )
 
 
 def test_document_visuals_are_batched_and_keep_original_page_provenance(
@@ -420,7 +603,8 @@ def test_document_pixel_regions_are_deterministically_normalized() -> None:
             {
                 "finish_reason": "stop",
                 "message": {
-                    "content": json.dumps(
+                    "content": "```json\n"
+                    + json.dumps(
                         {
                             "profile": "visual_structure",
                             "records": [
@@ -438,6 +622,7 @@ def test_document_pixel_regions_are_deterministically_normalized() -> None:
                             ],
                         }
                     )
+                    + "\n```"
                 },
             }
         ]

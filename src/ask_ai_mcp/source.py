@@ -302,6 +302,9 @@ class SourceJobManager:
                 "page_start": command.page_start,
                 "page_end": command.page_end,
                 "language_hint": command.language_hint,
+                "visual_scope": command.visual_scope.value,
+                "focus_ids": command.focus_ids,
+                "focus_region_xywh": command.focus_region_xywh,
             },
             "backend": {
                 "provider": status.provider.value,

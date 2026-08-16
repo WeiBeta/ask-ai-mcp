@@ -1,6 +1,6 @@
 # Qwen3.8 Subagent 接入前交接
 
-更新日期：2026-08-15（Asia/Shanghai）
+更新日期：2026-08-16（Asia/Shanghai）
 状态：本地 OpenAI Chat Completions 适配器、路由模式部署与真实联调已完成。
 
 ## 1. 当前停点
@@ -11,7 +11,7 @@
 - Chat endpoint：`/v1/chat/completions`；
 - 固定 Model ID：`qwen3.8-27b-local`；
 - OpenAI Chat Completions 兼容 JSON/HTTP，无真实 API key；
-- 上下文 128K，视觉上限 16,384 image tokens；
+- 当前本机档为 64K 上下文、GPU 视觉投影、16,384 image tokens，MTP 两步预测；
 - 连接超时 30 秒、文本读取 600 秒、视觉读取 5,400 秒；
 - POST 不自动重试；超时后检查带固定 `model` 查询参数的 `/slots`，仍在处理时明确禁止重复提交；
 - `/health`、`/slots` 和 `/v1/models` 用于健康与任务状态检查。
@@ -89,7 +89,15 @@ PDFium 渲染为确定性 PNG；PPTX 在拒绝宏、外部关系、包路径逃�
 当前 llama.cpp/Qwen 运行时的真实两图请求只稳定处理最后一张图，因此适配器按每请求一张
 视觉图像串行处理，在整个作业结束后才统一释放模型。单任务最多 32 页/幻灯片；超过限制
 必须显式提供不超过 32 页的 `page_start`/`page_end`。图片仍放在文字指令之前。DOCX、
-XLSX、视频、音频和时间范围不进入 0.6.2 公开 schema；未来完成独立预处理模块后再加入。
+XLSX、视频、音频和时间范围不进入 0.7.1 公开 schema；未来完成独立预处理模块后再加入。
+
+`visual_structure` 使用三层受限契约：默认 `visual_scope=structure_index`，每张视觉输入只
+返回标题、区域/泳道、判断节点和接口索引；`visual_scope=topology` 独立返回节点与连线；
+需要细节时使用 `visual_scope=selected_details`、最多 8 个 `focus_ids`，以及归一化坐标
+`focus_region_xywh=[x,y,width,height]`。后端先做确定性裁剪，再把裁剪图送入模型，并拒绝
+额外对象、错误坐标、未定义字段与超量数组。三种 scope 共用同一个 `source_extract`，不会
+增加 MCP 工具数量。`selected_details` 每次只接受一张图片、一个渲染页或一个渲染幻灯片；
+PDF/PPTX 必须用页码范围选中单页。
 
 ## 4. 固定输出契约
 
@@ -104,6 +112,13 @@ XLSX、视频、音频和时间范围不进入 0.6.2 公开 schema；未来完�
 
 控制器另行生成 `manifest.json`，记录模型身份、输入文件名、暂存名、哈希、大小、
 媒体类型、输出哈希和警告。
+
+2026-08-16 实机大图回归：4575×13803 流程图在 64K + GPU 视觉 + MTP 下，受限 OCR
+请求 112.1 秒完成，实际输入 16,372 token、输出 1,007 token；标题、四个泳道、01–25
+接口名称/方法及六个判断节点均正确。裁剪后的接口 10/12 详情回归仅用 30.36 秒，实际输入
+2,437 token、输出 981 token，两个接口及字段正确分离。整图详情请求曾发生对象混淆，旧
+通用提示也在 8K/16K 输出上限因过度展开而截断，故详情必须裁剪，且不得用单纯提高
+`max_tokens` 修复。
 
 ## 5. 路径和资源边界
 

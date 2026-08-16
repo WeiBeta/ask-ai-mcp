@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import math
+import re
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import PurePosixPath
@@ -829,6 +831,12 @@ class SourceDetailLevel(StrEnum):
     DETAILED = "detailed"
 
 
+class VisualExtractionScope(StrEnum):
+    STRUCTURE_INDEX = "structure_index"
+    TOPOLOGY = "topology"
+    SELECTED_DETAILS = "selected_details"
+
+
 class SourceJobState(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
@@ -842,6 +850,9 @@ class SourceExtractionCommand(StrictModel):
     source_files: list[str] = Field(min_length=1, max_length=20)
     profile: SourceExtractionProfile
     detail_level: SourceDetailLevel = SourceDetailLevel.STANDARD
+    visual_scope: VisualExtractionScope = VisualExtractionScope.STRUCTURE_INDEX
+    focus_ids: list[str] = Field(default_factory=list, max_length=8)
+    focus_region_xywh: list[float] | None = Field(default=None, min_length=4, max_length=4)
     page_start: int | None = Field(default=None, ge=1, le=100_000)
     page_end: int | None = Field(default=None, ge=1, le=100_000)
     language_hint: str | None = Field(
@@ -860,12 +871,49 @@ class SourceExtractionCommand(StrictModel):
             raise ValueError("source file paths must be unique")
         return values
 
+    @field_validator("focus_ids")
+    @classmethod
+    def validate_focus_ids(cls, values: list[str]) -> list[str]:
+        pattern = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,39}$")
+        if any(not pattern.fullmatch(value) for value in values):
+            raise ValueError("focus_ids must be 1-40 character bounded identifiers")
+        if len({value.casefold() for value in values}) != len(values):
+            raise ValueError("focus_ids must be unique")
+        return values
+
     @model_validator(mode="after")
     def validate_ranges(self) -> Self:
         if (self.page_start is None) != (self.page_end is None):
             raise ValueError("page_start and page_end must be supplied together")
         if self.page_start is not None and self.page_end < self.page_start:
             raise ValueError("page_end must be at least page_start")
+        if self.profile is not SourceExtractionProfile.VISUAL_STRUCTURE:
+            if (
+                self.visual_scope is not VisualExtractionScope.STRUCTURE_INDEX
+                or self.focus_ids
+                or self.focus_region_xywh is not None
+            ):
+                raise ValueError(
+                    "visual_scope, focus_ids, and focus_region_xywh "
+                    "require visual_structure profile"
+                )
+        elif self.visual_scope is VisualExtractionScope.SELECTED_DETAILS:
+            if not self.focus_ids:
+                raise ValueError("selected_details requires at least one focus_id")
+            if self.focus_region_xywh is None:
+                raise ValueError("selected_details requires focus_region_xywh")
+            x, y, width, height = self.focus_region_xywh
+            if any(
+                not math.isfinite(value) or value < 0 or value > 1
+                for value in self.focus_region_xywh
+            ):
+                raise ValueError("focus_region_xywh values must be normalized to 0-1")
+            if width <= 0 or height <= 0 or x + width > 1 or y + height > 1:
+                raise ValueError("focus_region_xywh must fit within the source")
+        elif self.focus_ids or self.focus_region_xywh is not None:
+            raise ValueError(
+                "focus_ids and focus_region_xywh require selected_details visual_scope"
+            )
         return self
 
 

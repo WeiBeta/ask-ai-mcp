@@ -16,6 +16,7 @@ from ask_ai_mcp.models import (
     SourceExtractionCommand,
     SourceExtractionProfile,
     SourceJobState,
+    VisualExtractionScope,
 )
 from ask_ai_mcp.source import (
     SourceBackendResult,
@@ -83,6 +84,55 @@ def wait_for_terminal(manager: SourceJobManager, job_id: str):
             return report
         time.sleep(0.01)
     raise AssertionError("source job did not reach a terminal state")
+
+
+def test_visual_scope_requires_bounded_focus_ids() -> None:
+    base = {
+        "source_files": [r"C:\Source\diagram.png"],
+        "profile": SourceExtractionProfile.VISUAL_STRUCTURE,
+    }
+
+    with pytest.raises(ValueError, match="requires at least one focus_id"):
+        SourceExtractionCommand(
+            **base,
+            visual_scope=VisualExtractionScope.SELECTED_DETAILS,
+        )
+    with pytest.raises(ValueError, match="requires focus_region_xywh"):
+        SourceExtractionCommand(
+            **base,
+            visual_scope=VisualExtractionScope.SELECTED_DETAILS,
+            focus_ids=["08"],
+        )
+    with pytest.raises(ValueError, match="must fit within the source"):
+        SourceExtractionCommand(
+            **base,
+            visual_scope=VisualExtractionScope.SELECTED_DETAILS,
+            focus_ids=["08"],
+            focus_region_xywh=[0.8, 0.8, 0.3, 0.3],
+        )
+    with pytest.raises(ValueError, match="normalized to 0-1"):
+        SourceExtractionCommand(
+            **base,
+            visual_scope=VisualExtractionScope.SELECTED_DETAILS,
+            focus_ids=["08"],
+            focus_region_xywh=[float("nan"), 0.0, 0.5, 0.5],
+        )
+    with pytest.raises(ValueError, match="require selected_details"):
+        SourceExtractionCommand(**base, focus_ids=["08"])
+    with pytest.raises(ValueError, match="bounded identifiers"):
+        SourceExtractionCommand(
+            **base,
+            visual_scope=VisualExtractionScope.SELECTED_DETAILS,
+            focus_ids=["free form prompt"],
+        )
+    with pytest.raises(ValueError, match="require visual_structure"):
+        SourceExtractionCommand(
+            source_files=[r"C:\Source\report.pdf"],
+            profile=SourceExtractionProfile.DOCUMENT_EVIDENCE,
+            visual_scope=VisualExtractionScope.SELECTED_DETAILS,
+            focus_ids=["08"],
+            focus_region_xywh=[0.0, 0.0, 1.0, 1.0],
+        )
 
 
 def test_unconfigured_backend_and_missing_roots_fail_closed(tmp_path: Path) -> None:

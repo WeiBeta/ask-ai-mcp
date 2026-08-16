@@ -72,6 +72,9 @@ def test_full_mcp_surface_and_raw_schema_are_narrow() -> None:
         "source_files",
         "profile",
         "detail_level",
+        "visual_scope",
+        "focus_ids",
+        "focus_region_xywh",
         "page_start",
         "page_end",
         "language_hint",
@@ -80,6 +83,14 @@ def test_full_mcp_surface_and_raw_schema_are_narrow() -> None:
         "document_evidence",
         "visual_structure",
     }
+    assert set(source_schema["visual_scope"]["enum"]) == {
+        "structure_index",
+        "topology",
+        "selected_details",
+    }
+    assert source_schema["focus_ids"]["maxItems"] == 8
+    assert source_schema["focus_region_xywh"]["anyOf"][0]["minItems"] == 4
+    assert source_schema["focus_region_xywh"]["anyOf"][0]["maxItems"] == 4
     build_schema = by_name["build_helper_tool"].parameters
     assert set(build_schema["properties"]) == {"budget_session_id", "spec"}
     assert (

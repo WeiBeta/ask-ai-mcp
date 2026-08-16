@@ -14,6 +14,13 @@ Full include the same three tools for compatibility:
   extraction profiles, one-job GPU concurrency, and input-root configuration.
 - `source_extract` accepts allow-listed absolute file paths and one of
   `document_evidence` or `visual_structure`. It has no arbitrary prompt field.
+  Visual extraction defaults to `structure_index`, which returns one bounded
+  title/region/decision/interface index per visual. `topology` separately
+  returns nodes and connectors. A `selected_details` request accepts at most
+  eight bounded `focus_ids` plus one normalized `[x, y, width, height]`
+  `focus_region_xywh`, crops that region before inference, and returns exactly
+  one detail record for each requested identifier. This scope accepts exactly
+  one visual image, rendered page, or rendered slide per request.
 - `source_job_status` returns progress and hash-addressed output artifacts.
 
 Inputs are copied into a private job directory and hashed before and after the
@@ -29,9 +36,16 @@ runtime did not preserve every image in a multi-image request. With
 validation, and output contract uses Qwen3.8 Max through the fixed OpenCode Go
 Anthropic Messages endpoint. The real backend remains unavailable unless its
 selected credential/runtime and narrow input roots are configured.
-The 0.6.2 source surface deliberately does not advertise DOCX, XLSX, video,
+The 0.7.1 source surface deliberately does not advertise DOCX, XLSX, video,
 audio, media-timeline, or time-range inputs; those require separate validated
 preprocessors before they can return to the public schema.
+
+The visual index deliberately forbids interface caller, request-field,
+response-field, and explanatory-paragraph expansion. Those details require a
+separate `selected_details` request with a deterministic crop. The backend
+validates the exact bounded shape and returned crop coordinates after model
+output, so increasing model output limits cannot silently turn one overview
+request into an unbounded transcription.
 
 ## Local MiniMax H3 video tools
 

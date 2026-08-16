@@ -43,6 +43,10 @@ attestations, approval identities, blocking reasons, and the next action without
 returning candidate content. Usage reporting keeps actual API token counts
 separate from structural character and UTF-8 byte measurements.
 
+Version 0.7.1 adds a bounded three-scope visual extraction contract without
+adding MCP tools: compact structure indexes, separate topology, and selected
+details based on explicit identifiers plus a deterministic normalized crop.
+
 The first full billed lifecycle smoke passed on 2026-08-02 in one Flash call:
 the generated synthetic helper passed four isolated tests, was reviewed, and
 was registered under an exact hash with synthetic-input capability only.

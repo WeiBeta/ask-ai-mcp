@@ -1,6 +1,6 @@
 # Ask AI MCP 通用模块与接口说明
 
-适用版本：0.7.0  
+适用版本：0.7.1
 本文档只描述可复用产品结构，不记录某一台物理机的用户名、安装位置、环境变量值或 GUI
 配置。机器实况由同目录脚本生成到 `local-only/`。
 
@@ -103,6 +103,11 @@ PDF/PPTX 预处理、来源哈希、坐标校验和 `canonical_evidence_v1` 输�
 - `source_files`：1–20 个白名单根目录内的绝对普通文件路径；
 - `profile`：`document_evidence` 或 `visual_structure`；
 - `detail_level`：`compact/standard/detailed`；
+- `visual_scope`：视觉任务默认为 `structure_index`；需要指定对象详情时使用
+  `selected_details`；节点/连线拓扑使用 `topology`；
+- `focus_ids`：仅供 `selected_details` 使用，最多 8 个受限标识符，不接受自由提示；
+- `focus_region_xywh`：仅供 `selected_details` 使用，必填；按原图宽高归一化的
+  `[x,y,width,height]` 裁剪框，各值在 0–1 内且不得越界；
 - `page_start/page_end`：可选且必须成对；
 - `language_hint`：可选语言标签。
 
@@ -113,13 +118,37 @@ PDF/PPTX 预处理、来源哈希、坐标校验和 `canonical_evidence_v1` 输�
   "command": {
     "source_files": ["D:\\SourceInbox\\workflow.pdf"],
     "profile": "visual_structure",
-    "detail_level": "detailed",
+    "detail_level": "standard",
+    "visual_scope": "structure_index",
+    "focus_ids": [],
+    "focus_region_xywh": null,
     "page_start": 1,
     "page_end": 8,
     "language_hint": "zh-CN"
   }
 }
 ```
+
+`structure_index` 每张视觉输入只返回一个受限结构索引：标题、区域/泳道、判断节点及接口
+编号/名称/方法，不展开节点、连线或接口请求与返回字段。需要完整节点/连线时把
+`visual_scope` 设为 `topology`；需要接口详情时再次提交相同来源，并设置：
+
+```json
+{
+  "command": {
+    "source_files": ["D:\\SourceInbox\\workflow.png"],
+    "profile": "visual_structure",
+    "detail_level": "standard",
+    "visual_scope": "selected_details",
+    "focus_ids": ["08", "17"],
+    "focus_region_xywh": [0.78, 0.16, 0.21, 0.15],
+    "language_hint": "zh-CN"
+  }
+}
+```
+
+`selected_details` 一次只处理一张图片、一个 PDF 渲染页或一个 PPTX 渲染页；文档输入
+必须用相同的 `page_start/page_end` 选中单页。
 
 当前生产边界是静态图片、PDF、PPTX 和 UTF-8 文本。视频、音频、DOCX、XLSX 与时间码
 尚未进入公开契约。
@@ -154,7 +183,7 @@ ComfyUI 不猜测画风。任务完成后保持 ComfyUI 在线，只卸载模型
 
 ## 5. 特化本地 ACE 1.5 agent
 
-状态：规划占位，当前 0.7.0 仓库没有 ACE 1.5 MCP 接口、运行器、模型清单或已验证安装。
+状态：规划占位，当前 0.7.1 仓库没有 ACE 1.5 MCP 接口、运行器、模型清单或已验证安装。
 未来应保持独立音频入口，避免向 Core、Perception 或 H3 注入音频 schema。建议边界：
 
 - `audio_backend_status`；
