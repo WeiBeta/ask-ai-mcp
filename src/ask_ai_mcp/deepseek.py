@@ -421,8 +421,8 @@ class DeepSeekClient:
             candidate_sha256=candidate_hash,
             model=spec.model,
             provider=self.provider,
-            provider_model_id=self._provider_model_id(spec),
-            provider_runtime=self.provider_runtime,
+            provider_model_id=self._provider_model_id(spec, request_body),
+            provider_runtime=self._provider_runtime(request_body),
             thinking_enabled=thinking_enabled,
             payload=payload,
         )
@@ -457,8 +457,13 @@ class DeepSeekClient:
             body["reasoning_effort"] = "high"
         return body
 
-    def _provider_model_id(self, spec: ToolBuildSpec) -> str:
+    def _provider_model_id(
+        self, spec: ToolBuildSpec, request_body: dict[str, Any] | None = None
+    ) -> str:
         return spec.model.value
+
+    def _provider_runtime(self, request_body: dict[str, Any] | None = None) -> str:
+        return self.provider_runtime
 
     def _repair_request_body(
         self,
@@ -671,6 +676,9 @@ class DeepSeekClient:
                 client_name=client_name,
                 task_kind=task_kind,
                 model=spec.model,
+                provider=self.provider,
+                provider_model_id=spec.model.value,
+                provider_runtime=self.provider_runtime,
                 thinking_enabled=thinking_enabled,
                 priced_at=cost.priced_at,
                 pricing_band=cost.pricing_band,

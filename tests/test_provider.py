@@ -6,8 +6,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from ask_ai_mcp import deepseek
+from ask_ai_mcp import deepseek, opencode
 from ask_ai_mcp.models import ModelProvider
+from ask_ai_mcp.opencode import OpenCodeGoClient
 from ask_ai_mcp.provider import (
     ToolsmithProviderError,
     create_toolsmith_client,
@@ -48,8 +49,9 @@ def test_subscription_and_local_providers_do_not_inherit_cny_gate(
         monkeypatch.setattr(deepseek, "UsageStore", lambda: SimpleNamespace())
         assert isinstance(create_toolsmith_client(configuration), LocalQwenToolsmithClient)
     else:
-        with pytest.raises(ToolsmithProviderError, match="awaits validated runtime"):
-            create_toolsmith_client(configuration)
+        monkeypatch.setattr(opencode, "UsageStore", lambda: SimpleNamespace())
+        monkeypatch.setattr(deepseek, "UsageStore", lambda: SimpleNamespace())
+        assert isinstance(create_toolsmith_client(configuration), OpenCodeGoClient)
 
 
 def test_unknown_provider_fails_closed(monkeypatch) -> None:

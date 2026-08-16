@@ -77,7 +77,11 @@ def load_source_backend() -> SourceBackend:
         return UnconfiguredQwenBackend()
     if selected == ModelProvider.LOCAL_QWEN.value:
         return LocalQwenSourceBackend()
-    raise SourceProcessingError(f"{SOURCE_PROVIDER_ENV} must be local_qwen")
+    if selected == ModelProvider.OPENCODE.value:
+        from ask_ai_mcp.opencode_source import OpenCodeQwenSourceBackend
+
+        return OpenCodeQwenSourceBackend()
+    raise SourceProcessingError(f"{SOURCE_PROVIDER_ENV} must be local_qwen or opencode")
 
 
 class LocalQwenSourceBackend:

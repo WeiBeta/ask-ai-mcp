@@ -161,6 +161,17 @@ def test_h3_surface_contains_only_local_video_tools() -> None:
     assert all(len(tool.description or "") < 800 for tool in tools)
 
 
+def test_perception_surface_contains_only_source_tools() -> None:
+    tools = asyncio.run(server.source_mcp.list_tools())
+
+    assert {tool.name for tool in tools} == {
+        "source_backend_status",
+        "source_extract",
+        "source_job_status",
+    }
+    assert all(len(tool.description or "") < 800 for tool in tools)
+
+
 def test_guidance_and_pending_queue_are_prompt_free_local_reads(monkeypatch) -> None:
     guidance = server.workflow_guidance(WorkflowGuidanceTopic.OVERVIEW)
     assert guidance.topic is WorkflowGuidanceTopic.OVERVIEW

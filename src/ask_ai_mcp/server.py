@@ -78,6 +78,12 @@ ComfyUI post-processing. Poll submitted jobs with h3_job_status; terminal jobs
 release model GPU memory while leaving ComfyUI running.
 """.strip()
 
+SOURCE_SERVER_INSTRUCTIONS = """
+Use these tools only for bounded, source-faithful multimodal extraction from
+allow-listed file copies. Results are canonical evidence with provenance, not
+final prose or conclusions.
+""".strip()
+
 mcp = FastMCP(
     "Ask AI MCP",
     instructions=SERVER_INSTRUCTIONS,
@@ -91,6 +97,11 @@ core_mcp = FastMCP(
 subagent_mcp = FastMCP(
     "Ask AI MCP Subagent",
     instructions=SERVER_INSTRUCTIONS,
+    version=__version__,
+)
+source_mcp = FastMCP(
+    "Ask AI MCP Perception",
+    instructions=SOURCE_SERVER_INSTRUCTIONS,
     version=__version__,
 )
 h3_mcp = FastMCP(
@@ -118,6 +129,7 @@ def source_tool(**kwargs):
     def decorator(function):
         mcp.tool(**kwargs)(function)
         subagent_mcp.tool(**kwargs)(function)
+        source_mcp.tool(**kwargs)(function)
         return function
 
     return decorator
@@ -146,6 +158,7 @@ def get_usage_store() -> UsageStore:
 mcp.add_middleware(ProtocolAuditMiddleware(lambda: get_usage_store()))
 core_mcp.add_middleware(ProtocolAuditMiddleware(lambda: get_usage_store()))
 subagent_mcp.add_middleware(ProtocolAuditMiddleware(lambda: get_usage_store()))
+source_mcp.add_middleware(ProtocolAuditMiddleware(lambda: get_usage_store()))
 h3_mcp.add_middleware(ProtocolAuditMiddleware(lambda: get_usage_store()))
 
 

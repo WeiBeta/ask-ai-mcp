@@ -7,6 +7,7 @@ from typing import Protocol
 
 from ask_ai_mcp.deepseek import DeepSeekClient
 from ask_ai_mcp.models import ModelProvider, StrictModel
+from ask_ai_mcp.opencode import OpenCodeGoClient
 from ask_ai_mcp.qwen_toolsmith import LocalQwenToolsmithClient
 
 TOOLSMITH_PROVIDER_ENV = "ASK_AI_MCP_TOOLSMITH_PROVIDER"
@@ -52,6 +53,8 @@ def create_toolsmith_client(
         return DeepSeekClient()
     if selected.provider is ModelProvider.LOCAL_QWEN:
         return LocalQwenToolsmithClient()
+    if selected.provider is ModelProvider.OPENCODE:
+        return OpenCodeGoClient()
     raise ToolsmithProviderError(
         f"{selected.provider.value} toolsmith adapter awaits validated runtime configuration"
     )

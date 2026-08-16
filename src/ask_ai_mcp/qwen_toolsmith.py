@@ -75,7 +75,9 @@ class LocalQwenToolsmithClient(DeepSeekClient):
         )
         return QWEN_TOOLSMITH_PROMPT_VERSION, sha256_text(settings)
 
-    def _provider_model_id(self, spec: ToolBuildSpec) -> str:
+    def _provider_model_id(
+        self, spec: ToolBuildSpec, request_body: dict[str, Any] | None = None
+    ) -> str:
         return self.qwen.config.model_id
 
     def build_candidate(
@@ -255,6 +257,9 @@ class LocalQwenToolsmithClient(DeepSeekClient):
                 client_name=client_name,
                 task_kind=task_kind,
                 model=spec.model,
+                provider=self.provider,
+                provider_model_id=self.qwen.config.model_id,
+                provider_runtime=self.provider_runtime,
                 thinking_enabled=thinking_enabled,
                 priced_at=priced_at.astimezone(UTC),
                 pricing_schedule_version="local_qwen_zero_cost_v1",

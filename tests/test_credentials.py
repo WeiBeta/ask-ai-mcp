@@ -3,7 +3,7 @@
 import pytest
 
 from ask_ai_mcp.credential_cli import build_parser
-from ask_ai_mcp.credentials import CredentialError, CredentialStore
+from ask_ai_mcp.credentials import CredentialError, CredentialStore, OpenCodeCredentialStore
 
 
 class FakeBackend:
@@ -43,3 +43,21 @@ def test_cli_never_accepts_secret_as_argument() -> None:
     parser = build_parser()
     with pytest.raises(SystemExit):
         parser.parse_args(["set", "sk-must-not-be-command-history"])
+
+
+def test_opencode_profiles_are_separate_and_accept_opaque_keys() -> None:
+    backend = FakeBackend()
+    primary = OpenCodeCredentialStore("primary", backend=backend)
+    secondary = OpenCodeCredentialStore("secondary", backend=backend)
+
+    primary.set_api_key("opaque-primary-opencode-key")
+    secondary.set_api_key("opaque-secondary-opencode-key")
+
+    assert primary.get_api_key() == "opaque-primary-opencode-key"
+    assert secondary.get_api_key() == "opaque-secondary-opencode-key"
+
+
+def test_cli_selects_provider_without_accepting_a_secret() -> None:
+    args = build_parser().parse_args(["set", "--provider", "opencode-go", "--account", "secondary"])
+    assert args.provider == "opencode-go"
+    assert args.account == "secondary"

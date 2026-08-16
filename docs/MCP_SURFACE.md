@@ -2,11 +2,13 @@
 
 The server deliberately has no arbitrary model-prompt forwarding operation.
 Core advertises twelve tools, Subagent advertises fifteen, and compatibility
-Full advertises nineteen. H3-only advertises exactly four local video tools.
+Full advertises nineteen. Perception-only advertises exactly three source tools;
+H3-only advertises exactly four local video tools.
 
 ## Multimodal source tools
 
-Subagent and Full add exactly three asynchronous source tools:
+Perception-only exposes exactly three asynchronous source tools. Subagent and
+Full include the same three tools for compatibility:
 
 - `source_backend_status` reports local backend identity, readiness, fixed
   extraction profiles, one-job GPU concurrency, and input-root configuration.
@@ -22,8 +24,11 @@ source-faithful text or structured data rather than final conclusions. With
 PDFium and PPTX slides by a fixed, read-only PowerPoint COM exporter after macro,
 external-relationship, and package-safety checks. Document jobs are capped at
 32 selected visuals and use one visual per Qwen request because the current
-runtime did not preserve every image in a multi-image request. The real backend
-remains unavailable unless its loopback runtime and narrow input roots are configured.
+runtime did not preserve every image in a multi-image request. With
+`ASK_AI_MCP_SOURCE_PROVIDER=opencode`, the same staging, rendering, provenance,
+validation, and output contract uses Qwen3.8 Max through the fixed OpenCode Go
+Anthropic Messages endpoint. The real backend remains unavailable unless its
+selected credential/runtime and narrow input roots are configured.
 The 0.6.2 source surface deliberately does not advertise DOCX, XLSX, video,
 audio, media-timeline, or time-range inputs; those require separate validated
 preprocessors before they can return to the public schema.
@@ -66,7 +71,9 @@ cannot read candidate or source contents. It includes at most twenty recent
 lifecycle-economics rows. API cache-hit, cache-miss, completion, and reasoning
 token counts are provider usage. Specification, candidate, test, summary, and
 patch sizes are separately labelled character or UTF-8 byte measurements, with
-byte ratios; they are not presented as tokens.
+byte ratios; they are not presented as tokens. OpenCode calls also report
+virtual USD by provider model/account and conservative rolling 5-hour, 7-day,
+and 30-day allowance windows.
 
 ## `workflow_guidance`
 

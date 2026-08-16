@@ -10,7 +10,15 @@ from pathlib import Path
 
 from platformdirs import user_data_path
 
-from ask_ai_mcp.models import LifecycleAuditEvent, LifecycleEconomics, UsageEvent, UsageSummary
+from ask_ai_mcp.models import (
+    LifecycleAuditEvent,
+    LifecycleEconomics,
+    OpenCodeGoAccountUsage,
+    OpenCodeGoLimitWindow,
+    UsageEvent,
+    UsageSummary,
+)
+from ask_ai_mcp.opencode_pricing import OPENCODE_GO_LIMITS_USD, OPENCODE_GO_PRICES
 from ask_ai_mcp.pricing import load_peak_pricing_effective_at, pricing_context
 from ask_ai_mcp.protocol_audit import ProtocolAuditEvent
 
@@ -50,6 +58,10 @@ class UsageStore:
                     client_name TEXT NOT NULL,
                     task_kind TEXT NOT NULL,
                     model TEXT NOT NULL,
+                    provider TEXT NOT NULL DEFAULT 'deepseek',
+                    provider_model_id TEXT,
+                    provider_runtime TEXT,
+                    provider_account TEXT,
                     thinking_enabled INTEGER NOT NULL,
                     priced_at TEXT NOT NULL,
                     pricing_band TEXT NOT NULL,
@@ -63,6 +75,9 @@ class UsageStore:
                     completion_tokens INTEGER NOT NULL,
                     reasoning_tokens INTEGER NOT NULL,
                     estimated_cost_cny REAL NOT NULL,
+                    cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                    cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+                    estimated_cost_usd REAL NOT NULL DEFAULT 0.0,
                     latency_ms INTEGER NOT NULL,
                     retries INTEGER NOT NULL,
                     status TEXT NOT NULL,
@@ -89,6 +104,13 @@ class UsageStore:
                 "lifecycle_id": "TEXT",
                 "request_chars": "INTEGER NOT NULL DEFAULT 0",
                 "response_chars": "INTEGER NOT NULL DEFAULT 0",
+                "provider": "TEXT NOT NULL DEFAULT 'deepseek'",
+                "provider_model_id": "TEXT",
+                "provider_runtime": "TEXT",
+                "provider_account": "TEXT",
+                "cache_read_tokens": "INTEGER NOT NULL DEFAULT 0",
+                "cache_write_tokens": "INTEGER NOT NULL DEFAULT 0",
+                "estimated_cost_usd": "REAL NOT NULL DEFAULT 0.0",
             }
             for column_name, definition in migrations.items():
                 if column_name not in existing_columns:
@@ -111,6 +133,9 @@ class UsageStore:
             )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_api_usage_lifecycle ON api_usage(lifecycle_id)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_api_usage_provider ON api_usage(provider)"
             )
             connection.execute(
                 """
@@ -222,7 +247,8 @@ class UsageStore:
             connection.execute(
                 """
                 INSERT INTO api_usage (
-                    timestamp, client_name, task_kind, model, thinking_enabled,
+                    timestamp, client_name, task_kind, model, provider,
+                    provider_model_id, provider_runtime, provider_account, thinking_enabled,
                     priced_at, pricing_band, pricing_multiplier,
                     pricing_schedule_version,
                     cache_hit_price_cny_per_million,
@@ -230,15 +256,23 @@ class UsageStore:
                     output_price_cny_per_million,
                     prompt_cache_hit_tokens, prompt_cache_miss_tokens,
                     completion_tokens, reasoning_tokens, estimated_cost_cny,
+                    cache_read_tokens, cache_write_tokens, estimated_cost_usd,
                     latency_ms, retries, status, candidate_hash,
                     budget_session_id, lifecycle_id, request_chars, response_chars
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?
+                )
                 """,
                 (
                     event.timestamp.astimezone(UTC).isoformat(),
                     event.client_name,
                     event.task_kind,
-                    event.model.value,
+                    event.model,
+                    event.provider.value,
+                    event.provider_model_id,
+                    event.provider_runtime,
+                    event.provider_account,
                     int(event.thinking_enabled),
                     event.priced_at.astimezone(UTC).isoformat(),
                     event.pricing_band.value,
@@ -252,6 +286,9 @@ class UsageStore:
                     event.completion_tokens,
                     event.reasoning_tokens,
                     event.estimated_cost_cny,
+                    event.cache_read_tokens,
+                    event.cache_write_tokens,
+                    event.estimated_cost_usd,
                     event.latency_ms,
                     event.retries,
                     event.status,
@@ -377,7 +414,8 @@ class UsageStore:
                     COALESCE(SUM(prompt_cache_miss_tokens), 0) AS cache_miss,
                     COALESCE(SUM(completion_tokens), 0) AS completion,
                     COALESCE(SUM(reasoning_tokens), 0) AS reasoning,
-                    COALESCE(SUM(estimated_cost_cny), 0) AS cost
+                    COALESCE(SUM(estimated_cost_cny), 0) AS cost,
+                    COALESCE(SUM(estimated_cost_usd), 0) AS cost_usd
                 FROM api_usage
                 WHERE timestamp >= ?
                 """,
@@ -390,6 +428,22 @@ class UsageStore:
                 WHERE timestamp >= ?
                 GROUP BY model
                 ORDER BY model
+                """,
+                (cutoff,),
+            ).fetchall()
+            provider_rows = connection.execute(
+                """
+                SELECT provider AS key, COUNT(*) AS count
+                FROM api_usage WHERE timestamp >= ? GROUP BY provider ORDER BY provider
+                """,
+                (cutoff,),
+            ).fetchall()
+            provider_model_cost_rows = connection.execute(
+                """
+                SELECT COALESCE(provider_model_id, model) AS key,
+                       COALESCE(SUM(estimated_cost_usd), 0) AS cost
+                FROM api_usage WHERE timestamp >= ?
+                GROUP BY COALESCE(provider_model_id, model) ORDER BY key
                 """,
                 (cutoff,),
             ).fetchall()
@@ -449,6 +503,7 @@ class UsageStore:
                 "SELECT COUNT(*) FROM lifecycle_audit WHERE completed_at >= ?",
                 (cutoff,),
             ).fetchone()[0]
+            opencode_accounts = self._opencode_accounts(connection)
 
         now_utc = datetime.now(UTC)
         effective_at = load_peak_pricing_effective_at()
@@ -467,7 +522,9 @@ class UsageStore:
             completion_tokens=int(totals["completion"]),
             reasoning_tokens=int(totals["reasoning"]),
             estimated_cost_cny=round(float(totals["cost"]), 8),
+            estimated_cost_usd=round(float(totals["cost_usd"]), 8),
             by_model={str(row["model"]): int(row["count"]) for row in model_rows},
+            by_provider={str(row["key"]): int(row["count"]) for row in provider_rows},
             by_client={str(row["key"]): int(row["count"]) for row in client_rows},
             by_pricing_band={str(row["key"]): int(row["count"]) for row in pricing_band_rows},
             estimated_cost_cny_by_model={
@@ -479,6 +536,10 @@ class UsageStore:
             estimated_cost_cny_by_pricing_band={
                 str(row["key"]): round(float(row["cost"]), 8) for row in pricing_band_rows
             },
+            estimated_cost_usd_by_provider_model={
+                str(row["key"]): round(float(row["cost"]), 8) for row in provider_model_cost_rows
+            },
+            opencode_go_accounts=opencode_accounts,
             current_pricing_band=current_band,
             peak_pricing_enabled=peak_enabled,
             pricing_schedule_version=schedule_version,
@@ -486,6 +547,66 @@ class UsageStore:
             lifecycle_count=int(lifecycle_count),
             recent_lifecycle_economics=[self._lifecycle_economics(row) for row in lifecycle_rows],
         )
+
+    @staticmethod
+    def _opencode_accounts(connection: sqlite3.Connection) -> list[OpenCodeGoAccountUsage]:
+        now = datetime.now(UTC)
+        accounts = connection.execute(
+            """
+            SELECT DISTINCT provider_account FROM api_usage
+            WHERE provider = 'opencode' AND provider_account IS NOT NULL
+            ORDER BY provider_account
+            """
+        ).fetchall()
+        result: list[OpenCodeGoAccountUsage] = []
+        for account_row in accounts:
+            account = str(account_row["provider_account"])
+            windows: list[OpenCodeGoLimitWindow] = []
+            for name, delta in (
+                ("rolling_5h", timedelta(hours=5)),
+                ("rolling_7d", timedelta(days=7)),
+                ("rolling_30d", timedelta(days=30)),
+            ):
+                spent = float(
+                    connection.execute(
+                        """
+                        SELECT COALESCE(SUM(estimated_cost_usd), 0) FROM api_usage
+                        WHERE provider = 'opencode' AND provider_account = ?
+                          AND timestamp >= ?
+                        """,
+                        (account, (now - delta).isoformat()),
+                    ).fetchone()[0]
+                )
+                limit = OPENCODE_GO_LIMITS_USD[name]
+                windows.append(
+                    OpenCodeGoLimitWindow(
+                        window=name,
+                        spent_usd=round(spent, 8),
+                        limit_usd=limit,
+                        remaining_usd=round(max(0.0, limit - spent), 8),
+                    )
+                )
+            rows = connection.execute(
+                """
+                SELECT provider_model_id, COALESCE(SUM(estimated_cost_usd), 0) AS cost
+                FROM api_usage
+                WHERE provider = 'opencode' AND provider_account = ? AND timestamp >= ?
+                GROUP BY provider_model_id ORDER BY provider_model_id
+                """,
+                (account, (now - timedelta(days=30)).isoformat()),
+            ).fetchall()
+            result.append(
+                OpenCodeGoAccountUsage(
+                    account=account,
+                    windows=windows,
+                    rolling_30d_by_model_usd={
+                        str(row["provider_model_id"]): round(float(row["cost"]), 8)
+                        for row in rows
+                        if row["provider_model_id"] in {model.value for model in OPENCODE_GO_PRICES}
+                    },
+                )
+            )
+        return result
 
     def client_for_job(self, job_id: str) -> str | None:
         """Return the controller that created a final candidate job, if audited."""
@@ -500,6 +621,48 @@ class UsageStore:
                 (job_id,),
             ).fetchone()
         return str(row["client_name"]) if row is not None else None
+
+    def opencode_limit_reason(self, account: str, model_id: str) -> str | None:
+        """Return a conservative local limit reason, leaving remote 429 authoritative."""
+
+        now = datetime.now(UTC)
+        checks = (
+            ("rolling 5-hour", timedelta(hours=5), OPENCODE_GO_LIMITS_USD["rolling_5h"]),
+            ("rolling 7-day", timedelta(days=7), OPENCODE_GO_LIMITS_USD["rolling_7d"]),
+            ("rolling 30-day", timedelta(days=30), OPENCODE_GO_LIMITS_USD["rolling_30d"]),
+        )
+        with self._connection() as connection:
+            for label, delta, limit in checks:
+                spent = float(
+                    connection.execute(
+                        """
+                        SELECT COALESCE(SUM(estimated_cost_usd), 0) FROM api_usage
+                        WHERE provider = 'opencode' AND provider_account = ?
+                          AND timestamp >= ?
+                        """,
+                        (account, (now - delta).isoformat()),
+                    ).fetchone()[0]
+                )
+                if spent >= limit:
+                    return f"OpenCode Go {label} local ledger limit reached"
+            price = next(
+                (price for model, price in OPENCODE_GO_PRICES.items() if model.value == model_id),
+                None,
+            )
+            if price is not None:
+                spent = float(
+                    connection.execute(
+                        """
+                        SELECT COALESCE(SUM(estimated_cost_usd), 0) FROM api_usage
+                        WHERE provider = 'opencode' AND provider_account = ?
+                          AND provider_model_id = ? AND timestamp >= ?
+                        """,
+                        (account, model_id, (now - timedelta(days=30)).isoformat()),
+                    ).fetchone()[0]
+                )
+                if spent >= price.included_limit_usd:
+                    return "OpenCode Go rolling 30-day model allowance reached"
+        return None
 
     @staticmethod
     def _lifecycle_economics(row: sqlite3.Row) -> LifecycleEconomics:

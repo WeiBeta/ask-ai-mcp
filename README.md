@@ -35,8 +35,9 @@ requires a standard callable contract, exact registry hash, dual Claude/Codex
 approval for output-producing tools, Docker isolation, and explicitly
 configured narrow input roots. No real input root is enabled by default.
 
-Version 0.6.2 keeps detailed protocol text out of the always-loaded tool
-descriptions. Controllers request only the workflow topic they need. Review
+Version 0.7.0 adds fixed OpenCode Go coding/perception providers and a three-tool
+Perception-only entry while keeping detailed protocol text out of always-loaded
+tool descriptions. Controllers request only the workflow topic they need. Review
 summaries and the local pending queue join creator, exact full-review
 attestations, approval identities, blocking reasons, and the next action without
 returning candidate content. Usage reporting keeps actual API token counts
@@ -71,15 +72,16 @@ The recommended always-on MCP entry point is:
 C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-core.exe
 ```
 
-Four explicit profiles share the same codebase:
+Five explicit profiles share the same codebase:
 
 - `ask-ai-mcp-core.exe` registers the twelve non-video tools only.
 - `ask-ai-mcp-subagent.exe` registers Core plus three multimodal source tools, but no H3.
+- `ask-ai-mcp-perception.exe` registers only the three multimodal source tools.
 - `ask-ai-mcp-h3.exe` registers only the four local video and ComfyUI tools.
 - `ask-ai-mcp-full.exe` registers all nineteen tools, including source and H3 adapters.
 
 The legacy `ask-ai-mcp.exe` entry point defaults to Full and accepts
-`ASK_AI_MCP_PROFILE=core|subagent|h3|full`. New desktop deployments should use the explicit
+`ASK_AI_MCP_PROFILE=core|subagent|perception|h3|full`. New desktop deployments should use the explicit
 profile executable so a missing environment variable cannot silently change the
 advertised tool surface.
 
@@ -125,6 +127,7 @@ isolated under `C:\AI\ComfyUI-H3`.
 - `docs/MCP_SMOKE.md`: first billed build-review-approval evidence
 - `docs/H3_HANDOFF_ZH-CN.md`: verified H3 deployment, model hashes, MCP contract, and next-session handoff
 - `docs/QWEN_SUBAGENT_PREDEPLOY_ZH-CN.md`: replay capture, source contract, and exact Qwen integration stop point
+- `docs/OPENCODE_GO_PREDEPLOY_ZH-CN.md`: OpenCode Go coding and Qwen3.8 Max perception routing
 - `ask-ai-mcp-replay shadow-qwen --lifecycle-id <UUID>` replays a captured tool spec through local Qwen and records self-test plus reference-test evidence without treating DeepSeek tests as a gold oracle.
 - `docs/DESKTOP_SETUP.md`: Claude Desktop and Codex Desktop connection guide
 - `docs/CONTROLLER_PROMPTS.md`: shared delegation rules and desktop adaptations
