@@ -345,3 +345,22 @@ def test_findings_must_overlap_a_changed_hunk(tmp_path: Path) -> None:
     }
     with pytest.raises(ValueError, match="changed hunk"):
         CodeReviewManager._validated_payload(payload, snapshot)
+
+
+def test_absolute_host_paths_are_deterministically_redacted_from_model_input(
+    tmp_path: Path,
+) -> None:
+    root, _, head = _repository(tmp_path)
+    base = head
+    host_path = r"C:\Users\private-user\sensitive\input.txt"
+    (root / "app.py").write_text(f'PATH = r"{host_path}"\n', encoding="utf-8")
+    _git(root, "commit", "-am", "path")
+    changed = _git(root, "rev-parse", "HEAD")
+    snapshot = CodeReviewSnapshotter(CodeReviewRepositoryCatalog({"sample": root})).from_refs(
+        "sample", base, changed
+    )
+    serialized = snapshot.diff_text + json.dumps(snapshot.context)
+    assert host_path not in serialized
+    assert "private-user" not in serialized
+    assert "<HOST_PATH_" in serialized
+    assert any("host absolute paths redacted" in item for item in snapshot.omitted_context)

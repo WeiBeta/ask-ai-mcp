@@ -25,6 +25,7 @@ _SECRET_CONTENT = re.compile(
     r"(?i)(?:api[_-]?key|access[_-]?token|client[_-]?secret|password)\s*[:=]\s*"
     r"[\"'][^\"'\r\n]{12,}[\"']|-----BEGIN [A-Z ]*PRIVATE KEY-----"
 )
+_HOST_ABSOLUTE_PATH = re.compile(r"(?i)(?<![A-Za-z0-9])(?:[A-Z]:[\\/]+[^\s\"'<>|]+)")
 _EXCLUDED_PARTS = frozenset(
     {
         ".git",
@@ -91,6 +92,14 @@ class CodeReviewSnapshot:
 
 def _sha256(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+
+def _redact_host_paths(value: str) -> str:
+    def replacement(match: re.Match[str]) -> str:
+        token = _sha256(match.group(0).casefold().encode("utf-8"))[:12]
+        return f"<HOST_PATH_{token}>"
+
+    return _HOST_ABSOLUTE_PATH.sub(replacement, value)
 
 
 def _is_within(path: Path, root: Path) -> bool:
@@ -307,7 +316,10 @@ class CodeReviewSnapshotter:
             if reason:
                 omitted.append(f"{relative}: {reason}")
             else:
-                accepted.append((relative, section))
+                redacted = _redact_host_paths(section)
+                if redacted != section:
+                    omitted.append(f"{relative}: host absolute paths redacted")
+                accepted.append((relative, redacted))
         if not accepted:
             raise CodeReviewWorkspaceError("no reviewable text diff remains after exclusions")
         if len(accepted) > MAX_CHANGED_FILES:
@@ -447,6 +459,10 @@ class CodeReviewSnapshotter:
                 text = "\n".join(
                     f"{number}: {lines[number - 1]}" for number in range(start, end + 1)
                 )
+                redacted = _redact_host_paths(text)
+                if redacted != text:
+                    omitted.append(f"{relative}: host absolute paths redacted from context")
+                text = redacted
                 encoded = text.encode("utf-8")
                 if used + len(encoded) > MAX_CONTEXT_BYTES:
                     omitted.append(f"{relative}: context truncated at global byte limit")
