@@ -79,6 +79,7 @@ def test_existing_usage_database_is_migrated_without_losing_history(tmp_path: Pa
     import sqlite3
 
     database = tmp_path / "legacy.db"
+    timestamp = datetime.now(UTC).isoformat()
     with sqlite3.connect(database) as connection:
         connection.execute(
             """
@@ -104,11 +105,12 @@ def test_existing_usage_database_is_migrated_without_losing_history(tmp_path: Pa
         connection.execute(
             """
             INSERT INTO api_usage VALUES (
-                1, '2026-08-02T00:00:00+00:00', 'codex_desktop', 'tool_build',
+                1, ?, 'codex_desktop', 'tool_build',
                 'deepseek-v4-flash', 1, 0, 100, 20, 10, 0.00014, 1000, 0,
                 'success', NULL
             )
-            """
+            """,
+            (timestamp,),
         )
 
     summary = UsageStore(database).summarize(days=15)

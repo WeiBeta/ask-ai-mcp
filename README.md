@@ -102,7 +102,7 @@ files, desktop personal configuration, or credentials.
 
 The H3 runtime, model weights, and generated media are deliberately external to
 this repository. On the current workstation they live under
-`C:\AI\ComfyUI-H3`; only the small loopback adapter, tests, and operating
+`C:\AI\ComfyUI`; only the small loopback adapter, tests, and operating
 documentation are versioned here.
 
 The four H3 tools automatically run the bounded PowerShell launcher when the
@@ -117,7 +117,7 @@ Reference frames belong in
 `C:\Users\user\Documents\AskAI-Exchange\H3-Workspace\inputs`; generated videos
 are written to the sibling `outputs` directory. This narrow shared workspace is
 writable by both Codex and Claude Desktop; the runtime and model weights remain
-isolated under `C:\AI\ComfyUI-H3`.
+isolated under `C:\AI\ComfyUI`.
 
 ## Documentation
 

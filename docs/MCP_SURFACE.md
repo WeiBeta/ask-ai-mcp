@@ -74,7 +74,7 @@ reference images outside `ASK_AI_MCP_H3_INPUT_ROOTS`. Reference images go in
 `C:\Users\user\Documents\AskAI-Exchange\H3-Workspace\inputs`; generated media
 goes in the sibling `outputs` directory. This shared workspace is the only H3
 task-data root granted to both desktop clients. The runtime and weights remain
-under `C:\AI\ComfyUI-H3`, outside this repository. Use is subject
+under `C:\AI\ComfyUI`, outside this repository. Use is subject
 to the MiniMax H3 Community License Agreement, including its territory and
 acceptable-use terms.
 

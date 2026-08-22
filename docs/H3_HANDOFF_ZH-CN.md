@@ -26,8 +26,8 @@ ComfyUI、替换模型、改变共享目录或降级主机组件。
 | 用途 | 路径 |
 |---|---|
 | MCP 仓库 | `C:\Dev\ask-ai-mcp` |
-| ComfyUI 程序、Python 与模型 | `C:\AI\ComfyUI-H3` |
-| ComfyUI 日志 | `C:\AI\ComfyUI-H3\logs` |
+| ComfyUI 程序、Python 与模型 | `C:\AI\ComfyUI` |
+| ComfyUI 日志 | `C:\AI\ComfyUI\logs` |
 | GPT/Claude 共用任务目录 | `C:\Users\user\Documents\AskAI-Exchange\H3-Workspace` |
 | 可放参考帧及自动暂存视频 | `...\H3-Workspace\inputs` |
 | H3 原片与后处理结果 | `...\H3-Workspace\outputs` |
@@ -52,7 +52,7 @@ pwsh -NoProfile -File C:\Dev\ask-ai-mcp\scripts\start_comfyui_h3.ps1
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8188/system_stats
 Invoke-RestMethod http://127.0.0.1:8188/queue
-Get-Content C:\AI\ComfyUI-H3\logs\comfyui.stderr.log -Tail 80
+Get-Content C:\AI\ComfyUI\logs\comfyui.stderr.log -Tail 80
 ```
 
 已验证的运行栈：ComfyUI portable NVIDIA 0.31.0、前端 1.48.7、嵌入式
@@ -62,7 +62,7 @@ ComfyUI 原生节点。
 
 ## 3. 已部署权重与校验值
 
-下表路径均相对于 `C:\AI\ComfyUI-H3\ComfyUI\models`。
+下表路径均相对于 `C:\AI\ComfyUI\ComfyUI\models`。
 
 | 分组 | 相对路径 | SHA-256 |
 |---|---|---|

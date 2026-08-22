@@ -201,8 +201,8 @@ $lines.Add("")
 $lines.Add("## 4. 本地模型与运行目录")
 $lines.Add("")
 $knownRoots = @(
-    (Join-Path $env:USERPROFILE "Documents\Codex\local-ai\qwen3.8-27b"),
-    "C:\AI\ComfyUI-H3"
+    "C:\AI\Llama",
+    "C:\AI\ComfyUI"
 )
 $lines.Add("| 分类 | 路径 | 状态 |")
 $lines.Add("|---|---|---|")

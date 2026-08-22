@@ -42,7 +42,7 @@ Absolute paths are required because a desktop MCP host may start a server with
 an undefined working directory.
 
 The ComfyUI/H3 runtime is installed outside the repository at
-`C:\AI\ComfyUI-H3`. Full automatically starts it through the bounded PowerShell
+`C:\AI\ComfyUI`. Full automatically starts it through the bounded PowerShell
 launcher when the loopback service is unavailable. The same launcher can be run
 manually:
 

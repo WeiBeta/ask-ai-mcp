@@ -3,7 +3,7 @@ param()
 
 $ErrorActionPreference = "Stop"
 
-$installRoot = "C:\AI\ComfyUI-H3"
+$installRoot = "C:\AI\ComfyUI"
 $pythonPath = Join-Path $installRoot "python_embeded\python.exe"
 $mainPath = Join-Path $installRoot "ComfyUI\main.py"
 $logRoot = Join-Path $installRoot "logs"
