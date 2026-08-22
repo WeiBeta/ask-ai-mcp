@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import platform
+import re
 from typing import Protocol
 
 import keyring
@@ -11,7 +12,7 @@ from keyring.errors import KeyringError
 SERVICE_NAME = "Ask AI MCP"
 ACCOUNT_NAME = "deepseek-api-key"
 OPENCODE_ACCOUNT_PREFIX = "opencode-go"
-OPENCODE_PROFILES = frozenset({"primary", "secondary"})
+OPENCODE_PROFILE_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 
 
 class CredentialBackend(Protocol):
@@ -107,12 +108,15 @@ class CredentialStore:
 
 
 class OpenCodeCredentialStore:
-    """Store one of two explicitly selected OpenCode Go account credentials."""
+    """Store one explicitly selected OpenCode Go account credential."""
 
     def __init__(self, profile: str = "primary", backend: CredentialBackend | None = None) -> None:
         normalized = profile.strip().casefold()
-        if normalized not in OPENCODE_PROFILES:
-            raise CredentialError("OpenCode Go profile must be primary or secondary")
+        if OPENCODE_PROFILE_PATTERN.fullmatch(normalized) is None:
+            raise CredentialError(
+                "OpenCode Go account alias must start with a letter and contain only "
+                "lowercase letters, digits, underscores, or hyphens"
+            )
         self.profile = normalized
         self.account_name = f"{OPENCODE_ACCOUNT_PREFIX}-{normalized}-api-key"
         self._backend = backend

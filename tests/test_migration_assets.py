@@ -34,6 +34,11 @@ SOURCE_TOOLS = {
     "source_extract",
     "source_job_status",
 }
+REVIEW_TOOLS = {
+    "code_review_backend_status",
+    "code_review_submit",
+    "code_review_status",
+}
 
 
 def test_core_templates_expose_only_core_entrypoint_and_tools() -> None:
@@ -88,6 +93,21 @@ def test_h3_templates_are_standalone_and_disabled_by_default_for_codex() -> None
     assert all(tool in codex for tool in H3_TOOLS)
     assert all(tool not in codex for tool in CORE_TOOLS | SOURCE_TOOLS)
     assert claude["mcpServers"]["ask-ai-h3"]["command"] == "__MCP_H3_EXE__"
+
+
+def test_review_templates_are_standalone_and_not_part_of_default_profiles() -> None:
+    codex = (MIGRATION / "profiles/review/config-templates/codex.toml").read_text("utf-8")
+    claude = json.loads(
+        (MIGRATION / "profiles/review/config-templates/claude.json").read_text("utf-8")
+    )
+    assert "__MCP_REVIEW_EXE__" in codex
+    assert "enabled = false" in codex
+    assert all(tool in codex for tool in REVIEW_TOOLS)
+    assert all(tool not in codex for tool in CORE_TOOLS | SOURCE_TOOLS | H3_TOOLS)
+    assert claude["mcpServers"]["ask-ai-review"]["command"] == "__MCP_REVIEW_EXE__"
+    for profile in ("core", "subagent", "h3", "full"):
+        content = (MIGRATION / f"profiles/{profile}/config-templates/codex.toml").read_text("utf-8")
+        assert all(tool not in content for tool in REVIEW_TOOLS)
 
 
 def test_common_package_inputs_contain_no_personal_state_files() -> None:

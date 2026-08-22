@@ -118,6 +118,18 @@ def test_existing_usage_database_is_migrated_without_losing_history(tmp_path: Pa
     assert summary.total_calls == 1
     assert summary.by_client == {"codex_desktop": 1}
     assert summary.by_pricing_band == {"standard": 1}
+    with sqlite3.connect(database) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(api_usage)")}
+        migrated = connection.execute(
+            "SELECT provider_subscription_id, provider_reported_cost_usd, cost_source, "
+            "pricing_schedule_version FROM api_usage WHERE id = 1"
+        ).fetchone()
+    assert {
+        "provider_subscription_id",
+        "provider_reported_cost_usd",
+        "cost_source",
+    }.issubset(columns)
+    assert migrated == (None, None, "local_estimate", "legacy_base")
 
 
 def test_v040_lifecycle_metrics_are_migrated_without_fake_byte_values(tmp_path: Path) -> None:

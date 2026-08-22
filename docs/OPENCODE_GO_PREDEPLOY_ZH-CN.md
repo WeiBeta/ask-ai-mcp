@@ -1,7 +1,8 @@
 # OpenCode Go 预部署交接
 
-更新日期：2026-08-16（Asia/Shanghai）  
-状态：固定协议适配、离线测试和本地虚拟额度账本已完成；尚未配置真实密钥或执行付费联调。
+更新日期：2026-08-22（Asia/Shanghai）
+状态：固定协议适配、双层虚拟额度账本与独立 Review 入口已实现；真实 A/B/C/D 只对冻结
+commit/diff 执行。
 
 ## 目标与工具面
 
@@ -39,10 +40,12 @@ ask-ai-mcp-credentials set --provider opencode-go --account primary
 ask-ai-mcp-credentials status --provider opencode-go --account primary
 ```
 
-可选 `secondary` 是第二份显式账户配置。运行时不会自动轮换或跨账户规避额度；选择由：
+账户别名可使用受限小写标识符。每份合法订阅必须同时配置独立的本地订阅标识；运行时不会
+自动轮换或跨账户规避额度：
 
 ```text
 ASK_AI_MCP_OPENCODE_ACCOUNT=primary
+ASK_AI_MCP_OPENCODE_SUBSCRIPTION_ID=go-primary
 ```
 
 coding 专用入口：
@@ -62,10 +65,13 @@ ASK_AI_MCP_SOURCE_INPUT_ROOTS=<分号分隔的窄目录>
 
 本地 SQLite 记录 provider、实际模型、协议、账户、输入/输出、缓存读写 token 和估算虚拟
 美元，不保存密钥、完整 prompt、来源正文或普通模型输出。价格表固定为
-`opencode-go-2026-08-14`，避免官网价格变化后悄悄重算历史。
+`opencode-go-2026-08-21`，避免官网价格变化后悄悄重算历史。
 
-每个账户分别显示并保守检查滚动 5 小时 12 美元、7 天 30 美元和 30 天 60 美元；同时
-检查各模型的 30 天额度。滚动窗口是本地保护性近似，不冒充 OpenCode 服务端的精确订阅
+每个 `(account_alias, subscription_id)` 分别显示并保守检查共享滚动 5 小时 12 美元、
+7 天 30 美元和 30 天 60 美元；同时检查 GLM/Kimi/Pro 各 15 美元、Flash 30 美元的模型
+月度额度。模型有效余额取共享月余额与模型余额较小值，跨模型共享消费不会重复扣除。
+DeepSeek 按官方 UTC 两段 peak 窗口计价；缓存写等缺失价格明确为 unsupported，不默认为 0。
+滚动窗口是本地保护性近似，不冒充 OpenCode 服务端的精确订阅
 结算周期；服务端 429 始终是最终权威。由于密钥约定只供本 MCP 使用，本地账本通常能覆盖
 全部调用，但真实联调仍必须校对响应 usage 字段和控制台账单。
 

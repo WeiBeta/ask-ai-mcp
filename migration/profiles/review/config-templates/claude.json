@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "ask-ai-review": {
+      "command": "__MCP_REVIEW_EXE__",
+      "args": [],
+      "env": {
+        "ASK_AI_MCP_CLIENT_NAME": "claude_desktop",
+        "ASK_AI_MCP_REVIEW_REPOSITORIES": "__REVIEW_REPOSITORIES_JSON__",
+        "ASK_AI_MCP_REVIEW_PATCH_ROOTS": "__REVIEW_PATCH_ROOTS__",
+        "ASK_AI_MCP_REVIEW_ACCOUNT_ALIAS": "__OPENCODE_ACCOUNT_ALIAS__",
+        "ASK_AI_MCP_REVIEW_SUBSCRIPTION_ID": "__OPENCODE_SUBSCRIPTION_ID__",
+        "PYTHONUTF8": "1",
+        "PYTHONIOENCODING": "utf-8"
+      }
+    }
+  }
+}

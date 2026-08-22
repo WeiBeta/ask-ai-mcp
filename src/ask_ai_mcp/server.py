@@ -12,6 +12,14 @@ from pydantic import Field
 
 from ask_ai_mcp import __version__
 from ask_ai_mcp.budget import BudgetStore
+from ask_ai_mcp.code_review import CodeReviewManager
+from ask_ai_mcp.code_review_models import (
+    CodeReviewBackendStatus,
+    CodeReviewStatus,
+    CodeReviewStatusCommand,
+    CodeReviewSubmission,
+    CodeReviewSubmitCommand,
+)
 from ask_ai_mcp.collaboration import ReviewCollaborationService
 from ask_ai_mcp.guidance import workflow_guidance_for
 from ask_ai_mcp.h3 import H3ComfyClient
@@ -84,6 +92,14 @@ allow-listed file copies. Results are canonical evidence with provenance, not
 final prose or conclusions.
 """.strip()
 
+CODE_REVIEW_SERVER_INSTRUCTIONS = """
+Use these tools only for bounded, read-only review of immutable snapshots from
+explicitly allow-listed repositories. The reviewer cannot modify a repository,
+run tests or shell commands, access arbitrary files, choose arbitrary models,
+or produce patches. Findings are untrusted suggestions for Sol/human blind
+adjudication. Keep this optional module disabled during ordinary development.
+""".strip()
+
 mcp = FastMCP(
     "Ask AI MCP",
     instructions=SERVER_INSTRUCTIONS,
@@ -107,6 +123,11 @@ source_mcp = FastMCP(
 h3_mcp = FastMCP(
     "Ask AI MCP H3",
     instructions=H3_SERVER_INSTRUCTIONS,
+    version=__version__,
+)
+review_mcp = FastMCP(
+    "Ask AI MCP Code Review",
+    instructions=CODE_REVIEW_SERVER_INSTRUCTIONS,
     version=__version__,
 )
 
@@ -146,6 +167,16 @@ def h3_tool(**kwargs):
     return decorator
 
 
+def code_review_tool(**kwargs):
+    """Register a tool only on the optional code-review server."""
+
+    def decorator(function):
+        review_mcp.tool(**kwargs)(function)
+        return function
+
+    return decorator
+
+
 _DESKTOP_CLIENT_NAMES = frozenset({"claude_desktop", "codex_desktop"})
 
 
@@ -160,6 +191,7 @@ core_mcp.add_middleware(ProtocolAuditMiddleware(lambda: get_usage_store()))
 subagent_mcp.add_middleware(ProtocolAuditMiddleware(lambda: get_usage_store()))
 source_mcp.add_middleware(ProtocolAuditMiddleware(lambda: get_usage_store()))
 h3_mcp.add_middleware(ProtocolAuditMiddleware(lambda: get_usage_store()))
+review_mcp.add_middleware(ProtocolAuditMiddleware(lambda: get_usage_store()))
 
 
 @lru_cache(maxsize=1)
@@ -225,6 +257,56 @@ def get_h3_client() -> H3ComfyClient:
 @lru_cache(maxsize=1)
 def get_source_manager() -> SourceJobManager:
     return SourceJobManager(backend=load_source_backend())
+
+
+@lru_cache(maxsize=1)
+def get_code_review_manager() -> CodeReviewManager:
+    return CodeReviewManager(usage_store=get_usage_store())
+
+
+@code_review_tool(
+    annotations=ToolAnnotations(
+        title="异构代码审查后端状态",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    )
+)
+def code_review_backend_status() -> CodeReviewBackendStatus:
+    """Check fixed OpenCode models, repository IDs, ledger, and blind monthly metrics."""
+
+    return get_code_review_manager().backend_status()
+
+
+@code_review_tool(
+    annotations=ToolAnnotations(
+        title="提交只读异构代码审查",
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    )
+)
+def code_review_submit(command: CodeReviewSubmitCommand) -> CodeReviewSubmission:
+    """Snapshot one allow-listed diff and queue one fixed-model read-only review."""
+
+    return get_code_review_manager().submit(command)
+
+
+@code_review_tool(
+    annotations=ToolAnnotations(
+        title="读取并盲审代码审查结果",
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=False,
+    )
+)
+def code_review_status(command: CodeReviewStatusCommand) -> CodeReviewStatus:
+    """Page findings and optionally record blind adjudication or delayed outcomes."""
+
+    return get_code_review_manager().status(command)
 
 
 def get_client_name() -> str:

@@ -25,7 +25,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _add_provider_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--provider", choices=("deepseek", "opencode-go"), default="deepseek")
-    parser.add_argument("--account", choices=("primary", "secondary"), default="primary")
+    parser.add_argument(
+        "--account",
+        default="primary",
+        help="explicit OpenCode Go account alias; no automatic account rotation",
+    )
 
 
 def _label(provider: str, account: str) -> str:

@@ -18,13 +18,15 @@ from ask_ai_mcp.opencode_pricing import (
     OPENCODE_GO_PRICING_VERSION,
     OpenCodeGoModel,
     OpenCodeGoProtocol,
-    calculate_opencode_go_cost,
+    OpenCodeGoRateBand,
+    calculate_opencode_go_cost_breakdown,
 )
 from ask_ai_mcp.usage import UsageStore
 
 OPENCODE_GO_CHAT_URL = "https://opencode.ai/zen/go/v1/chat/completions"
 OPENCODE_GO_RESPONSES_URL = "https://opencode.ai/zen/go/v1/responses"
 OPENCODE_ACCOUNT_ENV = "ASK_AI_MCP_OPENCODE_ACCOUNT"
+OPENCODE_SUBSCRIPTION_ENV = "ASK_AI_MCP_OPENCODE_SUBSCRIPTION_ID"
 
 
 class OpenCodeGoClient(DeepSeekClient):
@@ -47,6 +49,9 @@ class OpenCodeGoClient(DeepSeekClient):
         selected = (account or os.environ.get(OPENCODE_ACCOUNT_ENV, "primary")).strip().casefold()
         credential_store = OpenCodeCredentialStore(profile=selected)
         self.account = credential_store.profile
+        self.subscription_id = (
+            os.environ.get(OPENCODE_SUBSCRIPTION_ENV, "").strip() or f"legacy:{self.account}"
+        )
         super().__init__(
             api_key_provider=api_key_provider or credential_store.get_api_key,
             usage_store=usage_store,
@@ -123,7 +128,9 @@ class OpenCodeGoClient(DeepSeekClient):
         body = dict(request_body)
         schema = body.pop("_json_schema", None)
         model_id = str(body["model"])
-        reason = self.usage_store.opencode_limit_reason(self.account, model_id)
+        reason = self.usage_store.opencode_limit_reason(
+            self.account, model_id, self.subscription_id
+        )
         if reason:
             raise ValueError(reason)
         if model_id == OpenCodeGoModel.GPT_5_6_LUNA.value:
@@ -260,12 +267,15 @@ class OpenCodeGoClient(DeepSeekClient):
         response_chars: int = 0,
     ) -> None:
         model = self._usage_model(spec, task_kind, thinking_enabled)
-        cost = calculate_opencode_go_cost(
+        cost = calculate_opencode_go_cost_breakdown(
             model,
             input_tokens=cache_hit + cache_miss,
             output_tokens=completion,
             cache_read_tokens=cache_hit,
+            priced_at=priced_at,
         )
+        if cost.total_cost_usd is None:
+            raise ValueError("OpenCode Go usage included an unsupported priced component")
         self.usage_store.record(
             UsageEvent(
                 client_name=client_name,
@@ -279,15 +289,23 @@ class OpenCodeGoClient(DeepSeekClient):
                     else OpenCodeGoProtocol.CHAT_COMPLETIONS.value
                 ),
                 provider_account=self.account,
+                provider_subscription_id=self.subscription_id,
                 thinking_enabled=thinking_enabled,
                 priced_at=priced_at.astimezone(UTC),
+                pricing_band=(
+                    "peak"
+                    if cost.band is OpenCodeGoRateBand.PEAK
+                    else "off_peak"
+                    if cost.band is OpenCodeGoRateBand.OFF_PEAK
+                    else "standard"
+                ),
                 pricing_schedule_version=OPENCODE_GO_PRICING_VERSION,
                 prompt_cache_hit_tokens=cache_hit,
                 prompt_cache_miss_tokens=cache_miss,
                 completion_tokens=completion,
                 reasoning_tokens=reasoning,
                 cache_read_tokens=cache_hit,
-                estimated_cost_usd=cost,
+                estimated_cost_usd=cost.total_cost_usd,
                 latency_ms=max(0, round((perf_counter() - started) * 1_000)),
                 retries=retries,
                 status=status,

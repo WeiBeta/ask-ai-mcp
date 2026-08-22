@@ -4,6 +4,25 @@ The server deliberately has no arbitrary model-prompt forwarding operation.
 Core advertises twelve tools, Subagent advertises fifteen, and compatibility
 Full advertises nineteen. Perception-only advertises exactly three source tools;
 H3-only advertises exactly four local video tools.
+Review-only advertises exactly three read-only review tools and is absent from
+all five existing surfaces, including compatibility Full.
+
+## Optional heterogeneous code review
+
+`ask-ai-mcp-review.exe` is manually enabled only for heavy development review.
+It exposes `code_review_backend_status`, `code_review_submit`, and the paginated
+`code_review_status`. Submit accepts an allow-listed repository ID plus either
+two bounded refs or a hash-pinned patch, one fixed profile, and one of four fixed
+OpenCode Go models. It has no generic prompt, shell, arbitrary path, Git-write,
+patch-generation, commit, push, or retry option.
+
+The controller resolves immutable commits, removes secrets, binary/vendor/generated
+content, submodules, escaping reparse points, oversized files, and excess context,
+then sends only repository-relative diff fragments. Findings are strict JSON and
+must point to a supplied changed hunk. Full inputs and outputs remain in separated
+per-job artifacts; the SQLite review ledger stores hashes, metrics, adjudications,
+and outcomes but not full source, diff, prompt, credential, or ordinary model output.
+Status keeps model names hidden while a person or Sol records adjudication.
 
 ## Multimodal source tools
 

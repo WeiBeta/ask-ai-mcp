@@ -1,0 +1,17 @@
+[mcp_servers.ask_ai_review]
+command = "__MCP_REVIEW_EXE__"
+enabled = false
+required = false
+enabled_tools = ["code_review_backend_status", "code_review_submit", "code_review_status"]
+default_tools_approval_mode = "prompt"
+startup_timeout_sec = 20
+tool_timeout_sec = 900
+
+[mcp_servers.ask_ai_review.env]
+ASK_AI_MCP_CLIENT_NAME = "codex_desktop"
+ASK_AI_MCP_REVIEW_REPOSITORIES = "__REVIEW_REPOSITORIES_JSON__"
+ASK_AI_MCP_REVIEW_PATCH_ROOTS = "__REVIEW_PATCH_ROOTS__"
+ASK_AI_MCP_REVIEW_ACCOUNT_ALIAS = "__OPENCODE_ACCOUNT_ALIAS__"
+ASK_AI_MCP_REVIEW_SUBSCRIPTION_ID = "__OPENCODE_SUBSCRIPTION_ID__"
+PYTHONUTF8 = "1"
+PYTHONIOENCODING = "utf-8"

@@ -53,7 +53,13 @@ class ModelProvider(StrEnum):
 
 class PricingBand(StrEnum):
     STANDARD = "standard"
+    OFF_PEAK = "off_peak"
     PEAK = "peak"
+
+
+class UsageCostSource(StrEnum):
+    LOCAL_ESTIMATE = "local_estimate"
+    PROVIDER_REPORTED = "provider_reported"
 
 
 class BudgetState(StrEnum):
@@ -513,7 +519,8 @@ class UsageEvent(StrictModel):
     provider: ModelProvider = ModelProvider.DEEPSEEK
     provider_model_id: str | None = Field(default=None, min_length=1, max_length=128)
     provider_runtime: str | None = Field(default=None, min_length=1, max_length=64)
-    provider_account: str | None = Field(default=None, min_length=1, max_length=32)
+    provider_account: str | None = Field(default=None, min_length=1, max_length=64)
+    provider_subscription_id: str | None = Field(default=None, min_length=1, max_length=128)
     thinking_enabled: bool
     priced_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     pricing_band: PricingBand = PricingBand.STANDARD
@@ -530,6 +537,8 @@ class UsageEvent(StrictModel):
     cache_read_tokens: int = Field(default=0, ge=0)
     cache_write_tokens: int = Field(default=0, ge=0)
     estimated_cost_usd: float = Field(default=0.0, ge=0)
+    provider_reported_cost_usd: float | None = Field(default=None, ge=0)
+    cost_source: UsageCostSource = UsageCostSource.LOCAL_ESTIMATE
     latency_ms: int = Field(default=0, ge=0)
     retries: int = Field(default=0, ge=0)
     status: str = Field(min_length=1, max_length=32)
@@ -619,16 +628,38 @@ class OpenCodeGoLimitWindow(StrictModel):
 
     window: str = Field(min_length=1, max_length=32)
     spent_usd: float = Field(ge=0)
+    estimated_spent_usd: float = Field(default=0.0, ge=0)
+    provider_reported_spent_usd: float = Field(default=0.0, ge=0)
+    provider_reported_call_count: int = Field(default=0, ge=0)
+    total_call_count: int = Field(default=0, ge=0)
     limit_usd: float = Field(gt=0)
     remaining_usd: float = Field(ge=0)
+    estimated: bool = True
+
+
+class OpenCodeGoModelAllowance(StrictModel):
+    model_id: str = Field(min_length=1, max_length=128)
+    spent_usd: float = Field(ge=0)
+    estimated_spent_usd: float = Field(default=0.0, ge=0)
+    provider_reported_spent_usd: float = Field(default=0.0, ge=0)
+    limit_usd: float = Field(gt=0)
+    remaining_usd: float = Field(ge=0)
+    effective_remaining_usd: float = Field(ge=0)
+    estimated: bool = True
 
 
 class OpenCodeGoAccountUsage(StrictModel):
     """Prompt-free OpenCode Go usage grouped by an explicit account profile."""
 
-    account: str = Field(min_length=1, max_length=32)
+    account: str = Field(min_length=1, max_length=64)
+    subscription_id: str = Field(min_length=1, max_length=128)
     windows: list[OpenCodeGoLimitWindow] = Field(default_factory=list, max_length=8)
     rolling_30d_by_model_usd: dict[str, float] = Field(default_factory=dict)
+    model_allowances: list[OpenCodeGoModelAllowance] = Field(default_factory=list, max_length=32)
+    catalog_version: str = Field(min_length=1, max_length=64)
+    catalog_effective_at: datetime
+    catalog_source_url: str = Field(min_length=1, max_length=512)
+    estimated: bool = True
 
 
 class UsageSummary(StrictModel):
@@ -650,7 +681,7 @@ class UsageSummary(StrictModel):
     estimated_cost_cny_by_client: dict[str, float] = Field(default_factory=dict)
     estimated_cost_cny_by_pricing_band: dict[str, float] = Field(default_factory=dict)
     estimated_cost_usd_by_provider_model: dict[str, float] = Field(default_factory=dict)
-    opencode_go_accounts: list[OpenCodeGoAccountUsage] = Field(default_factory=list, max_length=2)
+    opencode_go_accounts: list[OpenCodeGoAccountUsage] = Field(default_factory=list, max_length=16)
     current_pricing_band: PricingBand
     peak_pricing_enabled: bool
     pricing_schedule_version: str = Field(min_length=1, max_length=64)

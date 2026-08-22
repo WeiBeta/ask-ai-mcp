@@ -15,10 +15,17 @@ from ask_ai_mcp.models import (
     LifecycleEconomics,
     OpenCodeGoAccountUsage,
     OpenCodeGoLimitWindow,
+    OpenCodeGoModelAllowance,
     UsageEvent,
     UsageSummary,
 )
-from ask_ai_mcp.opencode_pricing import OPENCODE_GO_LIMITS_USD, OPENCODE_GO_PRICES
+from ask_ai_mcp.opencode_pricing import (
+    OPENCODE_GO_LIMITS_USD,
+    OPENCODE_GO_PRICES,
+    OPENCODE_GO_PRICING_EFFECTIVE_AT,
+    OPENCODE_GO_PRICING_SOURCE_URL,
+    OPENCODE_GO_PRICING_VERSION,
+)
 from ask_ai_mcp.pricing import load_peak_pricing_effective_at, pricing_context
 from ask_ai_mcp.protocol_audit import ProtocolAuditEvent
 
@@ -62,6 +69,7 @@ class UsageStore:
                     provider_model_id TEXT,
                     provider_runtime TEXT,
                     provider_account TEXT,
+                    provider_subscription_id TEXT,
                     thinking_enabled INTEGER NOT NULL,
                     priced_at TEXT NOT NULL,
                     pricing_band TEXT NOT NULL,
@@ -78,6 +86,8 @@ class UsageStore:
                     cache_read_tokens INTEGER NOT NULL DEFAULT 0,
                     cache_write_tokens INTEGER NOT NULL DEFAULT 0,
                     estimated_cost_usd REAL NOT NULL DEFAULT 0.0,
+                    provider_reported_cost_usd REAL,
+                    cost_source TEXT NOT NULL DEFAULT 'local_estimate',
                     latency_ms INTEGER NOT NULL,
                     retries INTEGER NOT NULL,
                     status TEXT NOT NULL,
@@ -108,9 +118,12 @@ class UsageStore:
                 "provider_model_id": "TEXT",
                 "provider_runtime": "TEXT",
                 "provider_account": "TEXT",
+                "provider_subscription_id": "TEXT",
                 "cache_read_tokens": "INTEGER NOT NULL DEFAULT 0",
                 "cache_write_tokens": "INTEGER NOT NULL DEFAULT 0",
                 "estimated_cost_usd": "REAL NOT NULL DEFAULT 0.0",
+                "provider_reported_cost_usd": "REAL",
+                "cost_source": "TEXT NOT NULL DEFAULT 'local_estimate'",
             }
             for column_name, definition in migrations.items():
                 if column_name not in existing_columns:
@@ -242,13 +255,14 @@ class UsageStore:
                 "CREATE INDEX IF NOT EXISTS idx_mcp_protocol_tool ON mcp_protocol_events(tool_name)"
             )
 
-    def record(self, event: UsageEvent) -> None:
+    def record(self, event: UsageEvent) -> int:
         with self._connection() as connection:
-            connection.execute(
+            cursor = connection.execute(
                 """
                 INSERT INTO api_usage (
                     timestamp, client_name, task_kind, model, provider,
-                    provider_model_id, provider_runtime, provider_account, thinking_enabled,
+                    provider_model_id, provider_runtime, provider_account,
+                    provider_subscription_id, thinking_enabled,
                     priced_at, pricing_band, pricing_multiplier,
                     pricing_schedule_version,
                     cache_hit_price_cny_per_million,
@@ -257,11 +271,12 @@ class UsageStore:
                     prompt_cache_hit_tokens, prompt_cache_miss_tokens,
                     completion_tokens, reasoning_tokens, estimated_cost_cny,
                     cache_read_tokens, cache_write_tokens, estimated_cost_usd,
+                    provider_reported_cost_usd, cost_source,
                     latency_ms, retries, status, candidate_hash,
                     budget_session_id, lifecycle_id, request_chars, response_chars
                 ) VALUES (
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -273,6 +288,7 @@ class UsageStore:
                     event.provider_model_id,
                     event.provider_runtime,
                     event.provider_account,
+                    event.provider_subscription_id,
                     int(event.thinking_enabled),
                     event.priced_at.astimezone(UTC).isoformat(),
                     event.pricing_band.value,
@@ -289,6 +305,8 @@ class UsageStore:
                     event.cache_read_tokens,
                     event.cache_write_tokens,
                     event.estimated_cost_usd,
+                    event.provider_reported_cost_usd,
+                    event.cost_source.value,
                     event.latency_ms,
                     event.retries,
                     event.status,
@@ -299,6 +317,7 @@ class UsageStore:
                     event.response_chars,
                 ),
             )
+            return int(cursor.lastrowid)
 
     def record_lifecycle(self, event: LifecycleAuditEvent) -> None:
         with self._connection() as connection:
@@ -553,57 +572,135 @@ class UsageStore:
         now = datetime.now(UTC)
         accounts = connection.execute(
             """
-            SELECT DISTINCT provider_account FROM api_usage
+            SELECT DISTINCT provider_account,
+                   COALESCE(provider_subscription_id, 'legacy:' || provider_account)
+                       AS subscription_id
+            FROM api_usage
             WHERE provider = 'opencode' AND provider_account IS NOT NULL
-            ORDER BY provider_account
+            ORDER BY provider_account, subscription_id
             """
         ).fetchall()
         result: list[OpenCodeGoAccountUsage] = []
         for account_row in accounts:
             account = str(account_row["provider_account"])
+            subscription_id = str(account_row["subscription_id"])
             windows: list[OpenCodeGoLimitWindow] = []
             for name, delta in (
                 ("rolling_5h", timedelta(hours=5)),
                 ("rolling_7d", timedelta(days=7)),
                 ("rolling_30d", timedelta(days=30)),
             ):
-                spent = float(
-                    connection.execute(
-                        """
-                        SELECT COALESCE(SUM(estimated_cost_usd), 0) FROM api_usage
+                spend_row = connection.execute(
+                    """
+                        SELECT COALESCE(SUM(estimated_cost_usd), 0) AS estimated,
+                               COALESCE(SUM(provider_reported_cost_usd), 0) AS reported,
+                               COALESCE(SUM(COALESCE(provider_reported_cost_usd,
+                                   estimated_cost_usd)), 0) AS ledger,
+                               COUNT(*) AS calls,
+                               COUNT(provider_reported_cost_usd) AS reported_calls
+                        FROM api_usage
                         WHERE provider = 'opencode' AND provider_account = ?
+                          AND COALESCE(provider_subscription_id,
+                              'legacy:' || provider_account) = ?
                           AND timestamp >= ?
                         """,
-                        (account, (now - delta).isoformat()),
-                    ).fetchone()[0]
-                )
+                    (account, subscription_id, (now - delta).isoformat()),
+                ).fetchone()
+                spent = float(spend_row["ledger"])
                 limit = OPENCODE_GO_LIMITS_USD[name]
                 windows.append(
                     OpenCodeGoLimitWindow(
                         window=name,
                         spent_usd=round(spent, 8),
+                        estimated_spent_usd=round(float(spend_row["estimated"]), 8),
+                        provider_reported_spent_usd=round(float(spend_row["reported"]), 8),
+                        provider_reported_call_count=int(spend_row["reported_calls"]),
+                        total_call_count=int(spend_row["calls"]),
                         limit_usd=limit,
                         remaining_usd=round(max(0.0, limit - spent), 8),
                     )
                 )
             rows = connection.execute(
                 """
-                SELECT provider_model_id, COALESCE(SUM(estimated_cost_usd), 0) AS cost
+                SELECT provider_model_id,
+                       COALESCE(SUM(estimated_cost_usd), 0) AS estimated,
+                       COALESCE(SUM(provider_reported_cost_usd), 0) AS reported,
+                       COALESCE(SUM(COALESCE(provider_reported_cost_usd,
+                           estimated_cost_usd)), 0) AS ledger
                 FROM api_usage
                 WHERE provider = 'opencode' AND provider_account = ? AND timestamp >= ?
+                  AND COALESCE(provider_subscription_id,
+                      'legacy:' || provider_account) = ?
                 GROUP BY provider_model_id ORDER BY provider_model_id
                 """,
-                (account, (now - timedelta(days=30)).isoformat()),
+                (account, (now - timedelta(days=30)).isoformat(), subscription_id),
             ).fetchall()
+            by_model = {
+                str(row["provider_model_id"]): round(float(row["ledger"]), 8)
+                for row in rows
+                if row["provider_model_id"] in {model.value for model in OPENCODE_GO_PRICES}
+            }
+            shared_remaining = next(
+                window.remaining_usd for window in windows if window.window == "rolling_30d"
+            )
             result.append(
                 OpenCodeGoAccountUsage(
                     account=account,
+                    subscription_id=subscription_id,
                     windows=windows,
-                    rolling_30d_by_model_usd={
-                        str(row["provider_model_id"]): round(float(row["cost"]), 8)
-                        for row in rows
-                        if row["provider_model_id"] in {model.value for model in OPENCODE_GO_PRICES}
-                    },
+                    rolling_30d_by_model_usd=by_model,
+                    model_allowances=[
+                        OpenCodeGoModelAllowance(
+                            model_id=model.value,
+                            spent_usd=by_model.get(model.value, 0.0),
+                            estimated_spent_usd=round(
+                                next(
+                                    (
+                                        float(row["estimated"])
+                                        for row in rows
+                                        if row["provider_model_id"] == model.value
+                                    ),
+                                    0.0,
+                                ),
+                                8,
+                            ),
+                            provider_reported_spent_usd=round(
+                                next(
+                                    (
+                                        float(row["reported"])
+                                        for row in rows
+                                        if row["provider_model_id"] == model.value
+                                    ),
+                                    0.0,
+                                ),
+                                8,
+                            ),
+                            limit_usd=price.included_limit_usd,
+                            remaining_usd=round(
+                                max(
+                                    0.0,
+                                    price.included_limit_usd - by_model.get(model.value, 0.0),
+                                ),
+                                8,
+                            ),
+                            effective_remaining_usd=round(
+                                min(
+                                    shared_remaining,
+                                    max(
+                                        0.0,
+                                        price.included_limit_usd - by_model.get(model.value, 0.0),
+                                    ),
+                                ),
+                                8,
+                            ),
+                        )
+                        for model, price in sorted(
+                            OPENCODE_GO_PRICES.items(), key=lambda item: item[0].value
+                        )
+                    ],
+                    catalog_version=OPENCODE_GO_PRICING_VERSION,
+                    catalog_effective_at=OPENCODE_GO_PRICING_EFFECTIVE_AT,
+                    catalog_source_url=OPENCODE_GO_PRICING_SOURCE_URL,
                 )
             )
         return result
@@ -622,10 +719,13 @@ class UsageStore:
             ).fetchone()
         return str(row["client_name"]) if row is not None else None
 
-    def opencode_limit_reason(self, account: str, model_id: str) -> str | None:
+    def opencode_limit_reason(
+        self, account: str, model_id: str, subscription_id: str | None = None
+    ) -> str | None:
         """Return a conservative local limit reason, leaving remote 429 authoritative."""
 
         now = datetime.now(UTC)
+        selected_subscription = subscription_id or f"legacy:{account}"
         checks = (
             ("rolling 5-hour", timedelta(hours=5), OPENCODE_GO_LIMITS_USD["rolling_5h"]),
             ("rolling 7-day", timedelta(days=7), OPENCODE_GO_LIMITS_USD["rolling_7d"]),
@@ -636,11 +736,14 @@ class UsageStore:
                 spent = float(
                     connection.execute(
                         """
-                        SELECT COALESCE(SUM(estimated_cost_usd), 0) FROM api_usage
+                        SELECT COALESCE(SUM(COALESCE(provider_reported_cost_usd,
+                            estimated_cost_usd)), 0) FROM api_usage
                         WHERE provider = 'opencode' AND provider_account = ?
+                          AND COALESCE(provider_subscription_id,
+                              'legacy:' || provider_account) = ?
                           AND timestamp >= ?
                         """,
-                        (account, (now - delta).isoformat()),
+                        (account, selected_subscription, (now - delta).isoformat()),
                     ).fetchone()[0]
                 )
                 if spent >= limit:
@@ -653,11 +756,19 @@ class UsageStore:
                 spent = float(
                     connection.execute(
                         """
-                        SELECT COALESCE(SUM(estimated_cost_usd), 0) FROM api_usage
+                        SELECT COALESCE(SUM(COALESCE(provider_reported_cost_usd,
+                            estimated_cost_usd)), 0) FROM api_usage
                         WHERE provider = 'opencode' AND provider_account = ?
+                          AND COALESCE(provider_subscription_id,
+                              'legacy:' || provider_account) = ?
                           AND provider_model_id = ? AND timestamp >= ?
                         """,
-                        (account, model_id, (now - timedelta(days=30)).isoformat()),
+                        (
+                            account,
+                            selected_subscription,
+                            model_id,
+                            (now - timedelta(days=30)).isoformat(),
+                        ),
                     ).fetchone()[0]
                 )
                 if spent >= price.included_limit_usd:

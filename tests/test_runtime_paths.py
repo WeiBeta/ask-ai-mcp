@@ -20,9 +20,7 @@ def test_comfyui_host_root_is_canonical_everywhere() -> None:
 
 
 def test_local_snapshot_uses_canonical_runtime_roots() -> None:
-    text = (ROOT / "operator-archive/scripts/Update-LocalSnapshot.ps1").read_text(
-        encoding="utf-8"
-    )
+    text = (ROOT / "operator-archive/scripts/Update-LocalSnapshot.ps1").read_text(encoding="utf-8")
     assert r'"C:\AI\Llama"' in text
     assert r'"C:\AI\ComfyUI"' in text
     assert r"Documents\Codex\local-ai\qwen3.8-27b" not in text

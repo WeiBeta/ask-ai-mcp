@@ -30,6 +30,7 @@ Register additional explicit profiles only where needed:
 C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-core.exe  # 12 non-video tools
 C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-subagent.exe  # Core + 3 Qwen source tools
 C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-h3.exe  # 4 H3 tools only
+C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-review.exe  # 3 review tools, opt-in
 C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-full.exe  # compatibility union, 19 tools
 ```
 
@@ -92,7 +93,9 @@ configured servers:
 Save the file, fully quit Claude Desktop, and reopen it. Closing only the window
 is not sufficient. Confirm that `ask-ai` advertises exactly twelve Core tools.
 Use the profile templates under `migration/profiles` when Claude needs Subagent,
-H3, or compatibility Full.
+H3, Review, or compatibility Full. The Review JSON is an offline registration
+example: do not merge it for ordinary work. Import and enable it from Claude's
+Extensions controls only for an explicit review session, then disable it again.
 
 For later private packaging, Claude Desktop also supports a local desktop
 extension bundle. We will evaluate that only after the server workflow is
@@ -146,10 +149,32 @@ ASK_AI_MCP_H3_OUTPUT_ROOT = "C:\\Users\\user\\Documents\\AskAI-Exchange\\H3-Work
 ASK_AI_MCP_H3_INPUT_ROOTS = "C:\\Users\\user\\Documents\\AskAI-Exchange\\H3-Workspace\\inputs"
 PYTHONUTF8 = "1"
 PYTHONIOENCODING = "utf-8"
+
+[mcp_servers.ask_ai_review]
+command = "C:\\Dev\\ask-ai-mcp\\.venv\\Scripts\\ask-ai-mcp-review.exe"
+cwd = "C:\\Dev\\ask-ai-mcp"
+enabled = false
+required = false
+enabled_tools = ["code_review_backend_status", "code_review_submit", "code_review_status"]
+default_tools_approval_mode = "prompt"
+startup_timeout_sec = 20
+tool_timeout_sec = 900
+
+[mcp_servers.ask_ai_review.env]
+ASK_AI_MCP_CLIENT_NAME = "codex_desktop"
+ASK_AI_MCP_REVIEW_REPOSITORIES = '{"ask-ai-mcp":"C:\\Dev\\ask-ai-mcp"}'
+ASK_AI_MCP_REVIEW_PATCH_ROOTS = ""
+ASK_AI_MCP_REVIEW_ACCOUNT_ALIAS = "primary"
+ASK_AI_MCP_REVIEW_SUBSCRIPTION_ID = "go-primary"
+PYTHONUTF8 = "1"
+PYTHONIOENCODING = "utf-8"
 ```
 
 Restart Codex Desktop after saving, then use the settings UI to confirm Core has
 twelve tools and H3 is registered but disabled. Keep approval mode set to `prompt`.
+Review must also remain disabled until a frozen diff is ready. The subscription ID
+is a local opaque ledger identity; configure a distinct value for each legitimately
+purchased subscription and never use it to rotate around provider limits.
 Open one
 opaque budget session per conversation that needs Ask AI. Flash starts with CNY
 5, Pro with CNY 0, and either model is extended only in CNY 5 blocks after the

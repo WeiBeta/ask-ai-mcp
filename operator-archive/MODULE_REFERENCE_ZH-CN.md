@@ -1,6 +1,6 @@
 # Ask AI MCP 通用模块与接口说明
 
-适用版本：0.7.1
+适用版本：0.8.0
 本文档只描述可复用产品结构，不记录某一台物理机的用户名、安装位置、环境变量值或 GUI
 配置。机器实况由同目录脚本生成到 `local-only/`。
 
@@ -13,9 +13,11 @@
 | `ask-ai-mcp-h3.exe` | 4 | 特化本地 H3 agent：视频生成、插帧和超分 |
 | `ask-ai-mcp-subagent.exe` | 15 | Core + Perception 的兼容组合入口 |
 | `ask-ai-mcp-full.exe` | 19 | Core + Perception + H3 的兼容全功能入口 |
+| `ask-ai-mcp-review.exe` | 3 | 独立、只读、默认关闭的异构 Coding Review |
 
 专用会话优先启用最窄入口：coding/文档工具制造只启用 Core，视觉来源处理只启用
-Perception，视频生成只启用 H3。`subagent` 和 `full` 用于兼容，不是默认推荐方案。
+Perception，视频生成只启用 H3，冻结代码评审才临时启用 Review。Review 不并入任何既有
+入口；`subagent` 和 `full` 用于兼容，不是默认推荐方案。
 
 ## 2. 综合 subagent / API agent（Core）
 
@@ -183,7 +185,7 @@ ComfyUI 不猜测画风。任务完成后保持 ComfyUI 在线，只卸载模型
 
 ## 5. 特化本地 ACE 1.5 agent
 
-状态：规划占位，当前 0.7.1 仓库没有 ACE 1.5 MCP 接口、运行器、模型清单或已验证安装。
+状态：规划占位，当前 0.8.0 仓库没有 ACE 1.5 MCP 接口、运行器、模型清单或已验证安装。
 未来应保持独立音频入口，避免向 Core、Perception 或 H3 注入音频 schema。建议边界：
 
 - `audio_backend_status`；
@@ -206,8 +208,23 @@ ComfyUI 不猜测画风。任务完成后保持 ComfyUI 在线，只卸载模型
 DeepSeek 候选及其测试是参考实现，不是绝对正确的金标准；报告分别保存双方自测、交叉测试、
 静态策略结果、模型身份和候选哈希。普通 usage/protocol audit 不保存完整 prompt 或输出。
 
-## 7. OpenCode Go 计量
+## 7. 独立异构 Coding Review
 
-OpenCode 价格快照固定版本，历史记录不随官网改价重算。账本按 primary/secondary 账户记录
-实际模型、协议、输入/输出 token、缓存读写和虚拟美元，并保守检查滚动 5 小时、7 天、
-30 天及模型额度。不会自动切换账户规避额度；服务端 429 始终是最终权威。
+Review 入口固定三个接口：`code_review_backend_status`、`code_review_submit`、
+`code_review_status`。模型枚举固定为 GLM 5.3、Kimi K3、DeepSeek V4 Pro 和 Flash；接口
+不接受自由 prompt、任意模型、Shell、网络地址、工作树写入、提交、推送或补丁生成参数。
+
+Controller 只从仓库白名单生成不可变 diff 和最小上下文，排除密钥、二进制、vendor、生成物、
+超大文件、submodule 与越界 reparse point；模型只看到仓库相对路径。finding 必须是严格 JSON，
+落在实际改动 hunk，并由 Sol/人工盲审裁决。输入、输出和审计产物位于独立 job 目录；SQLite
+只保留哈希、计量、finding 指纹、裁决和后续 outcome。详细配置与 A/B/C/D 流程见
+`docs/CODE_REVIEW_ZH-CN.md`。
+
+## 8. OpenCode Go 计量
+
+OpenCode 价格快照固定版本，历史记录不随官网改价重算。账本按 `account_alias` 与
+`subscription_id` 隔离记录实际模型、协议、输入/输出 token、缓存读写和虚拟美元，同时检查
+共享滚动 5 小时、7 天、30 天窗口及模型月度额度。`effective_remaining` 取共享月余额与模型
+余额较小值，跨模型共享消费只扣一次。无官方价格的分项为 `null/unsupported`，不按零价处理；
+供应商未返回权威余额或实际成本时明确标记本地估算。不会自动切换账户规避额度；服务端 429
+始终是最终权威。

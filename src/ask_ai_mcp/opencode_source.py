@@ -18,7 +18,7 @@ from ask_ai_mcp.models import (
     SourceExtractionProfile,
     UsageEvent,
 )
-from ask_ai_mcp.opencode import OPENCODE_ACCOUNT_ENV
+from ask_ai_mcp.opencode import OPENCODE_ACCOUNT_ENV, OPENCODE_SUBSCRIPTION_ENV
 from ask_ai_mcp.opencode_pricing import (
     OPENCODE_GO_PRICING_VERSION,
     OpenCodeGoModel,
@@ -53,6 +53,9 @@ class OpenCodeQwenMessagesClient:
         selected = (account or os.environ.get(OPENCODE_ACCOUNT_ENV, "primary")).strip().casefold()
         credentials = OpenCodeCredentialStore(profile=selected)
         self.account = credentials.profile
+        self.subscription_id = (
+            os.environ.get(OPENCODE_SUBSCRIPTION_ENV, "").strip() or f"legacy:{self.account}"
+        )
         self.api_key_provider = api_key_provider or credentials.get_api_key
         self.usage_store = usage_store or UsageStore()
         self.transport = transport
@@ -95,7 +98,9 @@ class OpenCodeQwenMessagesClient:
 
     def chat(self, body: dict[str, Any], *, vision: bool) -> dict[str, Any]:
         del vision
-        reason = self.usage_store.opencode_limit_reason(self.account, self.config.model_id)
+        reason = self.usage_store.opencode_limit_reason(
+            self.account, self.config.model_id, self.subscription_id
+        )
         if reason:
             raise QwenClientError(reason)
         request = self._messages_body(body)
@@ -212,12 +217,14 @@ class OpenCodeQwenMessagesClient:
         output_tokens = int(usage.get("output_tokens", 0) or 0)
         cache_read = int(usage.get("cache_read_input_tokens", 0) or 0)
         cache_write = int(usage.get("cache_creation_input_tokens", 0) or 0)
+        priced_at = datetime.now(UTC)
         cost = calculate_opencode_go_cost(
             OpenCodeGoModel.QWEN_3_8_MAX,
             input_tokens=input_tokens + cache_read + cache_write,
             output_tokens=output_tokens,
             cache_read_tokens=cache_read,
             cache_write_tokens=cache_write,
+            priced_at=priced_at,
         )
         self.usage_store.record(
             UsageEvent(
@@ -228,8 +235,9 @@ class OpenCodeQwenMessagesClient:
                 provider_model_id=self.config.model_id,
                 provider_runtime=OpenCodeGoProtocol.ANTHROPIC_MESSAGES.value,
                 provider_account=self.account,
+                provider_subscription_id=self.subscription_id,
                 thinking_enabled=False,
-                priced_at=datetime.now(UTC),
+                priced_at=priced_at,
                 pricing_schedule_version=OPENCODE_GO_PRICING_VERSION,
                 prompt_cache_hit_tokens=cache_read,
                 prompt_cache_miss_tokens=input_tokens,

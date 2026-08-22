@@ -47,6 +47,11 @@ Version 0.7.1 adds a bounded three-scope visual extraction contract without
 adding MCP tools: compact structure indexes, separate topology, and selected
 details based on explicit identifiers plus a deterministic normalized crop.
 
+Version 0.8.0 adds an independent, opt-in, three-tool Coding Review MCP and an
+auditable OpenCode Go ledger with shared rolling windows, per-model monthly
+caps, DeepSeek peak/off-peak rates, and subscription isolation. Review is not
+loaded by Core, Subagent, Perception, H3, or Full.
+
 The first full billed lifecycle smoke passed on 2026-08-02 in one Flash call:
 the generated synthetic helper passed four isolated tests, was reviewed, and
 was registered under an exact hash with synthetic-input capability only.
@@ -76,16 +81,17 @@ The recommended always-on MCP entry point is:
 C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-core.exe
 ```
 
-Five explicit profiles share the same codebase:
+Six explicit profiles share the same codebase:
 
 - `ask-ai-mcp-core.exe` registers the twelve non-video tools only.
 - `ask-ai-mcp-subagent.exe` registers Core plus three multimodal source tools, but no H3.
 - `ask-ai-mcp-perception.exe` registers only the three multimodal source tools.
 - `ask-ai-mcp-h3.exe` registers only the four local video and ComfyUI tools.
+- `ask-ai-mcp-review.exe` registers only three read-only code-review tools and is opt-in.
 - `ask-ai-mcp-full.exe` registers all nineteen tools, including source and H3 adapters.
 
 The legacy `ask-ai-mcp.exe` entry point defaults to Full and accepts
-`ASK_AI_MCP_PROFILE=core|subagent|perception|h3|full`. New desktop deployments should use the explicit
+`ASK_AI_MCP_PROFILE=core|subagent|perception|h3|review|full`. New desktop deployments should use the explicit
 profile executable so a missing environment variable cannot silently change the
 advertised tool surface.
 
@@ -128,6 +134,7 @@ isolated under `C:\AI\ComfyUI`.
 - `docs/ISOLATION.md`: Docker/WSL candidate sandbox and workspace boundary
 - `docs/CANDIDATE_LIFECYCLE.md`: repair, review, and hash-pinned promotion gates
 - `docs/MCP_SURFACE.md`: public tool contracts and desktop identity boundary
+- `docs/CODE_REVIEW_ZH-CN.md`: isolated review workflow, accounting, and blind evaluation
 - `docs/MCP_SMOKE.md`: first billed build-review-approval evidence
 - `docs/H3_HANDOFF_ZH-CN.md`: verified H3 deployment, model hashes, MCP contract, and next-session handoff
 - `docs/QWEN_SUBAGENT_PREDEPLOY_ZH-CN.md`: replay capture, source contract, and exact Qwen integration stop point
