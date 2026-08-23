@@ -100,7 +100,7 @@ verifiable outputs without arbitrary host automation.
 Exit criteria: both clients use the same policy and audit store, and trial data
 supports a decision on production limits and model routing.
 
-## Phase 7: provider-neutral external model workers
+## Phase 7: provider-neutral external model workers and instruction cutover
 
 - Replace `DeepSeek` as a controller role name with the provider-neutral
   `external_model_worker`; retain provider names only inside provider adapters,
@@ -131,8 +131,18 @@ supports a decision on production limits and model routing.
   cross-session authority, delegation, budget, data-safety, and workflow-routing
   rules in the global prompt; leave model- and protocol-specific details in MCP
   status/guidance responses and versioned project documentation.
+- Make prompt maintenance an explicit deliverable of the first OpenCode-routed
+  release, not an informal post-release cleanup. After the runtime and server
+  contracts are deployed, remove the temporary DeepSeek-direct budget clause
+  from the global guidance, audit the repository `AGENTS.md` for provider names
+  used as role names, and deduplicate global host/worker rules from repository
+  implementation rules.
+- Record the global, repository, and combined instruction byte counts before and
+  after cutover. Acceptance requires a smaller persistent instruction payload,
+  no loss of authority or safety invariants, and a fresh-session check proving
+  that Codex loaded the new provider-neutral guidance and MCP descriptions.
 
 Exit criteria: the controller can switch a bounded worker between DeepSeek and
 OpenCode Go without changing its public role contract or safety guarantees; no
 active global instruction incorrectly treats `DeepSeek` as the role name; and a
-fresh Codex session loads guidance matching the deployed MCP version.
+fresh Codex session loads smaller guidance matching the deployed MCP version.
