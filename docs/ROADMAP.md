@@ -1,11 +1,11 @@
 # Roadmap
 
 Current implementation status: phases 0 through 2 are complete, including the
-real opt-in synthetic Flash smoke request. The four explicit MCP profiles
-(Core 12, Subagent 15, H3 4, and Full 19),
-conversation budget sessions, compact/full review split, and verified execution
-implementation are complete; cross-client Phase 3 acceptance and explicit
-real-input-root configuration remain pending.
+real opt-in synthetic Flash smoke request. Version 0.8.0 exposes six explicit
+MCP profiles (Core 12, Perception 3, Subagent 15, H3 4, Full 19, and the
+independent Review 3), conversation budget sessions, compact/full review,
+verified execution, and the OpenCode Go dual-layer usage ledger. Cross-client
+Phase 3 acceptance and explicit real-input-root configuration remain pending.
 
 ## Phase 0: policy and skeleton
 
@@ -99,3 +99,40 @@ verifiable outputs without arbitrary host automation.
 
 Exit criteria: both clients use the same policy and audit store, and trial data
 supports a decision on production limits and model routing.
+
+## Phase 7: provider-neutral external model workers
+
+- Replace `DeepSeek` as a controller role name with the provider-neutral
+  `external_model_worker`; retain provider names only inside provider adapters,
+  model catalogs, credentials, pricing rules, and provider-specific audit data.
+- Standardize public routing and audit fields around `provider`, `model_id`,
+  `worker_role`, `capability_profile`, `account_alias`, `subscription_id`, and
+  `pricing_catalog_version`. Do not introduce new `deepseek_*` public fields;
+  preserve existing names only as documented compatibility aliases during a
+  bounded migration window.
+- Keep roles capability-bounded (`toolsmith`, `code_review`, and
+  `source_structuring`) and continue to forbid a generic unrestricted prompt or
+  direct working-tree mutation, regardless of provider or model.
+- Move budgets and limits behind versioned provider policies: preserve the
+  current DeepSeek CNY session rules while that backend is active, and use the
+  OpenCode Go shared rolling windows, per-model caps, account isolation, and
+  peak/off-peak pricing when routed through Go.
+- Add routing and compatibility tests proving that changing providers does not
+  change controller authority, data minimization, isolation, review, approval,
+  or audit guarantees.
+- Treat global Codex guidance as a versioned local deployment artifact. Every
+  release that changes providers, model roles, budget semantics, MCP tools, or
+  approval flow must audit and, when required, update
+  `%USERPROFILE%\.codex\AGENTS.md` after the matching runtime is deployed.
+  Back up the prior local file, keep the persistent wording compact, and verify
+  the new guidance from a fresh Codex session.
+- At provider-neutral cutover, rename the global section from
+  `Ask AI / DeepSeek` to `Ask AI / restricted external model worker`. Keep only
+  cross-session authority, delegation, budget, data-safety, and workflow-routing
+  rules in the global prompt; leave model- and protocol-specific details in MCP
+  status/guidance responses and versioned project documentation.
+
+Exit criteria: the controller can switch a bounded worker between DeepSeek and
+OpenCode Go without changing its public role contract or safety guarantees; no
+active global instruction incorrectly treats `DeepSeek` as the role name; and a
+fresh Codex session loads guidance matching the deployed MCP version.
