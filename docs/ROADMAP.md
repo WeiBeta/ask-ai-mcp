@@ -18,6 +18,9 @@ The Go Chat Completions endpoint remains in documented JSON-object mode because
 its official endpoint matrix does not promise strict JSON Schema enforcement;
 the separate OpenCode session structured-output API includes validation retries
 and is therefore outside the Review module's single-call policy.
+Version 0.9.5 makes the immutable changed-file allow-list a separate exact JSON
+array in prompt v3. Findings must copy one entry verbatim; Git `a/` and `b/`
+prefixes, case changes, similar prefixes, and parent traversal remain rejected.
 
 ## Phase 0: policy and skeleton
 

@@ -34,6 +34,9 @@ evidence hash 由 controller 根据结构化证据摘要重新计算。
 枚举；prompt v2 同时显式要求每条 finding 只能使用 `correctness`、`security`、
 `reliability`、`performance`、`maintainability`、`testing`。文件、行号、hunk、置信度和
 其余结构约束不会因此放宽。
+prompt v3 另把本次不可变快照的合法文件路径作为独立 JSON 数组列出，要求逐字复制其中一项。
+路径比较保持大小写敏感；Git diff 的 `a/`、`b/` 前缀、相似前缀和父目录逃逸仍会拒绝。既有
+Windows 反斜杠到仓库标准 `/` 的确定性规范化保持不变，但 prompt 要求直接输出标准 `/`。
 
 本地状态默认在 `%LOCALAPPDATA%\AskAIMCP\code-review`。每个 job 的 `input`、`output`、
 `audit` 分离。`review.db` 只保存快照/diff/结构化输出哈希、token/成本/延迟、finding 指纹、

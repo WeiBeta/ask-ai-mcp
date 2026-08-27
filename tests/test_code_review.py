@@ -45,21 +45,23 @@ def _git(root: Path, *arguments: str) -> str:
     return completed.stdout.strip()
 
 
-def _repository(tmp_path: Path) -> tuple[Path, str, str]:
+def _repository(tmp_path: Path, relative_file: str = "app.py") -> tuple[Path, str, str]:
     root = tmp_path / "repo"
     root.mkdir()
     _git(root, "init")
     _git(root, "config", "user.email", "tests@example.invalid")
     _git(root, "config", "user.name", "Ask AI Tests")
-    (root / "app.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
-    _git(root, "add", "app.py")
+    source = root / relative_file
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    _git(root, "add", relative_file)
     _git(root, "commit", "-m", "base")
     base = _git(root, "rev-parse", "HEAD")
-    (root / "app.py").write_text(
+    source.write_text(
         "def add(a, b):\n    if a is None:\n        return 0\n    return a + b\n",
         encoding="utf-8",
     )
-    _git(root, "add", "app.py")
+    _git(root, "add", relative_file)
     _git(root, "commit", "-m", "change")
     head = _git(root, "rev-parse", "HEAD")
     return root, base, head
@@ -93,8 +95,9 @@ def _run_review_fixture(
     content: object,
     usage: dict[str, object] | None = None,
     choices_override: object | None = None,
+    repository_file: str = "app.py",
 ) -> tuple[object, dict[str, object], int, Path]:
-    root, base, head = _repository(tmp_path)
+    root, base, head = _repository(tmp_path, repository_file)
     calls = 0
 
     def handler(_request: httpx.Request) -> httpx.Response:
@@ -244,6 +247,10 @@ def test_review_job_is_blind_paginated_and_records_adjudication(
             "Every finding.category must be exactly one of: correctness, security, reliability, "
             "performance, maintainability, testing."
         ) in prompt
+        assert (
+            'Every finding.file must exactly copy one string from this JSON array: ["app.py"].'
+        ) in prompt
+        assert "do not add Git a/ or b/ prefixes" in prompt
         payload = {
             "findings": [
                 {
@@ -306,7 +313,7 @@ def test_review_job_is_blind_paginated_and_records_adjudication(
             encoding="utf-8"
         )
     )
-    assert manifest["prompt_version"] == "code-review-prompt-v2"
+    assert manifest["prompt_version"] == "code-review-prompt-v3"
     assert manifest["reasoning_effort"] == "high"
     assert manifest["max_output_tokens"] == 16_384
     run = manager.store.get_run(submission.job_id)
@@ -896,3 +903,74 @@ def test_review_three_canonical_categories_succeed_without_retry(tmp_path: Path)
     assert [finding.category.value for finding in status.findings] == list(categories)
     assert audit["finding_count"] == 3
     assert audit["validation_stage"] is None
+
+
+@pytest.mark.parametrize("finding_file", ["src/app.py", "src\\app.py"])
+def test_review_exact_or_windows_normalized_changed_file_succeeds_without_retry(
+    tmp_path: Path, finding_file: str
+) -> None:
+    payload = _valid_review_payload()
+    finding = payload["findings"][0]
+    assert isinstance(finding, dict)
+    finding["file"] = finding_file
+
+    status, audit, calls, _ = _run_review_fixture(
+        tmp_path,
+        content=json.dumps(payload),
+        repository_file="src/app.py",
+    )
+
+    assert calls == 1
+    assert status.state is CodeReviewJobState.SUCCEEDED
+    assert status.findings[0].file == "src/app.py"
+    assert audit["validation_stage"] is None
+    serialized = json.dumps(audit, ensure_ascii=False)
+    assert "src/app.py" not in serialized
+    assert "src\\\\app.py" not in serialized
+
+
+@pytest.mark.parametrize(
+    ("finding_file", "expected_stage"),
+    [
+        ("other.py", CodeReviewValidationStage.FILE_SCOPE),
+        ("a/src/app.py", CodeReviewValidationStage.FILE_SCOPE),
+        ("b/src/app.py", CodeReviewValidationStage.FILE_SCOPE),
+        ("src/app.py.extra", CodeReviewValidationStage.FILE_SCOPE),
+        ("src/App.py", CodeReviewValidationStage.FILE_SCOPE),
+        ("../src/app.py", CodeReviewValidationStage.FINDING_SCHEMA),
+        ("src/../src/app.py", CodeReviewValidationStage.FINDING_SCHEMA),
+    ],
+    ids=[
+        "outside",
+        "git-a-prefix",
+        "git-b-prefix",
+        "similar-prefix",
+        "case-change",
+        "parent-prefix",
+        "parent-middle",
+    ],
+)
+def test_review_changed_file_boundary_rejects_without_path_leak_or_retry(
+    tmp_path: Path,
+    finding_file: str,
+    expected_stage: CodeReviewValidationStage,
+) -> None:
+    payload = _valid_review_payload()
+    finding = payload["findings"][0]
+    assert isinstance(finding, dict)
+    finding["file"] = finding_file
+
+    status, audit, calls, root = _run_review_fixture(
+        tmp_path,
+        content=json.dumps(payload),
+        repository_file="src/app.py",
+    )
+
+    assert calls == 1
+    assert status.failure_code is CodeReviewFailureCode.INVALID_PROVIDER_RESPONSE
+    assert status.validation_stage is expected_stage
+    assert audit["validation_stage"] == expected_stage.value
+    serialized = json.dumps(audit, ensure_ascii=False)
+    assert finding_file not in serialized
+    assert "src/app.py" not in serialized
+    assert str(root) not in serialized
