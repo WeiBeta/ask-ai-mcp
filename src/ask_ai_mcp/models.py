@@ -522,6 +522,8 @@ class UsageEvent(StrictModel):
     provider_account: str | None = Field(default=None, min_length=1, max_length=64)
     provider_subscription_id: str | None = Field(default=None, min_length=1, max_length=128)
     thinking_enabled: bool
+    reasoning_effort: str | None = Field(default=None, min_length=1, max_length=32)
+    max_output_tokens: int | None = Field(default=None, ge=1, le=1_000_000)
     priced_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     pricing_band: PricingBand = PricingBand.STANDARD
     pricing_multiplier: float = Field(default=1.0, ge=1.0)

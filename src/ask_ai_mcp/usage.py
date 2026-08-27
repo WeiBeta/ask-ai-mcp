@@ -71,6 +71,8 @@ class UsageStore:
                     provider_account TEXT,
                     provider_subscription_id TEXT,
                     thinking_enabled INTEGER NOT NULL,
+                    reasoning_effort TEXT,
+                    max_output_tokens INTEGER,
                     priced_at TEXT NOT NULL,
                     pricing_band TEXT NOT NULL,
                     pricing_multiplier REAL NOT NULL,
@@ -119,6 +121,8 @@ class UsageStore:
                 "provider_runtime": "TEXT",
                 "provider_account": "TEXT",
                 "provider_subscription_id": "TEXT",
+                "reasoning_effort": "TEXT",
+                "max_output_tokens": "INTEGER",
                 "cache_read_tokens": "INTEGER NOT NULL DEFAULT 0",
                 "cache_write_tokens": "INTEGER NOT NULL DEFAULT 0",
                 "estimated_cost_usd": "REAL NOT NULL DEFAULT 0.0",
@@ -263,6 +267,7 @@ class UsageStore:
                     timestamp, client_name, task_kind, model, provider,
                     provider_model_id, provider_runtime, provider_account,
                     provider_subscription_id, thinking_enabled,
+                    reasoning_effort, max_output_tokens,
                     priced_at, pricing_band, pricing_multiplier,
                     pricing_schedule_version,
                     cache_hit_price_cny_per_million,
@@ -276,7 +281,7 @@ class UsageStore:
                     budget_session_id, lifecycle_id, request_chars, response_chars
                 ) VALUES (
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -290,6 +295,8 @@ class UsageStore:
                     event.provider_account,
                     event.provider_subscription_id,
                     int(event.thinking_enabled),
+                    event.reasoning_effort,
+                    event.max_output_tokens,
                     event.priced_at.astimezone(UTC).isoformat(),
                     event.pricing_band.value,
                     event.pricing_multiplier,

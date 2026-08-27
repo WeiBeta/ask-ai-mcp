@@ -32,6 +32,14 @@ class CodeReviewJobState(StrEnum):
     FAILED = "failed"
 
 
+class CodeReviewFailureCode(StrEnum):
+    REASONING_BUDGET_EXHAUSTED = "REASONING_BUDGET_EXHAUSTED"
+    OUTPUT_TRUNCATED = "OUTPUT_TRUNCATED"
+    INVALID_PROVIDER_RESPONSE = "INVALID_PROVIDER_RESPONSE"
+    PROVIDER_REQUEST_FAILED = "PROVIDER_REQUEST_FAILED"
+    INTERNAL_ERROR = "INTERNAL_ERROR"
+
+
 class CodeReviewFindingCategory(StrEnum):
     CORRECTNESS = "correctness"
     SECURITY = "security"
@@ -192,6 +200,7 @@ class CodeReviewStatus(StrictModel):
     blind_label: str = Field(pattern=r"^review-[a-f0-9]{8}$")
     state: CodeReviewJobState
     detail: str = Field(min_length=1, max_length=1_000)
+    failure_code: CodeReviewFailureCode | None = None
     model_identity_hidden: bool = True
     total_findings: int = Field(ge=0)
     offset: int = Field(ge=0)
@@ -207,6 +216,7 @@ class CodeReviewModelAvailability(StrictModel):
     model_id: CodeReviewModel
     available: bool
     requested_reasoning_effort: str = "max"
+    max_output_tokens: int = Field(default=8_000, ge=1, le=131_072)
 
 
 class CodeReviewMetricSlice(StrictModel):

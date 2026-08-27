@@ -122,14 +122,17 @@ def test_existing_usage_database_is_migrated_without_losing_history(tmp_path: Pa
         columns = {row[1] for row in connection.execute("PRAGMA table_info(api_usage)")}
         migrated = connection.execute(
             "SELECT provider_subscription_id, provider_reported_cost_usd, cost_source, "
-            "pricing_schedule_version FROM api_usage WHERE id = 1"
+            "pricing_schedule_version, reasoning_effort, max_output_tokens "
+            "FROM api_usage WHERE id = 1"
         ).fetchone()
     assert {
         "provider_subscription_id",
         "provider_reported_cost_usd",
         "cost_source",
+        "reasoning_effort",
+        "max_output_tokens",
     }.issubset(columns)
-    assert migrated == (None, None, "local_estimate", "legacy_base")
+    assert migrated == (None, None, "local_estimate", "legacy_base", None, None)
 
 
 def test_v040_lifecycle_metrics_are_migrated_without_fake_byte_values(tmp_path: Path) -> None:

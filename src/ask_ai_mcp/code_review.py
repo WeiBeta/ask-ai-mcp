@@ -21,6 +21,7 @@ from ask_ai_mcp import __version__
 from ask_ai_mcp.code_review_models import (
     CodeReviewArtifact,
     CodeReviewBackendStatus,
+    CodeReviewFailureCode,
     CodeReviewJobState,
     CodeReviewModel,
     CodeReviewModelAvailability,
@@ -62,6 +63,8 @@ from ask_ai_mcp.usage import UsageStore
 OPENCODE_GO_CHAT_URL = "https://opencode.ai/zen/go/v1/chat/completions"
 STATE_ROOT_ENV = "ASK_AI_MCP_REVIEW_STATE_ROOT"
 REASONING_EFFORT = "max"
+GLM_5_3_REASONING_EFFORT = "high"
+GLM_5_3_MAX_OUTPUT_TOKENS = 16_384
 _PROFILE_GUIDANCE = {
     CodeReviewProfile.GENERAL: (
         "Prioritize correctness, regressions, missing tests, and API contracts."
@@ -89,6 +92,12 @@ _CATEGORY_ALIASES = {
 }
 
 
+class CodeReviewResponseError(ValueError):
+    def __init__(self, code: CodeReviewFailureCode, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
 def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -100,6 +109,26 @@ def _atomic_json(path: Path, value: object) -> None:
         json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8"
     )
     temporary.replace(path)
+
+
+def _model_policy(model: CodeReviewModel) -> tuple[str, int]:
+    if model is CodeReviewModel.GLM_5_3:
+        return GLM_5_3_REASONING_EFFORT, GLM_5_3_MAX_OUTPUT_TOKENS
+    return REASONING_EFFORT, MAX_OUTPUT_TOKENS
+
+
+def _output_failure_code(
+    finish_reasons: list[object], usage: dict[str, Any]
+) -> CodeReviewFailureCode | None:
+    if "length" not in finish_reasons:
+        return None
+    completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+    details = usage.get("completion_tokens_details")
+    details = details if isinstance(details, dict) else {}
+    reasoning_tokens = int(details.get("reasoning_tokens", 0) or 0)
+    if completion_tokens > 0 and reasoning_tokens / completion_tokens >= 0.95:
+        return CodeReviewFailureCode.REASONING_BUDGET_EXHAUSTED
+    return CodeReviewFailureCode.OUTPUT_TRUNCATED
 
 
 class CodeReviewManager:
@@ -217,7 +246,12 @@ class CodeReviewManager:
             account_alias=self.account_alias or None,
             remote_models_checked=remote_checked,
             models=[
-                CodeReviewModelAvailability(model_id=model, available=available[model.value])
+                CodeReviewModelAvailability(
+                    model_id=model,
+                    available=available[model.value],
+                    requested_reasoning_effort=_model_policy(model)[0],
+                    max_output_tokens=_model_policy(model)[1],
+                )
                 for model in CodeReviewModel
             ],
             account_ledger=account_ledger,
@@ -249,6 +283,7 @@ class CodeReviewManager:
         job_id = str(uuid4())
         group_id = command.review_group_id or str(uuid4())
         blind_label = f"review-{hashlib.sha256(job_id.encode()).hexdigest()[:8]}"
+        reasoning_effort, max_output_tokens = _model_policy(command.model)
         job_root = self.store.jobs_root / job_id
         input_root = job_root / "input"
         output_root = job_root / "output"
@@ -272,7 +307,8 @@ class CodeReviewManager:
             "source_identity": snapshot.source_identity,
             "prompt_version": PROMPT_VERSION,
             "contract_version": CONTRACT_VERSION,
-            "max_output_tokens": MAX_OUTPUT_TOKENS,
+            "reasoning_effort": reasoning_effort,
+            "max_output_tokens": max_output_tokens,
             "temperature": TEMPERATURE,
         }
         _atomic_json(input_root / "manifest.json", manifest)
@@ -299,7 +335,8 @@ class CodeReviewManager:
                     "protocol": price.protocol.value,
                     "prompt_version": PROMPT_VERSION,
                     "contract_version": CONTRACT_VERSION,
-                    "max_output_tokens": MAX_OUTPUT_TOKENS,
+                    "reasoning_effort": reasoning_effort,
+                    "max_output_tokens": max_output_tokens,
                     "temperature": TEMPERATURE,
                     "account_uid": self.account_uid,
                     "account_alias": self.account_alias,
@@ -347,28 +384,27 @@ class CodeReviewManager:
         state = CodeReviewJobState(str(row["status"]))
         payload = CodeReviewPayload()
         artifacts: list[CodeReviewArtifact] = []
+        failure_code: CodeReviewFailureCode | None = None
         if state is CodeReviewJobState.SUCCEEDED:
             output = self.store.jobs_root / command.job_id / "output" / "findings.json"
             payload = CodeReviewPayload.model_validate_json(output.read_text(encoding="utf-8"))
             artifacts = self._artifacts(command.job_id)
+        elif state is CodeReviewJobState.FAILED:
+            failure_code = self._public_failure_code(command.job_id, row["failure_kind"])
+            artifacts = self._artifacts(command.job_id, audit_only=True)
         total = len(payload.findings)
         findings = payload.findings[command.offset : command.offset + command.limit]
         next_offset = command.offset + len(findings)
         if next_offset >= total:
             next_offset = None
-        detail = (
-            "review completed; adjudicate while model identity remains hidden"
-            if state is CodeReviewJobState.SUCCEEDED
-            else "review failed; inspect local prompt-free audit metadata"
-            if state is CodeReviewJobState.FAILED
-            else "review is queued or running"
-        )
+        detail = self._status_detail(state, failure_code)
         return CodeReviewStatus(
             job_id=command.job_id,
             review_group_id=str(row["review_group_id"]),
             blind_label=str(row["blind_label"]),
             state=state,
             detail=detail,
+            failure_code=failure_code,
             total_findings=total,
             offset=command.offset,
             limit=command.limit,
@@ -378,6 +414,59 @@ class CodeReviewManager:
             truncated=payload.truncated,
             artifacts=artifacts,
         )
+
+    def _public_failure_code(self, job_id: str, value: object) -> CodeReviewFailureCode:
+        raw = str(value or "")
+        try:
+            return CodeReviewFailureCode(raw)
+        except ValueError:
+            pass
+        audit_path = self.store.jobs_root / job_id / "audit" / "provider-response.json"
+        if audit_path.is_file():
+            try:
+                audit = json.loads(audit_path.read_text(encoding="utf-8"))
+                finish_reasons = audit.get("finish_reasons", [])
+                usage = audit.get("usage", {})
+                if isinstance(finish_reasons, list) and isinstance(usage, dict):
+                    output_failure = _output_failure_code(finish_reasons, usage)
+                    if output_failure is not None:
+                        return output_failure
+            except (OSError, ValueError):
+                pass
+        if raw.startswith("HTTP_"):
+            return CodeReviewFailureCode.PROVIDER_REQUEST_FAILED
+        if raw in {"ValueError", "JSONDecodeError", "ValidationError"}:
+            return CodeReviewFailureCode.INVALID_PROVIDER_RESPONSE
+        return CodeReviewFailureCode.INTERNAL_ERROR
+
+    @staticmethod
+    def _status_detail(
+        state: CodeReviewJobState, failure_code: CodeReviewFailureCode | None
+    ) -> str:
+        if state is CodeReviewJobState.SUCCEEDED:
+            return "review completed; adjudicate while model identity remains hidden"
+        if state is not CodeReviewJobState.FAILED:
+            return "review is queued or running"
+        details = {
+            CodeReviewFailureCode.REASONING_BUDGET_EXHAUSTED: (
+                "provider exhausted the completion budget in reasoning before structured "
+                "findings; no retry was attempted"
+            ),
+            CodeReviewFailureCode.OUTPUT_TRUNCATED: (
+                "provider truncated the review response at the output limit; no retry was attempted"
+            ),
+            CodeReviewFailureCode.INVALID_PROVIDER_RESPONSE: (
+                "provider response did not match the structured findings contract; no retry "
+                "was attempted"
+            ),
+            CodeReviewFailureCode.PROVIDER_REQUEST_FAILED: (
+                "provider request failed; no retry was attempted"
+            ),
+            CodeReviewFailureCode.INTERNAL_ERROR: (
+                "review failed before validated findings were available; no retry was attempted"
+            ),
+        }
+        return details[failure_code or CodeReviewFailureCode.INTERNAL_ERROR]
 
     def _run(
         self,
@@ -477,6 +566,8 @@ class CodeReviewManager:
                 provider_account=self.account_uid,
                 provider_subscription_id=self.subscription_id,
                 thinking_enabled=True,
+                reasoning_effort=_model_policy(command.model)[0],
+                max_output_tokens=_model_policy(command.model)[1],
                 priced_at=priced_at,
                 pricing_band=PricingBand(str(usage["pricing_band"])),
                 pricing_schedule_version=OPENCODE_GO_PRICING_VERSION,
@@ -537,14 +628,19 @@ class CodeReviewManager:
 
     @staticmethod
     def _failure_kind(error: Exception) -> str:
+        if isinstance(error, CodeReviewResponseError):
+            return error.code.value
         if isinstance(error, httpx.HTTPStatusError):
-            return f"HTTP_{error.response.status_code}"
-        return type(error).__name__
+            return CodeReviewFailureCode.PROVIDER_REQUEST_FAILED.value
+        if isinstance(error, (ValueError, json.JSONDecodeError)):
+            return CodeReviewFailureCode.INVALID_PROVIDER_RESPONSE.value
+        return CodeReviewFailureCode.INTERNAL_ERROR.value
 
     def _request(
         self, command: CodeReviewSubmitCommand, snapshot: CodeReviewSnapshot
     ) -> tuple[dict[str, Any], datetime, int]:
         prompt = self._prompt(command.review_profile, snapshot)
+        reasoning_effort, max_output_tokens = _model_policy(command.model)
         body = {
             "model": command.model.value,
             "messages": [
@@ -560,8 +656,8 @@ class CodeReviewManager:
                 {"role": "user", "content": prompt},
             ],
             "temperature": TEMPERATURE,
-            "reasoning_effort": REASONING_EFFORT,
-            "max_tokens": MAX_OUTPUT_TOKENS,
+            "reasoning_effort": reasoning_effort,
+            "max_tokens": max_output_tokens,
             "response_format": {"type": "json_object"},
         }
         priced_at = datetime.now(UTC)
@@ -631,6 +727,13 @@ class CodeReviewManager:
         choices = response.get("choices")
         if not isinstance(choices, list) or len(choices) != 1 or not isinstance(choices[0], dict):
             raise ValueError("review response must contain exactly one choice")
+        usage = response.get("usage") if isinstance(response.get("usage"), dict) else {}
+        output_failure = _output_failure_code([choices[0].get("finish_reason")], usage)
+        if output_failure is not None:
+            raise CodeReviewResponseError(
+                output_failure,
+                "provider exhausted or truncated the completion budget",
+            )
         message = choices[0].get("message")
         content = message.get("content") if isinstance(message, dict) else None
         if not isinstance(content, str) or not content or len(content) > 1_000_000:
@@ -754,16 +857,19 @@ class CodeReviewManager:
             "User-Agent": f"ask-ai-mcp/{__version__}",
         }
 
-    def _artifacts(self, job_id: str) -> list[CodeReviewArtifact]:
+    def _artifacts(self, job_id: str, *, audit_only: bool = False) -> list[CodeReviewArtifact]:
         root = self.store.jobs_root / job_id
         result: list[CodeReviewArtifact] = []
         for path in sorted(root.rglob("*")):
             if not path.is_file():
                 continue
+            relative = path.relative_to(root).as_posix()
+            if audit_only and not relative.startswith("audit/"):
+                continue
             data = path.read_bytes()
             result.append(
                 CodeReviewArtifact(
-                    relative_path=path.relative_to(root).as_posix(),
+                    relative_path=relative,
                     sha256=_sha256(data),
                     size_bytes=len(data),
                 )

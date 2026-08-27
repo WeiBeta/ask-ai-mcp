@@ -9,9 +9,16 @@ Subagent、Perception、H3 或 Full，普通开发保持关闭。固定工具只
 - `code_review_submit`：提交冻结 refs 或哈希固定的 patch；
 - `code_review_status`：分页读结果，并记录盲审裁决或延迟 outcome。
 
-固定模型为 `glm-5.3`、`kimi-k3`、`deepseek-v4-pro`，均请求 `reasoning_effort=max`；固定 profile
-为 `general`、`security`、`concurrency`、`data_integrity`。没有 generic prompt、任意模型、
+固定模型为 `glm-5.3`、`kimi-k3`、`deepseek-v4-pro`。真实业务灰度证明 GLM-5.3 的 `max`
+reasoning 会吞尽 8K completion 总预算，因此 GLM 固定使用 `reasoning_effort=high` 与 16K
+输出上限；Kimi/DeepSeek 暂保持 `max` 与 8K。固定 profile 为 `general`、`security`、
+`concurrency`、`data_integrity`。没有 generic prompt、任意模型、
 任意 URL、Shell、写文件、Git 写操作、提交、推送、自动重试或默认补丁。
+
+每次任务把实际 reasoning effort 与输出上限写入 manifest、Review SQLite 和共享 API usage
+账本。若 provider 返回 `finish_reason=length`，且 reasoning token 占 completion token 至少 95%，
+任务以 `REASONING_BUDGET_EXHAUSTED` 失败；其他长度截断为 `OUTPUT_TRUNCATED`。状态接口返回
+机器可读 `failure_code`、安全明确的 detail 和仅含哈希/usage 的 audit artifact，不会自动重试。
 
 ## 仓库与快照安全
 
@@ -66,3 +73,10 @@ recall proxy、false-positive burden、duplicate rate、severity calibration、�
 
 第一批样本对同一冻结 diff 做 GLM/Kimi/Pro 影子 A/B/C；积累样本后再由效果日志决定
 是否购买单模型 Coding Plan 或继续使用 Go 的异构深审组合，不预设赢家。
+
+## P1 设计备注（本版本不实现）
+
+后续可在付费提交前增加 prompt token/成本估算门禁。超过阈值时返回
+`REVIEW_PARTITION_REQUIRED` 和确定性分片计划，但不自动提交多个付费请求。若扩展提交契约，
+只允许显式 `include_files` 或固定 shard ID 从同一冻结 commit 选择文件，并为每个分片重新生成
+独立 diff/snapshot hash；不得静默截断、读取未提交工作树或自动并发调用。

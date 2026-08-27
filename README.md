@@ -62,6 +62,11 @@ Version 0.9.1 fixes Coding repository discovery so the independent Coding MCP
 reads `ASK_AI_MCP_CODING_REPOSITORIES` rather than the Review allow-list. Both
 modules remain deny-by-default and may register multiple explicit Git roots.
 
+Version 0.9.2 adds model-specific Review reasoning/output policies and explicit
+prompt-free failure codes for reasoning-budget exhaustion, output truncation,
+invalid structured responses, provider errors, and internal failures. Failed
+reviews never retry automatically.
+
 The first full billed lifecycle smoke passed on 2026-08-02 in one Flash call:
 the generated synthetic helper passed four isolated tests, was reviewed, and
 was registered under an exact hash with synthetic-input capability only.

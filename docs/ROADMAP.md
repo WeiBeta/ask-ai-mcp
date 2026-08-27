@@ -8,6 +8,9 @@ verified execution, and the OpenCode Go dual-layer usage ledger. Cross-client
 Phase 3 acceptance and explicit real-input-root configuration remain pending.
 Version 0.9.1 separates the Coding and Review repository environment catalogs
 while preserving explicit deny-by-default Git-root allow-lists.
+Version 0.9.2 classifies Review output-budget failures before JSON parsing and
+records each model's actual reasoning effort and output cap. Token/cost preflight
+and explicit frozen-file shards remain a later P1 design item.
 
 ## Phase 0: policy and skeleton
 

@@ -67,6 +67,7 @@ class CodeReviewStore:
                     protocol TEXT NOT NULL,
                     prompt_version TEXT NOT NULL,
                     contract_version TEXT NOT NULL,
+                    reasoning_effort TEXT NOT NULL,
                     max_output_tokens INTEGER NOT NULL,
                     temperature REAL NOT NULL,
                     account_uid TEXT,
@@ -171,6 +172,11 @@ class CodeReviewStore:
                 connection.execute(
                     "ALTER TABLE code_review_runs ADD COLUMN reasoning_tokens INTEGER"
                 )
+            if "reasoning_effort" not in columns:
+                connection.execute(
+                    "ALTER TABLE code_review_runs ADD COLUMN "
+                    "reasoning_effort TEXT NOT NULL DEFAULT 'max'"
+                )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_code_review_runs_account_uid "
                 "ON code_review_runs(account_uid, subscription_id, created_at)"
@@ -181,7 +187,6 @@ class CodeReviewStore:
             "diff_hash",
             "prompt_version",
             "contract_version",
-            "max_output_tokens",
             "temperature",
         )
         with self._connection() as connection:
@@ -200,7 +205,8 @@ class CodeReviewStore:
                 INSERT INTO code_review_runs (
                     run_id, review_group_id, blind_label, repository_id,
                     repo_snapshot_hash, diff_hash, model, provider, protocol,
-                    prompt_version, contract_version, max_output_tokens, temperature,
+                    prompt_version, contract_version, reasoning_effort,
+                    max_output_tokens, temperature,
                     account_uid, account_alias, subscription_id, catalog_version,
                     catalog_effective_at, catalog_source_url, created_at, status,
                     usage_source, pricing_band, file_count, changed_line_count,
@@ -208,7 +214,8 @@ class CodeReviewStore:
                 ) VALUES (
                     :run_id, :review_group_id, :blind_label, :repository_id,
                     :repo_snapshot_hash, :diff_hash, :model, :provider, :protocol,
-                    :prompt_version, :contract_version, :max_output_tokens, :temperature,
+                    :prompt_version, :contract_version, :reasoning_effort,
+                    :max_output_tokens, :temperature,
                     :account_uid, :account_alias, :subscription_id, :catalog_version,
                     :catalog_effective_at, :catalog_source_url, :created_at, :status,
                     :usage_source, :pricing_band, :file_count, :changed_line_count,

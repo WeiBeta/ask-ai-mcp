@@ -17,6 +17,7 @@ from ask_ai_mcp.code_review import OPENCODE_GO_CHAT_URL, CodeReviewManager
 from ask_ai_mcp.code_review_models import (
     CodeReviewAdjudicationCommand,
     CodeReviewAdjudicationDecision,
+    CodeReviewFailureCode,
     CodeReviewJobState,
     CodeReviewModel,
     CodeReviewProfile,
@@ -151,7 +152,8 @@ def test_review_job_is_blind_paginated_and_records_adjudication(
         body = json.loads(request.content)
         assert body["model"] == CodeReviewModel.GLM_5_3.value
         assert body["temperature"] == 0
-        assert body["reasoning_effort"] == "max"
+        assert body["reasoning_effort"] == "high"
+        assert body["max_tokens"] == 16_384
         prompt = body["messages"][1]["content"]
         seen_prompts.append(prompt)
         assert str(root) not in prompt
@@ -213,6 +215,23 @@ def test_review_job_is_blind_paginated_and_records_adjudication(
         status = manager.status(CodeReviewStatusCommand(job_id=submission.job_id, limit=1))
 
     assert status.state is CodeReviewJobState.SUCCEEDED
+    manifest = json.loads(
+        (manager.store.jobs_root / submission.job_id / "input" / "manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["reasoning_effort"] == "high"
+    assert manifest["max_output_tokens"] == 16_384
+    run = manager.store.get_run(submission.job_id)
+    assert run["reasoning_effort"] == "high"
+    assert run["max_output_tokens"] == 16_384
+    import sqlite3
+
+    with sqlite3.connect(tmp_path / "usage.db") as connection:
+        usage_policy = connection.execute(
+            "SELECT reasoning_effort, max_output_tokens FROM api_usage"
+        ).fetchone()
+    assert usage_policy == ("high", 16_384)
     assert status.model_identity_hidden is True
     assert status.total_findings == 1
     assert status.findings[0].category.value == "correctness"
@@ -264,6 +283,7 @@ def test_group_binding_rejects_a_changed_diff_contract(tmp_path: Path) -> None:
         "protocol": "chat_completions",
         "prompt_version": "code-review-prompt-v1",
         "contract_version": "code-review-findings-v1",
+        "reasoning_effort": "max",
         "max_output_tokens": 8000,
         "temperature": 0.0,
         "account_uid": "uid-primary",
@@ -287,6 +307,37 @@ def test_group_binding_rejects_a_changed_diff_contract(tmp_path: Path) -> None:
     changed = dict(base, run_id="2", blind_label="review-22222222", diff_hash="c" * 64)
     with pytest.raises(RuntimeError, match="already bound"):
         store.create_run(changed)
+    model_specific_policy = dict(
+        base,
+        run_id="3",
+        blind_label="review-33333333",
+        model="glm-5.3",
+        reasoning_effort="high",
+        max_output_tokens=16_384,
+    )
+    store.create_run(model_specific_policy)
+    assert store.get_run("3")["max_output_tokens"] == 16_384
+
+
+def test_backend_reports_model_specific_review_policies(tmp_path: Path) -> None:
+    root, _base, _head = _repository(tmp_path)
+    manager = CodeReviewManager(
+        store=CodeReviewStore(tmp_path / "review-state"),
+        usage_store=UsageStore(tmp_path / "usage.db"),
+        snapshotter=CodeReviewSnapshotter(CodeReviewRepositoryCatalog({"sample": root})),
+        account=OpenCodeAccount(uid="go-test-uid", alias="go-test"),
+        api_key_provider=lambda: "opaque-test-key-1234567890",
+    )
+
+    status = manager.backend_status(check_remote=False)
+    policies = {
+        item.model_id: (item.requested_reasoning_effort, item.max_output_tokens)
+        for item in status.models
+    }
+
+    assert policies[CodeReviewModel.GLM_5_3] == ("high", 16_384)
+    assert policies[CodeReviewModel.KIMI_K3] == ("max", 8_000)
+    assert policies[CodeReviewModel.DEEPSEEK_V4_PRO] == ("max", 8_000)
 
 
 def test_review_store_keeps_content_out_of_sqlite_and_versions_each_run(
@@ -410,6 +461,8 @@ def test_validation_failure_preserves_review_response_audit_and_usage(tmp_path: 
         status = manager.status(CodeReviewStatusCommand(job_id=submission.job_id))
 
     assert status.state is CodeReviewJobState.FAILED
+    assert status.failure_code is CodeReviewFailureCode.INVALID_PROVIDER_RESPONSE
+    assert "no retry was attempted" in status.detail
     audit = json.loads(
         (store.jobs_root / submission.job_id / "audit" / "provider-response.json").read_text(
             encoding="utf-8"
@@ -422,3 +475,95 @@ def test_validation_failure_preserves_review_response_audit_and_usage(tmp_path: 
     assert summary.total_calls == 1
     assert summary.failed_calls == 1
     assert summary.prompt_cache_miss_tokens == 30
+
+
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [
+        (
+            {
+                "choices": [{"finish_reason": "length", "message": {"content": "{"}}],
+                "usage": {
+                    "prompt_tokens": 21_111,
+                    "completion_tokens": 8_000,
+                    "completion_tokens_details": {"reasoning_tokens": 7_998},
+                },
+            },
+            CodeReviewFailureCode.REASONING_BUDGET_EXHAUSTED,
+        ),
+        (
+            {
+                "choices": [{"finish_reason": "length", "message": {"content": "{"}}],
+                "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 8_000,
+                    "completion_tokens_details": {"reasoning_tokens": 1_000},
+                },
+            },
+            CodeReviewFailureCode.OUTPUT_TRUNCATED,
+        ),
+        (
+            {
+                "choices": [{"finish_reason": "stop", "message": {"content": "not json"}}],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 10},
+            },
+            CodeReviewFailureCode.INVALID_PROVIDER_RESPONSE,
+        ),
+    ],
+)
+def test_review_failure_codes_are_explicit_and_never_retry(
+    tmp_path: Path,
+    response: dict[str, object],
+    expected: CodeReviewFailureCode,
+) -> None:
+    root, base, head = _repository(tmp_path)
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, json=response)
+
+    store = CodeReviewStore(tmp_path / "review-state")
+    manager = CodeReviewManager(
+        store=store,
+        usage_store=UsageStore(tmp_path / "usage.db"),
+        snapshotter=CodeReviewSnapshotter(CodeReviewRepositoryCatalog({"sample": root})),
+        account=OpenCodeAccount(uid="go-user@example.com", alias="go-user@example.com"),
+        api_key_provider=lambda: "opaque-test-key-1234567890",
+        transport=httpx.MockTransport(handler),
+    )
+    submission = manager.submit(
+        CodeReviewSubmitCommand(
+            repository_id="sample",
+            base_ref=base,
+            head_ref=head,
+            review_profile=CodeReviewProfile.DATA_INTEGRITY,
+            model=CodeReviewModel.GLM_5_3,
+        )
+    )
+    deadline = time.monotonic() + 5
+    status = manager.status(CodeReviewStatusCommand(job_id=submission.job_id))
+    while status.state in {CodeReviewJobState.QUEUED, CodeReviewJobState.RUNNING}:
+        if time.monotonic() >= deadline:
+            raise AssertionError("review job did not complete")
+        time.sleep(0.02)
+        status = manager.status(CodeReviewStatusCommand(job_id=submission.job_id))
+
+    assert calls == 1
+    assert status.state is CodeReviewJobState.FAILED
+    assert status.failure_code is expected
+    assert "no retry was attempted" in status.detail
+    assert status.artifacts
+    assert all(item.relative_path.startswith("audit/") for item in status.artifacts)
+    assert store.get_run(submission.job_id)["failure_kind"] == expected.value
+    if expected is CodeReviewFailureCode.REASONING_BUDGET_EXHAUSTED:
+        import sqlite3
+
+        with sqlite3.connect(store.path) as connection:
+            connection.execute(
+                "UPDATE code_review_runs SET failure_kind = 'ValueError' WHERE run_id = ?",
+                (submission.job_id,),
+            )
+        legacy = manager.status(CodeReviewStatusCommand(job_id=submission.job_id))
+        assert legacy.failure_code is CodeReviewFailureCode.REASONING_BUDGET_EXHAUSTED
