@@ -21,6 +21,20 @@ _SECRET_TEXT = re.compile(
 class CodingModel(StrEnum):
     DEEPSEEK_V4_FLASH = "deepseek-v4-flash"
     GLM_5_3_FLASH = "glm-5.3-flash"
+    DEEPSEEK_V4_PRO = "deepseek-v4-pro"
+    GLM_5_3 = "glm-5.3"
+    KIMI_K3 = "kimi-k3"
+
+
+DEFAULT_CODING_MODELS = (
+    CodingModel.DEEPSEEK_V4_FLASH,
+    CodingModel.GLM_5_3_FLASH,
+)
+ADVANCED_CODING_MODELS = (
+    CodingModel.DEEPSEEK_V4_PRO,
+    CodingModel.GLM_5_3,
+    CodingModel.KIMI_K3,
+)
 
 
 class CodingTaskKind(StrEnum):
@@ -177,7 +191,7 @@ class CodingBackendStatus(StrictModel):
     account_uid: str | None = Field(default=None, max_length=64)
     account_alias: str | None = Field(default=None, max_length=64)
     remote_models_checked: bool
-    models: list[CodingModelAvailability] = Field(default_factory=list, max_length=2)
+    models: list[CodingModelAvailability] = Field(default_factory=list, max_length=5)
     account_ledger: OpenCodeGoAccountUsage | None = None
     catalog_version: str
     catalog_source_url: str

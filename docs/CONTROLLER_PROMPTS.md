@@ -50,6 +50,10 @@ Choose only models currently exposed by the backend route. Do not encode provide
 or model names as durable role names, and do not automatically escalate to a more
 expensive route.
 
+For Coding, prefer DeepSeek V4 Flash or GLM-5.3-Flash. DeepSeek V4 Pro,
+GLM-5.3, and Kimi K3 are explicit advanced candidates only for complex work;
+selecting one never authorizes fallback, retry, or another paid model call.
+
 Treat every generated file as untrusted. Start with
 `review_tool_candidate(mode="summary")`. Use `mode="full"` when inspecting the
 exact patch, tests, dependencies, static findings, risks, and candidate hash,

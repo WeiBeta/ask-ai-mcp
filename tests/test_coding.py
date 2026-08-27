@@ -16,6 +16,8 @@ from ask_ai_mcp import server
 from ask_ai_mcp.code_review_workspace import CodeReviewRepositoryCatalog
 from ask_ai_mcp.coding import OPENCODE_GO_CHAT_URL, CodingManager
 from ask_ai_mcp.coding_models import (
+    ADVANCED_CODING_MODELS,
+    DEFAULT_CODING_MODELS,
     CodingCandidatePayload,
     CodingJobState,
     CodingModel,
@@ -74,6 +76,24 @@ def test_coding_mcp_is_three_tools_and_not_part_of_full() -> None:
     assert coding.isdisjoint(full)
 
 
+def test_coding_schema_has_two_default_and_three_advanced_fixed_models() -> None:
+    assert DEFAULT_CODING_MODELS == (
+        CodingModel.DEEPSEEK_V4_FLASH,
+        CodingModel.GLM_5_3_FLASH,
+    )
+    assert ADVANCED_CODING_MODELS == (
+        CodingModel.DEEPSEEK_V4_PRO,
+        CodingModel.GLM_5_3,
+        CodingModel.KIMI_K3,
+    )
+    schema = CodingSubmitCommand.model_json_schema()
+    assert schema["$defs"]["CodingModel"]["enum"] == [model.value for model in CodingModel]
+    tools = asyncio.run(server.coding_mcp.list_tools())
+    submit = next(tool for tool in tools if tool.name == "coding_submit")
+    exposed = submit.parameters["properties"]["command"]["properties"]["model"]["enum"]
+    assert exposed == [model.value for model in CodingModel]
+
+
 def test_snapshot_is_frozen_and_excludes_uncommitted_content(tmp_path: Path) -> None:
     root, commit = _repository(tmp_path)
     (root / "Counter.cs").write_text("UNCOMMITTED\n", encoding="utf-8")
@@ -97,8 +117,10 @@ def test_coding_catalog_reads_only_its_own_repository_environment(
     assert snapshotter.catalog.repositories == {"coding-repo": root.resolve()}
 
 
-def test_candidate_uses_max_reasoning_and_returns_paginated_external_diff(
+@pytest.mark.parametrize("model", list(CodingModel))
+def test_candidate_uses_fixed_model_max_reasoning_and_returns_external_diff(
     tmp_path: Path,
+    model: CodingModel,
 ) -> None:
     root, commit = _repository(tmp_path)
     original = (root / "Counter.cs").read_text(encoding="utf-8")
@@ -109,7 +131,7 @@ def test_candidate_uses_max_reasoning_and_returns_paginated_external_diff(
         assert str(request.url) == OPENCODE_GO_CHAT_URL
         body = json.loads(request.content)
         seen.append(body)
-        assert body["model"] == CodingModel.GLM_5_3_FLASH.value
+        assert body["model"] == model.value
         assert body["reasoning_effort"] == "max"
         assert body["max_tokens"] == 131_072
         assert str(root) not in body["messages"][1]["content"]
@@ -148,7 +170,7 @@ def test_candidate_uses_max_reasoning_and_returns_paginated_external_diff(
         transport=httpx.MockTransport(handler),
         state_root=tmp_path / "coding-state",
     )
-    submission = manager.submit(_command(commit))
+    submission = manager.submit(_command(commit, model))
     assert submission.reasoning_effort == "max"
     assert submission.max_output_tokens == 131_072
     deadline = time.monotonic() + 5
@@ -160,15 +182,92 @@ def test_candidate_uses_max_reasoning_and_returns_paginated_external_diff(
         status = manager.status(CodingStatusCommand(job_id=submission.job_id, limit=1_000))
 
     assert status.state is CodingJobState.SUCCEEDED
+    assert submission.model is model
+    assert status.model is model
     assert status.reasoning_effort == "max"
     assert status.max_output_tokens == 131_072
     assert "x + 2" in status.patch_chunk
     assert status.changed_files == ["Counter.cs"]
     assert (root / "Counter.cs").read_text(encoding="utf-8") == original
-    assert seen
+    assert len(seen) == 1
+    job = json.loads(
+        (tmp_path / "coding-state" / "jobs" / submission.job_id / "job.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert job["command"]["model"] == model.value
+    assert job["reasoning_effort"] == "max"
+    assert job["max_output_tokens"] == 131_072
     summary = usage.summarize(days=30)
     assert summary.opencode_go_accounts[0].account == "go-user-01"
+    assert summary.by_model[model.value] == 1
+    allowances = {item.model_id: item for item in summary.opencode_go_accounts[0].model_allowances}
+    assert model.value in allowances
     assert summary.reasoning_tokens == 80
+
+
+def test_coding_backend_reports_live_availability_for_all_five_models(tmp_path: Path) -> None:
+    root, _commit = _repository(tmp_path)
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        assert request.method == "GET"
+        return httpx.Response(200, json={"data": [{"id": model.value} for model in CodingModel]})
+
+    manager = CodingManager(
+        usage_store=UsageStore(tmp_path / "usage.db"),
+        snapshotter=CodingSnapshotter(CodeReviewRepositoryCatalog({"unity": root})),
+        account=OpenCodeAccount(uid="go-user-01", alias="Go User"),
+        api_key_provider=lambda: "opaque-test-key-1234567890",
+        transport=httpx.MockTransport(handler),
+        state_root=tmp_path / "coding-state",
+    )
+
+    status = manager.backend_status(check_remote=True)
+
+    assert calls == 1
+    assert status.configured is True
+    assert status.remote_models_checked is True
+    assert [item.model_id for item in status.models] == list(CodingModel)
+    assert all(item.available for item in status.models)
+    assert all(item.requested_reasoning_effort == "max" for item in status.models)
+    assert all(item.max_output_tokens == 131_072 for item in status.models)
+
+
+@pytest.mark.parametrize("model", ADVANCED_CODING_MODELS)
+def test_advanced_coding_failure_never_retries_or_falls_back(
+    tmp_path: Path,
+    model: CodingModel,
+) -> None:
+    root, commit = _repository(tmp_path)
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        calls.append(str(body["model"]))
+        return httpx.Response(503, json={"error": {"message": "synthetic upstream failure"}})
+
+    manager = CodingManager(
+        usage_store=UsageStore(tmp_path / "usage.db"),
+        snapshotter=CodingSnapshotter(CodeReviewRepositoryCatalog({"unity": root})),
+        account=OpenCodeAccount(uid="go-user-01", alias="Go User"),
+        api_key_provider=lambda: "opaque-test-key-1234567890",
+        transport=httpx.MockTransport(handler),
+        state_root=tmp_path / "coding-state",
+    )
+    submission = manager.submit(_command(commit, model))
+    deadline = time.monotonic() + 5
+    status = manager.status(CodingStatusCommand(job_id=submission.job_id))
+    while status.state in {CodingJobState.QUEUED, CodingJobState.RUNNING}:
+        if time.monotonic() >= deadline:
+            raise AssertionError("coding job did not complete")
+        time.sleep(0.02)
+        status = manager.status(CodingStatusCommand(job_id=submission.job_id))
+
+    assert status.state is CodingJobState.FAILED
+    assert calls == [model.value]
 
 
 def test_candidate_cannot_change_unlisted_file(tmp_path: Path) -> None:

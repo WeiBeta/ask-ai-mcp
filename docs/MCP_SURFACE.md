@@ -14,8 +14,11 @@ from Core, Subagent, Perception, H3, Review, and compatibility Full.
 `ask-ai-mcp-coding.exe` exposes `coding_backend_status`, `coding_submit`, and
 paginated `coding_status`. It accepts one allow-listed repository ID, an exact
 commit, named target/context files, a bounded task contract, and only
-`deepseek-v4-flash` or `glm-5.3-flash`. Both routes request `max` reasoning and
-a 131,072-token total generation cap exposed by backend status and job metadata.
+five fixed models. `deepseek-v4-flash` and `glm-5.3-flash` are the preferred
+routes; `deepseek-v4-pro`, `glm-5.3`, and `kimi-k3` are explicit advanced
+candidates for complex work. Every route requests `max` reasoning and a
+131,072-token total generation cap exposed by backend status and job metadata.
+Advanced routes are never selected as an automatic fallback.
 It freezes source with read-only Git operations and emits an external candidate
 diff; it has no generic prompt, arbitrary path/model/URL, shell, test runner,
 working-tree write, apply, commit, push, or automatic account-switch operation.

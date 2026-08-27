@@ -78,6 +78,12 @@ preflight now blocks only context-boundary risk with a deterministic advisory
 partition plan and zero provider calls; provider failures expose content-free
 machine-readable subclasses. Static hash-bound repairs retain their 4,096-token cap.
 
+Version 0.12.1 keeps DeepSeek V4 Flash and GLM-5.3-Flash as the preferred Coding
+routes and adds DeepSeek V4 Pro, GLM-5.3, and Kimi K3 as explicit advanced
+candidate routes for complex Coding tasks. The advanced routes are never selected
+as an automatic fallback and retain the same frozen-input, external-candidate,
+strict-hash, single-call boundary.
+
 The first full billed lifecycle smoke passed on 2026-08-02 in one Flash call:
 the generated synthetic helper passed four isolated tests, was reviewed, and
 was registered under an exact hash with synthetic-input capability only.

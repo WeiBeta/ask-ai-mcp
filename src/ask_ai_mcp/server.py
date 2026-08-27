@@ -303,7 +303,7 @@ def get_coding_manager() -> CodingManager:
     )
 )
 def coding_backend_status() -> CodingBackendStatus:
-    """Check the two fixed coding models, account ledger, and repository IDs."""
+    """Check five fixed coding models, account ledger, and repository IDs."""
 
     return get_coding_manager().backend_status()
 
@@ -318,7 +318,12 @@ def coding_backend_status() -> CodingBackendStatus:
     )
 )
 def coding_submit(command: CodingSubmitCommand) -> CodingSubmission:
-    """Freeze selected files and request one repository-external candidate."""
+    """Freeze selected files and request one repository-external candidate.
+
+    Prefer DeepSeek V4 Flash or GLM-5.3-Flash. Use DeepSeek V4 Pro, GLM-5.3,
+    or Kimi K3 only as an explicit advanced candidate for complex work. A
+    failed request is never retried or routed to another model automatically.
+    """
 
     return get_coding_manager().submit(command)
 

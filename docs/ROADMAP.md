@@ -181,3 +181,10 @@ preserving the 4,096-token static-edit contract. Review preflight rejects only
 inputs approaching the model context boundary, returns an advisory deterministic
 partition plan with zero provider calls, and safely classifies request failures.
 Collect 10-15 days of per-model reasoning/visible-output logs before tightening.
+
+0.12.1 release gate: retain DeepSeek V4 Flash and GLM-5.3-Flash as the preferred
+Coding routes; expose DeepSeek V4 Pro, GLM-5.3, and Kimi K3 only as explicit
+advanced candidates for complex Coding work. All five routes use the existing
+frozen commit, selected-file, repository-external candidate, strict-hash, shared
+ledger, and no-automatic-retry boundary. Keep Phase 7 / 0.13 work frozen while
+real 0.12.x Coding and Review evidence is collected.

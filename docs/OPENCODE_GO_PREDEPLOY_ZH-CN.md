@@ -25,12 +25,13 @@ PDF、PPTX 和 UTF-8 文本；音频、视频需要独立预处理与时间码�
 
 | 阶段 | 模型 | 协议 | 固定端点 |
 |---|---|---|---|
-| Coding 候选 | DSV4 Flash 或 GLM-5.3-Flash | Chat Completions，`max` | `/zen/go/v1/chat/completions` |
+| Coding 默认候选 | DSV4 Flash 或 GLM-5.3-Flash | Chat Completions，`max` | `/zen/go/v1/chat/completions` |
+| Coding 高级候选 | DSV4 Pro、GLM-5.3 或 Kimi K3 | Chat Completions，`max` | `/zen/go/v1/chat/completions` |
 | Review 深审 | DSV4 Pro、GLM-5.3 或 Kimi K3 | Chat Completions，`max` | `/zen/go/v1/chat/completions` |
 | Core 工具制造 | 固定服务端策略 | 固定协议 | 固定 Go 端点 |
 | 多模态来源结构化 | Qwen3.8 Max | Anthropic Messages | `/zen/go/v1/messages` |
 
-Core 初次生成/语义修复、Coding 两路与 Review 三路统一使用共享 Go 生成策略；文本 thinking
+Core 初次生成/语义修复、Coding 五路与 Review 三路统一使用共享 Go 生成策略；文本 thinking
 工况的客户端总生成上限为 131,072 token。Core 静态哈希绑定小修保持 thinking off/4,096，
 Perception 保持 reasoning none 和按提取 profile 控制的结构化证据上限，H3 不使用 completion
 预算。所有实际 effort/cap 必须写入状态、manifest 或 usage 审计，不能再散落为入口私有策略。
@@ -91,7 +92,8 @@ unsupported，不默认为 0。
 
 1. 开通付费账户后，用隐藏交互按 UID 写入密钥，不把密钥写入配置文件或日志。
 2. 调用 `/zen/go/v1/models`，确认目标模型 ID 与当前代码一致。
-3. 对两个 Coding 模型与三个 Review 模型执行相同合成输入的 opt-in 测试，验证 `max` 支持。
+3. 对两条默认 Coding 路由与三个 Review 模型执行相同合成输入的 opt-in 测试；三条高级
+   Coding 路由仅在明确授权时分别做单次测试，验证 `max` 支持且不触发自动 fallback。
 4. 对照 OpenCode 控制台核对 token、缓存和虚拟美元；字段语义不同则先修正账本。
 5. 验证常态只启用 Core；Coding、Review、Perception 和 H3 均独立按需开关。
 6. 真实 API 集成测试必须保持 opt-in，不进入普通 `pytest`。

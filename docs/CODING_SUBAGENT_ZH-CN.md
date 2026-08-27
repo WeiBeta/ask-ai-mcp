@@ -8,9 +8,11 @@
 - `coding_submit`：冻结精确 commit 上的指定文件并异步提交候选任务；
 - `coding_status`：读取任务状态和分页候选 diff。
 
-模型只允许 `deepseek-v4-flash` 与 `glm-5.3-flash`，均请求
-`reasoning_effort=max` 与 131,072 token 总生成上限。实际策略由 backend status、job manifest
-和共享 usage 账本共同记录，后续按模型日志收敛。服务端不接受 generic prompt、任意模型、任意 URL、Shell、测试命令、
+默认候选模型为 `deepseek-v4-flash` 与 `glm-5.3-flash`。复杂 Coding 任务可由 Controller
+显式选择 `deepseek-v4-pro`、`glm-5.3` 或 `kimi-k3` 作为高级候选。五条固定路由均请求
+`reasoning_effort=max` 与 131,072 token 总生成上限。高级候选不是自动 fallback；任一路由失败
+都不会触发重试或切换模型。实际策略由 backend status、job manifest 和共享 usage 账本共同记录，
+后续按模型日志收敛。服务端不接受 generic prompt、任意模型、任意 URL、Shell、测试命令、
 工作树写入、应用补丁、commit、push、重试次数或切换账户参数。
 
 ## 快照和候选
@@ -50,7 +52,8 @@ ask-ai-mcp-credentials set --provider opencode-go --account-uid <UID> --visible-
 
 1. 普通单元测试只使用注入的假后端，不产生费用。
 2. 凭据和订阅开通后，先查询后端状态并核对 UID、别名、模型与额度。
-3. 对两个 Coding 模型提交同一合成 C# 小任务，确认 `max` 被服务端接受。
+3. 先对两条默认 Coding 路由做合成任务验收；三条高级路由只有在 Controller 明确选择并取得
+   相应授权时才做单次 opt-in 验收，确认 `max` 被服务端接受。
 4. 对照 OpenCode 控制台核对 token、缓存和虚拟美元。
 5. 实际仓库任务仍由 Sol 独立验证；候选成功不等于可直接合并。
 6. DeepSeek 模型需先在对应 Go 工作区完成中国托管 opt-in；未完成时区域门禁返回 403。
