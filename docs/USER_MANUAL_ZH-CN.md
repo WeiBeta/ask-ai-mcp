@@ -248,18 +248,18 @@ repository ID 完全一致。多个 root 用分号分隔；不得配置整个用
 - `list_pending_reviews`：查看另一客户端留下的待审候选；
 - `usage_status`：查看试运行期费用和生命周期经济性。
 
-若已有已验证工具，直接进入本地运行流程，不需要调用 DeepSeek，也不需要打开预算会话。
+若已有已验证工具，直接进入本地运行流程，不需要调用外部模型。
 
 ### 5.3 需要制造新工具时
 
-1. 当前聊天调用一次 `open_budget_session`；
+1. 调用 `usage_status` 检查当前供应商、订阅窗口和模型额度；
 2. 控制模型自行定义窄规格和验收测试；
 3. 只发送合成或最小化脱敏夹具描述；
 4. 调用 `build_helper_tool`；
 5. 服务端进行静态检查、Docker 隔离测试和有限修复；
 6. 通过后仅产生 `review_pending` 候选，不会自动注册或执行。
 
-同一聊天必须复用同一个 `budget_session_id`，不得重开会话绕过预算，也不得把 Claude 的 ID 给 Codex 使用，反之亦然。
+已配置订阅在账本门禁内无需逐次确认。USD 2/日是按月额度折算的使用节奏，不是硬上限；新增账户、订阅、充值或扩额仍须用户明确授权。
 
 ### 5.4 审阅与批准
 
@@ -319,24 +319,18 @@ Claude 是业务文档控制者。典型工作方式：
 - 不合适：让 DeepSeek 模仿当前文风共同撰写报告；
 - 不合适：让 DeepSeek决定冲突来源中哪个数据应写入正文。
 
-## 8. 模型与预算规则
+## 8. 模型、订阅与修复规则
 
-### 8.1 Flash
+### 8.1 订阅额度
 
-- 每个聊天预算会话初始 CNY 5；
-- 状态为 `active` 时无需逐次向用户确认；
-- 用尽后进入 `flash_extension_required`；
-- 每次只能在用户明确同意后增加一个 CNY 5 块。
+- 供应商、模型和额度均以当前 backend status 与 `usage_status` 为准；
+- USD 2/日仅是 30 日额度的利用节奏，超过时不自动阻断；
+- 共享滚动窗口、单模型额度和上游 429 是实际门禁；
+- 已配置订阅的正常调用无需逐次确认，付费失败不得自动重试；
+- 新增账户、订阅、充值、扩额或更昂贵路由必须取得用户明确授权；
+- 旧 DeepSeek CNY budget session 只保留历史审计兼容，不再作为 MCP 协议。
 
-### 8.2 Pro
-
-- 默认预算为 CNY 0；
-- 首次启用和每次续额都必须说明模型、必要原因和 CNY 5 金额；
-- 必须收到用户明确同意；
-- 不得从 Flash 预算推导 Pro 授权；
-- 不得自动升级到 Pro。
-
-### 8.3 修复边界
+### 8.2 修复边界
 
 - 初始候选默认 Thinking High；
 - 静态策略修复最多一次，关闭 Thinking，输出上限 4096 token，只返回绑定原候选哈希的精确文本补丁；
@@ -346,7 +340,7 @@ Claude 是业务文档控制者。典型工作方式：
 - 无效的首次结构化响应可重新生成一次；
 - 生命周期数和 API 调用数是审计指标，不是额外硬上限。
 
-已开始的生命周期允许结束并轻微超额；下一个生命周期必须等预算续额。
+每个生命周期仍受固定候选次数和修复次数约束；额度放宽不等于放宽重试策略。
 
 ## 9. 备份策略
 
@@ -415,11 +409,11 @@ https://github.com/xujinglong8814-WeiBeta/ask-ai-mcp
 7. 恢复漫游交接目录；
 8. 如需继承审阅、预算和注册工具，停机恢复 `%LOCALAPPDATA%\AskAIMCP`；
 9. 合并 Claude 与 Codex MCP 配置，修正绝对路径；
-10. 重启两个 GUI，确认 Core 12、Subagent 15、H3 4 或 Full 19 项工具；
+10. 重启两个 GUI，确认 Core 8、Subagent 11、H3 4 或 Full 15 项工具；
 11. 调用 `workflow_guidance`、`list_pending_reviews`、`usage_status` 做无费用检查；
 12. 用合成 CSV 做一次 `run_verified_tool` 回归，不调用 DeepSeek。
 
-自动化迁移包只迁移 MCP Server，并分为 Core 12、Subagent 15、H3 4 和 Full 19
+自动化迁移包只迁移 MCP Server，并分为 Core 8、Subagent 11、H3 4 和 Full 15
 四个配置。所有版本都不携带 ComfyUI、Qwen、模型、业务文件、本机状态或凭据；目标机必须重新录入
 DeepSeek API 密钥。需要继承历史状态时，仍应采用单独的所有者专用停机冷备份。
 
@@ -427,10 +421,9 @@ DeepSeek API 密钥。需要继承历史状态时，仍应采用单独的所有�
 
 | 状态或错误 | 含义 | 处理 |
 |---|---|---|
-| `active` | 当前模型预算可用 | 可以开始新候选生命周期 |
-| `flash_extension_required` | Flash 块已耗尽 | 说明金额并询问是否追加 CNY 5 |
-| `pro_authorization_required` | Pro 尚未授权 | 说明必要原因与 CNY 5，等待明确同意 |
-| `pro_extension_required` | Pro 额度耗尽 | 再次逐次申请 CNY 5 |
+| `rolling window local ledger limit reached` | 订阅共享窗口已用尽 | 停止调用并等待窗口恢复 |
+| `rolling 30-day model allowance reached` | 单模型月额度已用尽 | 改用已批准路由或等待恢复，不自动扩额 |
+| 上游 `429` | 供应商权威限流 | 停止且不自动付费重试 |
 | `dual_desktop_approval_required` | 输出型或 Pro 工具缺第二端批准 | 另一桌面完整审阅并批准精确哈希 |
 | `full_review_required` | 当前批准方未加载精确完整补丁 | 调用 `review_tool_candidate(mode="full")` |
 | `execution_contract_missing` | 历史工具无标准运行契约 | 保持不可运行，不猜测补齐 |
@@ -467,7 +460,7 @@ DeepSeek API 密钥。需要继承历史状态时，仍应采用单独的所有�
 - [ ] 双端交接内容已保存到 `handoff`；
 - [ ] 任务 manifest 完整；
 - [ ] 需要漫游的目录已进入备份；
-- [ ] 不再需要构建时已关闭当前预算会话。
+- [ ] 已通过 `usage_status` 留存订阅用量与生命周期审计。
 
 ## 14. 安全底线
 
@@ -477,5 +470,5 @@ DeepSeek API 密钥。需要继承历史状态时，仍应采用单独的所有�
 - 不让 DeepSeek 撰写或续写最终正文；
 - 不因测试通过而省略独立代码审查；
 - 不在两个活动进程之间实时同步 SQLite 状态库；
-- 不自动批准、自动升级 Pro 或绕过 CNY 5 预算门禁；
+- 不自动批准、自动升级昂贵路由或绕过订阅账本门禁；
 - 不关闭、卸载或降级物理机已有 Windows 功能来满足本项目。

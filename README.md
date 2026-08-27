@@ -17,20 +17,20 @@ layout, repository changes, and final acceptance.
 ## Current status
 
 Phases 0 through 2 are complete internally. The project includes Windows Credential
-Manager storage and an internal DeepSeek V4 client with schema-constrained JSON
-candidates, explicit Pro escalation, response-body-free errors, prompt-free
+Manager storage and provider adapters with schema-constrained JSON candidates,
+response-body-free errors, prompt-free
 usage accounting, a successfully completed synthetic Flash smoke request, and
 a digest-pinned Docker/WSL 2 candidate runner.
 
 The lifecycle permits one build plus at most two policy-routed repair rounds,
 returns a compact review summary by default, and requires explicit hash-matched
-promotion. Per-conversation budget sessions start with CNY 5 for Flash and CNY
-0 for Pro; either model is extended only in fixed CNY 5 blocks. The development
-compatibility Full surface exposes nineteen narrow tools: four loopback-only
+promotion. Subscription-backed calls use a shared provider-neutral ledger; USD 2/day
+is reported as a utilization pace, not enforced as a hard daily cap. The development
+compatibility Full surface exposes fifteen narrow tools: four loopback-only
 MiniMax H3/ComfyUI video tools, three pre-deployment multimodal source tools,
 usage and lifecycle economics, on-demand
-workflow guidance, cross-desktop pending-review discovery, four local budget
-operations, candidate build, review, approval, registry listing, and verified execution. Verified execution
+workflow guidance, cross-desktop pending-review discovery, candidate build,
+review, approval, registry listing, and verified execution. Verified execution
 requires a standard callable contract, exact registry hash, dual Claude/Codex
 approval for output-producing tools, Docker isolation, and explicitly
 configured narrow input roots. No real input root is enabled by default.
@@ -109,7 +109,7 @@ Seven explicit profiles share the same codebase:
 - `ask-ai-mcp-h3.exe` registers only the four local video and ComfyUI tools.
 - `ask-ai-mcp-review.exe` registers only three read-only code-review tools and is opt-in.
 - `ask-ai-mcp-coding.exe` registers only three bounded coding-candidate tools and is opt-in.
-- `ask-ai-mcp-full.exe` registers all nineteen tools, including source and H3 adapters.
+- `ask-ai-mcp-full.exe` registers all fifteen tools, including source and H3 adapters.
 
 The legacy `ask-ai-mcp.exe` entry point defaults to Full and accepts
 `ASK_AI_MCP_PROFILE=core|subagent|perception|h3|review|coding|full`. New desktop deployments should use the explicit

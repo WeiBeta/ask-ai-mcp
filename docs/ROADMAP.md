@@ -2,8 +2,8 @@
 
 Current implementation status: phases 0 through 2 are complete, including the
 real opt-in synthetic Flash smoke request. Version 0.9.0 exposes seven explicit
-MCP profiles (Core 12, Perception 3, Subagent 15, H3 4, Full 19, independent
-Review 4, and independent Coding 3), conversation budget sessions, compact/full review,
+MCP profiles (Core 8, Perception 3, Subagent 11, H3 4, Full 15, independent
+Review 4, and independent Coding 3), subscription ledgers, compact/full review,
 verified execution, and the OpenCode Go dual-layer usage ledger. Cross-client
 Phase 3 acceptance and explicit real-input-root configuration remain pending.
 Version 0.9.1 separates the Coding and Review repository environment catalogs
@@ -106,13 +106,13 @@ verifiable outputs without arbitrary host automation.
 - [x] Connect local STDIO to Codex Desktop.
 - [x] Connect the same server to Claude Desktop on Windows.
 - [x] Configure tool approval and controller instructions.
-- [x] Add CNY 5 conversation budget blocks with separate Flash and Pro grants.
+- [x] Retire active CNY 5 conversation budget tools in favor of the shared subscription ledger.
 - [x] Add policy-routed repair modes and prompt-free lifecycle size metrics.
 - [x] Require exact full-review attestations for Pro and output-producing tools.
 - [x] Add on-demand workflow guidance and cross-desktop pending-review discovery.
 - [x] Expose actual lifecycle API tokens separately from structural UTF-8 bytes.
 - Run the fifteen-day trial and review quality, cost, latency, and failure data.
-- Reassess the CNY 5 block size after observing real workloads.
+- Reassess subscription utilization pace and model routing after observing real workloads.
 
 Exit criteria: both clients use the same policy and audit store, and trial data
 supports a decision on production limits and model routing.
@@ -130,10 +130,16 @@ supports a decision on production limits and model routing.
 - Keep roles capability-bounded (`toolsmith`, `code_review`, and
   `source_structuring`) and continue to forbid a generic unrestricted prompt or
   direct working-tree mutation, regardless of provider or model.
-- Move budgets and limits behind versioned provider policies: preserve the
-  current DeepSeek CNY session rules while that backend is active, and use the
-  OpenCode Go shared rolling windows, per-model caps, account isolation, and
-  peak/off-peak pricing when routed through Go.
+- Keep entitlements and limits behind versioned provider policies. Active Core,
+  Coding, and Review routes share the OpenCode Go rolling windows, per-model
+  allowances, account isolation, and pricing ledger. Retain old DeepSeek CNY
+  session rows only for historical audit compatibility.
+- Make every executable a thin composition root driven by an explicit profile.
+  Business capabilities (`toolsmith`, `coding`, `review`, `perception`, `h3`),
+  provider routing, and accounting must remain separately testable modules.
+- Split accounting responsibilities into entitlement checks, immutable usage
+  ledger records, and user-approval policy. Expose only compact read-only status
+  through MCP; do not create a required accounting MCP process.
 - Add routing and compatibility tests proving that changing providers does not
   change controller authority, data minimization, isolation, review, approval,
   or audit guarantees.
@@ -159,12 +165,12 @@ supports a decision on production limits and model routing.
   no loss of authority or safety invariants, and a fresh-session check proving
   that Codex loaded the new provider-neutral guidance and MCP descriptions.
 
-Exit criteria: the controller can switch a bounded worker between DeepSeek and
-OpenCode Go without changing its public role contract or safety guarantees; no
+Exit criteria: the controller can switch a bounded worker between providers
+without changing its public role contract or safety guarantees; no
 active global instruction incorrectly treats `DeepSeek` as the role name; and a
 fresh Codex session loads smaller guidance matching the deployed MCP version.
 
-0.9.0 release gate: deploy and inspect the Coding/Review executables first, then
-back up and revise the user-level Codex `AGENTS.md`. The global wording must name
-Core, Coding, and Review by capability rather than provider, state that direct
-DeepSeek is suspended, and leave model catalogs and prices to MCP status.
+0.11.0 release gate: deploy and inspect the eight-tool Core surface, verify that
+legacy CNY budget tools are absent, and confirm `usage_status` reports the USD 2
+daily utilization pace as non-blocking. Then audit the user-level Codex
+`AGENTS.md`; model catalogs and prices remain MCP status data.

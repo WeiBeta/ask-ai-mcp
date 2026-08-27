@@ -87,10 +87,10 @@ try {
         }
 
         $profileToolCounts = @{
-            core = 12
-            subagent = 15
+            core = 8
+            subagent = 11
             h3 = 4
-            full = 19
+            full = 15
         }
         $profiles = @("core", "subagent", "h3", "full")
         foreach ($profile in $profiles) {

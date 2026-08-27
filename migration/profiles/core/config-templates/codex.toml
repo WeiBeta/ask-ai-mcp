@@ -2,7 +2,7 @@
 command = "__MCP_CORE_EXE__"
 enabled = true
 required = false
-enabled_tools = ["usage_status", "workflow_guidance", "list_pending_reviews", "open_budget_session", "budget_status", "add_budget_block", "close_budget_session", "build_helper_tool", "review_tool_candidate", "approve_tool_candidate", "list_registered_tools", "run_verified_tool"]
+enabled_tools = ["usage_status", "workflow_guidance", "list_pending_reviews", "build_helper_tool", "review_tool_candidate", "approve_tool_candidate", "list_registered_tools", "run_verified_tool"]
 default_tools_approval_mode = "prompt"
 startup_timeout_sec = 20
 tool_timeout_sec = 600

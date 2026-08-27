@@ -10,8 +10,6 @@ import pytest
 
 from ask_ai_mcp import server
 from ask_ai_mcp.models import (
-    BudgetIncrementCommand,
-    BudgetSessionCommand,
     CandidateApprovalCommand,
     CandidateDecision,
     DeepSeekModel,
@@ -21,8 +19,6 @@ from ask_ai_mcp.models import (
     VerifiedToolExecutionCommand,
     WorkflowGuidanceTopic,
 )
-
-BUDGET_SESSION_ID = "a1c2e3f4-1234-4567-89ab-1234567890ab"
 
 
 def make_spec() -> ToolBuildSpec:
@@ -51,10 +47,6 @@ def test_full_mcp_surface_and_raw_schema_are_narrow() -> None:
         "usage_status",
         "workflow_guidance",
         "list_pending_reviews",
-        "open_budget_session",
-        "budget_status",
-        "add_budget_block",
-        "close_budget_session",
         "build_helper_tool",
         "review_tool_candidate",
         "approve_tool_candidate",
@@ -92,7 +84,7 @@ def test_full_mcp_surface_and_raw_schema_are_narrow() -> None:
     assert source_schema["focus_region_xywh"]["anyOf"][0]["minItems"] == 4
     assert source_schema["focus_region_xywh"]["anyOf"][0]["maxItems"] == 4
     build_schema = by_name["build_helper_tool"].parameters
-    assert set(build_schema["properties"]) == {"budget_session_id", "spec"}
+    assert set(build_schema["properties"]) == {"spec"}
     assert (
         build_schema["properties"]["spec"]["properties"]["name"]["pattern"] == "^[a-z][a-z0-9_]+$"
     )
@@ -120,7 +112,7 @@ def test_full_mcp_surface_and_raw_schema_are_narrow() -> None:
     guidance_schema = by_name["workflow_guidance"].parameters
     assert set(guidance_schema["properties"]["topic"]["enum"]) == {
         "overview",
-        "budget",
+        "usage",
         "build",
         "review",
         "approval",
@@ -136,10 +128,6 @@ def test_core_mcp_surface_excludes_h3_tools() -> None:
         "usage_status",
         "workflow_guidance",
         "list_pending_reviews",
-        "open_budget_session",
-        "budget_status",
-        "add_budget_block",
-        "close_budget_session",
         "build_helper_tool",
         "review_tool_candidate",
         "approve_tool_candidate",
@@ -199,7 +187,7 @@ def test_guidance_and_pending_queue_are_prompt_free_local_reads(monkeypatch) -> 
 def test_candidate_operations_require_configured_desktop_identity(monkeypatch) -> None:
     monkeypatch.delenv("ASK_AI_MCP_CLIENT_NAME", raising=False)
     with pytest.raises(RuntimeError, match="must be claude_desktop or codex_desktop"):
-        server.build_helper_tool(BUDGET_SESSION_ID, make_spec())
+        server.build_helper_tool(make_spec())
 
 
 def test_build_refuses_to_spend_when_runner_is_unavailable(monkeypatch) -> None:
@@ -216,7 +204,7 @@ def test_build_refuses_to_spend_when_runner_is_unavailable(monkeypatch) -> None:
     )
 
     with pytest.raises(RuntimeError, match="docker_engine_not_available"):
-        server.build_helper_tool(BUDGET_SESSION_ID, make_spec())
+        server.build_helper_tool(make_spec())
 
 
 def test_build_binds_usage_to_configured_client(monkeypatch) -> None:
@@ -237,16 +225,38 @@ def test_build_binds_usage_to_configured_client(monkeypatch) -> None:
     monkeypatch.setattr(server, "get_lifecycle", lambda: FakeLifecycle())
     monkeypatch.setattr(
         server,
-        "get_budget_store",
-        lambda: SimpleNamespace(require_lifecycle_budget=lambda *args, **kwargs: None),
+        "get_toolsmith_provider",
+        lambda: SimpleNamespace(requires_budget_gate=False),
     )
 
-    result = server.build_helper_tool(BUDGET_SESSION_ID, make_spec())
+    result = server.build_helper_tool(make_spec())
 
     assert result == "review-pending"
     assert captured["client_name"] == "claude_desktop"
-    assert captured["budget_session_id"] == BUDGET_SESSION_ID
+    assert "budget_session_id" not in captured
     assert captured["allow_pro"] is False
+
+
+def test_build_rejects_retired_direct_cny_budget_route(monkeypatch) -> None:
+    monkeypatch.setenv("ASK_AI_MCP_CLIENT_NAME", "codex_desktop")
+    monkeypatch.setattr(
+        server,
+        "docker_backend_status",
+        lambda: SimpleNamespace(ready=True, reasons=[]),
+    )
+    monkeypatch.setattr(
+        server,
+        "get_toolsmith_provider",
+        lambda: SimpleNamespace(requires_budget_gate=True),
+    )
+    monkeypatch.setattr(
+        server,
+        "get_lifecycle",
+        lambda: (_ for _ in ()).throw(AssertionError("lifecycle must not start")),
+    )
+
+    with pytest.raises(RuntimeError, match="CNY budget sessions are retired"):
+        server.build_helper_tool(make_spec())
 
 
 def test_review_tool_only_loads_persisted_review(monkeypatch) -> None:
@@ -283,50 +293,11 @@ def test_full_review_records_exact_desktop_attestation(monkeypatch) -> None:
     assert captured == {"review": review, "client_name": "claude_desktop"}
 
 
-def test_budget_tools_bind_opaque_session_to_configured_desktop(monkeypatch) -> None:
-    calls = []
-
-    class FakeBudgetStore:
-        def open_session(self, **kwargs):
-            calls.append(("open", kwargs))
-            return "opened"
-
-        def status(self, *args, **kwargs):
-            calls.append(("status", args, kwargs))
-            return "status"
-
-        def add_budget_block(self, *args, **kwargs):
-            calls.append(("add", args, kwargs))
-            return "added"
-
-        def close_session(self, *args, **kwargs):
-            calls.append(("close", args, kwargs))
-            return "closed"
-
-    monkeypatch.setenv("ASK_AI_MCP_CLIENT_NAME", "codex_desktop")
-    monkeypatch.setattr(server, "get_budget_store", lambda: FakeBudgetStore())
-
-    assert server.open_budget_session() == "opened"
-    assert (
-        server.budget_status(BudgetSessionCommand(budget_session_id=BUDGET_SESSION_ID)) == "status"
+def test_core_surface_has_no_legacy_cny_budget_tools() -> None:
+    names = {tool.name for tool in asyncio.run(server.core_mcp.list_tools())}
+    assert names.isdisjoint(
+        {"open_budget_session", "budget_status", "add_budget_block", "close_budget_session"}
     )
-    assert (
-        server.add_budget_block(
-            BudgetIncrementCommand(
-                budget_session_id=BUDGET_SESSION_ID,
-                model=DeepSeekModel.PRO,
-            )
-        )
-        == "added"
-    )
-    assert (
-        server.close_budget_session(BudgetSessionCommand(budget_session_id=BUDGET_SESSION_ID))
-        == "closed"
-    )
-    assert calls[0] == ("open", {"client_name": "codex_desktop", "label": None})
-    assert calls[1][2]["client_name"] == "codex_desktop"
-    assert calls[2][2] == {"client_name": "codex_desktop", "model": DeepSeekModel.PRO}
-    assert calls[3][2]["client_name"] == "codex_desktop"
 
 
 def test_approval_identity_comes_from_server_configuration(monkeypatch) -> None:

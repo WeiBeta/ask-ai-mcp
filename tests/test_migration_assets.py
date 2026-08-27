@@ -13,10 +13,6 @@ CORE_TOOLS = {
     "usage_status",
     "workflow_guidance",
     "list_pending_reviews",
-    "open_budget_session",
-    "budget_status",
-    "add_budget_block",
-    "close_budget_session",
     "build_helper_tool",
     "review_tool_candidate",
     "approve_tool_candidate",
@@ -144,12 +140,12 @@ def test_builder_uses_sanitized_wheel_metadata_and_headerless_export() -> None:
     assert "--no-header" in builder
     assert "Sensitive value detected inside wheel" in builder
     assert '$profiles = @("core", "subagent", "h3", "full")' in builder
-    assert "full = 19" in builder
+    assert "full = 15" in builder
 
 
 def test_installer_verifies_all_four_explicit_profiles() -> None:
     installer = (MIGRATION / "common/scripts/install-mcp.ps1").read_text("utf-8")
     assert '[ValidateSet("core", "subagent", "h3", "full")]' in installer
-    assert "subagent = 15" in installer
+    assert "subagent = 11" in installer
     assert "h3 = 4" in installer
-    assert "full = 19" in installer
+    assert "full = 15" in installer

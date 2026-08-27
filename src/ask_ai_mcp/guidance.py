@@ -4,7 +4,7 @@ from ask_ai_mcp.models import WorkflowGuidance, WorkflowGuidanceTopic
 
 _GUIDANCE: dict[WorkflowGuidanceTopic, list[str]] = {
     WorkflowGuidanceTopic.OVERVIEW: [
-        "DeepSeek is limited to helper-tool construction, source structuring, "
+        "Ask AI workers are limited to helper-tool construction, source structuring, "
         "and mechanical code work.",
         "Never delegate final prose, facts, conclusions, source-conflict decisions, "
         "or delivery wording.",
@@ -15,20 +15,20 @@ _GUIDANCE: dict[WorkflowGuidanceTopic, list[str]] = {
         "Send bounded specifications and synthetic or minimized fixtures; never send "
         "secrets, full knowledge bases, or whole business documents.",
     ],
-    WorkflowGuidanceTopic.BUDGET: [
-        "Each Claude or Codex chat opens its own budget session once and reuses that "
-        "opaque ID only inside the same chat.",
-        "Flash starts with CNY 5; while active it needs no per-call confirmation.",
-        "Flash extensions are exactly CNY 5 and require explicit user confirmation "
-        "after the server reports extension_required.",
-        "Pro starts at CNY 0; every first or renewed CNY 5 Pro block requires explicit "
-        "user confirmation naming model, reason, and amount.",
-        "A started lifecycle may finish and overshoot its current block; the next "
-        "lifecycle is then blocked.",
+    WorkflowGuidanceTopic.USAGE: [
+        "Call usage_status for prompt-free subscription-ledger status before external work.",
+        "The USD 2 daily figure is a utilization pace derived from the shared monthly "
+        "allowance, not a hard daily spending limit.",
+        "Within an already configured subscription, calls need no per-call confirmation "
+        "while backend ledger gates remain open.",
+        "Shared rolling windows, model allowances, and an authoritative provider 429 can "
+        "block work; never retry a paid failure automatically.",
+        "Adding an account, subscription, top-up, or allowance still requires explicit "
+        "user authorization.",
     ],
     WorkflowGuidanceTopic.BUILD: [
-        "Call build_helper_tool only with a bounded structured ToolBuildSpec and an "
-        "active same-chat budget_session_id.",
+        "Call build_helper_tool only with a bounded structured ToolBuildSpec after "
+        "checking the current provider and subscription ledger.",
         "Original business files are not build inputs; use synthetic or minimized "
         "redacted fixture descriptions.",
         "Flash thinking-high is the default. Static-policy repair is non-thinking and "

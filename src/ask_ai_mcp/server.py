@@ -11,7 +11,6 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from ask_ai_mcp import __version__
-from ask_ai_mcp.budget import BudgetStore
 from ask_ai_mcp.code_review import CodeReviewManager
 from ask_ai_mcp.code_review_models import (
     CodeReviewBackendStatus,
@@ -35,10 +34,6 @@ from ask_ai_mcp.guidance import workflow_guidance_for
 from ask_ai_mcp.h3 import H3ComfyClient
 from ask_ai_mcp.lifecycle import CandidateLifecycle
 from ask_ai_mcp.models import (
-    BudgetIncrementCommand,
-    BudgetSessionCommand,
-    BudgetSessionOpenCommand,
-    BudgetSessionStatus,
     CandidateApprovalCommand,
     CandidateApprovalRequest,
     CandidateDecision,
@@ -226,11 +221,6 @@ source_mcp.add_middleware(ProtocolAuditMiddleware(lambda: get_usage_store()))
 h3_mcp.add_middleware(ProtocolAuditMiddleware(lambda: get_usage_store()))
 review_mcp.add_middleware(ProtocolAuditMiddleware(lambda: get_usage_store()))
 coding_mcp.add_middleware(ProtocolAuditMiddleware(lambda: get_usage_store()))
-
-
-@lru_cache(maxsize=1)
-def get_budget_store() -> BudgetStore:
-    return BudgetStore(get_usage_store().path)
 
 
 @lru_cache(maxsize=1)
@@ -549,7 +539,7 @@ def source_job_status(
     )
 )
 def usage_status(days: Annotated[int, Field(ge=1, le=366)] = 15) -> UsageSummary:
-    """Return local usage totals and recent lifecycle economics; never calls a model."""
+    """Return subscription usage, daily pace, and lifecycle economics; never calls a model."""
     return get_usage_store().summarize(days=days)
 
 
@@ -563,7 +553,7 @@ def usage_status(days: Annotated[int, Field(ge=1, le=366)] = 15) -> UsageSummary
     )
 )
 def workflow_guidance(topic: WorkflowGuidanceTopic) -> WorkflowGuidance:
-    """Load one local protocol topic on demand; never calls DeepSeek."""
+    """Load one local protocol topic on demand; never calls a model."""
     return workflow_guidance_for(topic)
 
 
@@ -583,84 +573,6 @@ def list_pending_reviews() -> PendingReviewList:
 
 @core_tool(
     annotations=ToolAnnotations(
-        title="Open a local DeepSeek budget session",
-        readOnlyHint=False,
-        destructiveHint=False,
-        idempotentHint=False,
-        openWorldHint=False,
-    )
-)
-def open_budget_session(
-    command: BudgetSessionOpenCommand | None = None,
-) -> BudgetSessionStatus:
-    """Create one conversation budget with Flash CNY 5 and Pro CNY 0.
-
-    This is local and prompt-free. The returned opaque session ID must be
-    reused by the same Claude/Codex conversation for every billed build.
-    """
-    client_name = get_client_name()
-    command = command or BudgetSessionOpenCommand()
-    return get_budget_store().open_session(client_name=client_name, label=command.label)
-
-
-@core_tool(
-    annotations=ToolAnnotations(
-        title="Read a local DeepSeek budget session",
-        readOnlyHint=True,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=False,
-    )
-)
-def budget_status(command: BudgetSessionCommand) -> BudgetSessionStatus:
-    """Return prompt-free model grants and actual locally estimated spend."""
-    return get_budget_store().status(
-        command.budget_session_id,
-        client_name=get_client_name(),
-    )
-
-
-@core_tool(
-    annotations=ToolAnnotations(
-        title="Add one confirmed CNY 5 budget block",
-        readOnlyHint=False,
-        destructiveHint=False,
-        idempotentHint=False,
-        openWorldHint=False,
-    )
-)
-def add_budget_block(command: BudgetIncrementCommand) -> BudgetSessionStatus:
-    """Add exactly CNY 5 for one model after explicit user confirmation.
-
-    Callers cannot choose the amount. For Pro, the first block changes the
-    default zero grant into an active CNY 5 grant for this conversation.
-    """
-    return get_budget_store().add_budget_block(
-        command.budget_session_id,
-        client_name=get_client_name(),
-        model=command.model,
-    )
-
-
-@core_tool(
-    annotations=ToolAnnotations(
-        title="Close a local DeepSeek budget session",
-        readOnlyHint=False,
-        destructiveHint=False,
-        idempotentHint=True,
-        openWorldHint=False,
-    )
-)
-def close_budget_session(command: BudgetSessionCommand) -> BudgetSessionStatus:
-    """Close a conversation budget without deleting its audit history."""
-    return get_budget_store().close_session(
-        command.budget_session_id,
-        client_name=get_client_name(),
-    )
-
-
-@core_tool(
-    annotations=ToolAnnotations(
         title="Build isolated helper-tool candidate",
         readOnlyHint=False,
         destructiveHint=False,
@@ -669,23 +581,15 @@ def close_budget_session(command: BudgetSessionCommand) -> BudgetSessionStatus:
     )
 )
 def build_helper_tool(
-    budget_session_id: Annotated[
-        str,
-        Field(
-            min_length=36,
-            max_length=36,
-            pattern=r"^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
-        ),
-    ],
     spec: ToolBuildSpec,
 ) -> CandidateLifecycleResult:
     """Build and test one bounded helper-tool candidate for Sol/Opus review.
 
-    This may call DeepSeek and create disposable local jobs. It accepts only a
+    This may call the configured worker and create disposable local jobs. It accepts only a
     structured tool specification, never an arbitrary prompt or source bundle.
-    Flash thinking is the default. Pro requires an active Pro budget block in
-    the same conversation session. A passing result is still only review-pending
-    and returns a compact summary rather than the full candidate patch.
+    Provider and subscription gates are enforced by the backend. A passing
+    result is still only review-pending and returns a compact summary rather
+    than the full candidate patch.
     """
     client_name = get_client_name()
     backend = docker_backend_status()
@@ -694,15 +598,13 @@ def build_helper_tool(
         raise RuntimeError(f"isolated runner is unavailable: {reasons}")
     provider = get_toolsmith_provider()
     if provider.requires_budget_gate:
-        get_budget_store().require_lifecycle_budget(
-            budget_session_id,
-            client_name=client_name,
-            model=spec.model,
+        raise RuntimeError(
+            "direct DeepSeek CNY budget sessions are retired from the active Core protocol; "
+            "select the configured subscription provider"
         )
     return get_lifecycle().run(
         spec,
         client_name=client_name,
-        budget_session_id=budget_session_id,
         allow_pro=spec.model is DeepSeekModel.PRO,
     )
 

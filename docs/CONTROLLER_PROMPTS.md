@@ -12,7 +12,7 @@ authority.
 
 Never delegate final prose, continuation of document chapters, factual
 decisions, source-conflict resolution, conclusions, citations, or wording
-intended for direct delivery. DeepSeek output must never be pasted into a final
+intended for direct delivery. Worker output must never be pasted into a final
 document as authored content.
 
 Good delegation targets are repetitive and mechanically verifiable work:
@@ -33,34 +33,22 @@ registered for repeated use.
 Load detailed state-machine instructions only when needed through
 `workflow_guidance`. Use `list_pending_reviews` to discover review or second-
 desktop approval work without loading candidate patches.
-Budget-session tools, review, approval, registry listing, and verified execution
-do not call DeepSeek. At the start of a Claude/Codex conversation that needs
-Ask AI, call `open_budget_session` once and retain its opaque ID. Flash receives
-an automatic CNY 5 grant for that conversation; builds may proceed without
-reconfirming until `budget_status` reports `flash_extension_required`. Then ask
-the user whether to add exactly CNY 5 and call `add_budget_block` only after an
-explicit yes.
-
-Pro starts at CNY 0 and `pro_authorization_required`. Selecting Pro never
-inherits the Flash grant. Explain why Pro is needed, obtain explicit approval,
-then add one CNY 5 Pro block. Later Pro exhaustion uses
-`pro_extension_required` and the same explicit CNY 5 extension flow. Never add
-more than one block per confirmation; the server rejects pre-funding while a
-model remains active. A lifecycle that starts under an active
-grant may finish and slightly overshoot; do not start another lifecycle until
-the next block is approved. Lifecycle counts and API-call counts are audit
-metrics, not independent limits. Close the budget session when the conversation
-workflow is complete.
+Review, approval, registry listing, verified execution, and `usage_status` make
+no model call. Before external work, inspect the current backend and subscription
+ledger. USD 2/day is an informational utilization pace derived from the monthly
+allowance, not a hard daily cap. Calls on an already configured subscription need
+no per-call confirmation while rolling-window and model-allowance gates remain
+open. Never automatically retry a paid failure. Adding an account, subscription,
+top-up, allowance, or more expensive route still requires explicit user approval.
 
 For a build, provide a narrow structured specification, synthetic or minimally
 sanitized fixtures, explicit input and output contracts, prohibited
 capabilities, and deterministic acceptance tests. Never send credentials, an
 entire knowledge base, an entire business document, or unrelated source text.
 
-Use DeepSeek V4 Flash Thinking by default for scripts, tests, repairs, and code
-diagnosis. Do not automatically escalate to Pro. Pro requires an explicit
-controller decision and user approval and is reserved for difficult OOXML,
-cross-module diagnosis, or repeated format failures.
+Choose only models currently exposed by the backend route. Do not encode provider
+or model names as durable role names, and do not automatically escalate to a more
+expensive route.
 
 Treat every generated file as untrusted. Start with
 `review_tool_candidate(mode="summary")`. Use `mode="full"` when inspecting the
@@ -127,12 +115,11 @@ reviewer when the helper affects document semantics or delivery quality.
 
 ## Cross-client acceptance workflow
 
-1. Codex defines a harmless synthetic task and opens a conversation budget
-   session with the automatic CNY 5 Flash grant.
-2. Codex calls `build_helper_tool` with that session ID and records the job ID, candidate hash,
+1. Codex checks `usage_status` and defines a harmless synthetic task.
+2. Codex calls `build_helper_tool` and records the job ID, candidate hash,
    attempts, isolated tests, token delta, and estimated cost.
 3. Claude calls `review_tool_candidate(mode="full")` for the same job and independently
-   reviews the exact patch and evidence without calling DeepSeek.
+   reviews the exact patch and evidence without calling a model.
 4. Codex and Claude each approve the same unchanged hash and minimum capability
    set; the second approval must not change candidate bytes.
 5. Either client calls `list_registered_tools` and verifies the tool is marked
@@ -149,6 +136,6 @@ the other. The acceptance workflow still verifies this behavior end to end.
 
 The optional Subagent and Full profiles expose bounded, source-faithful Qwen
 structuring for supported local documents and images. Core remains free of that
-surface. Verified tools execute locally and offline; they do not make DeepSeek a
+surface. Verified tools execute locally and offline; they do not make a worker a
 source-content author. Do not route source content through `build_helper_tool` as
 a workaround.

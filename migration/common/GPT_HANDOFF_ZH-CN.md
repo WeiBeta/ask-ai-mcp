@@ -40,4 +40,4 @@ Codex 或 Claude 的个人配置；GPT 应根据 `config-templates` 中的片段
 <安装目录>\.venv\Scripts\ask-ai-mcp-credentials.exe set
 ```
 
-最后完全重启相应桌面客户端，并确认 Core 12、Subagent 15、H3 4、Full 19 项工具。
+最后完全重启相应桌面客户端，并确认 Core 8、Subagent 11、H3 4、Full 15 项工具。

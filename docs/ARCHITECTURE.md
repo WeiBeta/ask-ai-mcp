@@ -105,10 +105,6 @@ The Core public tool set is deliberately narrow:
 - `usage_status`
 - `workflow_guidance`
 - `list_pending_reviews`
-- `open_budget_session`
-- `budget_status`
-- `add_budget_block`
-- `close_budget_session`
 - `build_helper_tool`
 - `review_tool_candidate`
 - `approve_tool_candidate`
@@ -147,7 +143,7 @@ be supported for isolated development and CI, but secrets are never committed.
 
 The audit store records timestamps, client identity, task kind, model tier,
 thinking mode, token usage, cache hits, estimated cost, latency, retry count,
-opaque budget/lifecycle IDs, request/response character counts, structural
+opaque audit-scope/lifecycle IDs, request/response character counts, structural
 lifecycle character and UTF-8 byte sizes, test outcome, candidate hash, and
 final promotion decision. Actual API token counts and structural sizes remain
 separate measurements.

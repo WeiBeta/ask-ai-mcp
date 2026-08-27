@@ -1,92 +1,39 @@
-# Repository instructions
+# Ask AI MCP 仓库指令
 
-## Platform and tooling
+## 产品与工具链
 
-- The current product target is Windows 11 only. Do not add macOS support in
-  this development phase.
-- Treat the Windows machine as a multipurpose physical host. System changes
-  must be additive by default: do not disable, remove, or downgrade existing
-  Windows features, Hyper-V, Containers, IIS, .NET Framework versions, or other
-  shared runtimes without explicit approval for that exact change.
-- Enforce project-specific restrictions inside the project runner or container
-  configuration instead of reducing host capabilities.
-- Use PowerShell 7 for scripts and automation.
-- Use the system Python 3.13 installation and the system `uv` installation.
-- Project dependencies belong in `.venv` and must be locked with `uv.lock`.
-- Keep MCP stdout protocol-clean. Application logs go to stderr or the local
-  audit store, never stdout.
+- 当前产品目标仅为 Windows 11，本阶段不增加 macOS 支持。项目限制应实现在 runner、容器或代码中，不得通过缩减物理机能力实现。
+- 使用系统 Python 3.13 和系统 `uv`。依赖必须安装在 `.venv`，并与 `uv.lock` 保持一致。
+- MCP stdout 必须保持协议纯净；应用日志只能写入 stderr 或本地审计存储。
 
-## Model responsibility boundary
+## 架构与职责边界
 
-- Opus/Sol is the controller and final authority.
-- Ask AI providers are constrained external-model workers. A provider or model
-  name is routing metadata, not a role name.
-- Never add a generic prompt-forwarding or unrestricted delegation tool.
-- Never use an external worker to draft final document prose, co-author delivery content,
-  decide facts, resolve source conflicts, or generate final conclusions.
-- External-worker output is untrusted until validated and reviewed by Opus/Sol.
-- Externally generated code must be created outside the repository, tested in an
-  isolated candidate workspace, and returned as a candidate patch. It must not
-  modify the working tree directly.
-- Delegate only mechanically verifiable work likely to need at least three
-  implementation rounds or to produce a reusable registered tool. The
-  specification must be clearly shorter than the expected artifact.
+- 全局 Ask AI Worker 安全规则在本仓库继续生效。供应商和模型名称只是路由元数据，不是职责名称或可持久的业务逻辑。
+- 保持 Core、Coding、Review、Perception、H3 及兼容 Full 的显式边界。不得新增 generic prompt forwarding、任意模型/URL/路径/Shell 或无限制委派接口，也不得为方便而把专用工具并入常驻入口。
+- 外部生成代码必须留在仓库外候选区，通过静态检查和隔离测试后才能返回候选 patch；不得直接修改工作树。
+- 只委派可机械验证、预计需要至少三轮实现/调试，或会产生可复用注册工具的任务；委派规格必须明显短于预期产物。
 
-## Source and artifact safety
+## 源文件与产物安全
 
-- Original source files are read-only. Tools operate on copies and write to a
-  dedicated output directory.
-- File access must be restricted to configured allow-listed roots after path
-  resolution. Reject traversal, symlinks escaping a root, and broad drive or
-  user-profile access.
-- Preserve source provenance: file hash, page/slide/sheet/cell location,
-  extraction method, tool version, and warnings.
-- Do not send an entire knowledge base to an external worker. Send only the minimum
-  contract, sanitized fixtures, error excerpts, or selected evidence required.
-- Do not log API keys, full prompts, full source text, or normal model outputs.
+- 原始源文件只读。工具只处理副本，并写入专用输出目录。
+- 文件访问必须在路径解析后落入明确白名单根；拒绝路径穿越、逃逸根目录的 symlink/junction/reparse point、盘符根和宽泛用户目录。
+- 保留来源证据：文件哈希、页/幻灯片/工作表/单元格位置、提取方式、工具版本和警告。
+- 不得记录 API key、完整 prompt、完整源文本或常规模型完整输出；不得把整个知识库发送给 Worker。
 
-## Generated-tool lifecycle
+## Core toolsmith 生命周期
 
-1. Sol defines a bounded tool specification and acceptance tests.
-2. The controller opens one opaque budget session for the current conversation.
-3. The configured bounded toolsmith model may generate a candidate.
-4. Static checks and isolated tests run with bounded policy-routed retries.
-5. Sol reviews the summary, then loads the full patch when a code review is needed.
-6. Only an explicitly approved, hash-pinned tool may process real file copies.
-7. Any code change returns the tool to unverified status.
+- Core、Coding 与 Review 共享供应商无关的订阅额度与审计底座，但保持各自的业务门禁；不得把旧 DeepSeek CNY budget session 当作当前协议。
+- 当前预付订阅的 USD 2/日只是按月额度折算的使用节奏，不是日硬上限。已配置订阅在 backend/ledger 门禁内无需逐次确认；共享滚动窗口、单模型额度与上游限流仍可阻断调用，失败不得自动付费重试。
+- 新增账户、订阅、充值、额度扩展或更昂贵路由仍须用户明确授权。历史 CNY budget 表只保留审计兼容，不得重新暴露为 MCP 工具。
+- 不得放宽运行时与测试锁定的候选次数、regeneration、静态修复或语义修复上限。当前精确参数以 `lifecycle.py`、provider 常量和测试为真源，不得从历史提示词复制。
+- 只有显式批准且哈希固定的工具才能处理真实文件副本。任何代码变更都会使工具恢复为 unverified。
+- Verified execution 必须使用固定 `json_files_v1` contract、注册的精确 entrypoint 和专用输出。MCP schema 不得接受任意命令、函数名、输出路径、容器镜像或 mount 选项。
+- Pro 或具有 `write_dedicated_output` 能力的工具，必须拥有与精确 job/candidate/patch 哈希绑定的当前客户端 full-review attestation；提升与执行仍须 Claude Desktop 和 Codex Desktop 双方批准。
+- 持久指令、MCP 描述和构建/摘要结果保持简洁。状态流程使用 `workflow_guidance`，跨客户端接力使用 `list_pending_reviews`。
 
-Flash receives CNY 5 automatically when a conversation budget session opens;
-Pro starts at CNY 0. Either model may be extended only by one CNY 5 block after
-explicit user confirmation. A started lifecycle may finish and slightly
-overshoot, but the next lifecycle must be blocked until an extension is
-confirmed. Lifecycle and API-call counts are audit metrics, not spending caps.
-Never infer a Pro grant from the Flash budget or automatically escalate models.
+## 验证与固化
 
-Static-policy repair is limited to one attempt with Thinking disabled and a
-4,096-token output cap. Semantic-test repair uses Thinking High with a
-16,384-token cap, within the three-candidate-attempt lifecycle limit. An invalid
-initial structured response may be regenerated once.
-
-Verified execution additionally requires the fixed `json_files_v1` contract,
-an exact registered entrypoint, dedicated output, and both Claude Desktop and
-Codex Desktop approval for Pro or output-producing tools. Never add arbitrary
-commands, function names, output paths, container images, or mount options to
-the MCP schema.
-
-Build and summary-review responses must remain compact. A full review records a
-desktop-specific attestation bound to the exact job, candidate hash, and patch
-hash. Pro or `write_dedicated_output` approval requires this attestation from
-the approving desktop before promotion.
-
-Keep persistent controller instructions and MCP tool descriptions concise. Use
-`workflow_guidance` for detailed state-specific protocol and
-`list_pending_reviews` for cross-desktop handoff instead of duplicating the
-whole workflow in every prompt.
-
-## Verification
-
-- Add or update tests for every behavior change.
-- Run `uv run pytest` and `uv run ruff check .` before committing.
-- API integration tests must be opt-in and must never run during ordinary unit
-  tests.
-- Preserve unrelated user changes and keep commits focused.
+- 每项行为变更都必须增加或更新测试。普通单元测试不得运行 API integration test；集成测试必须显式 opt-in。
+- 提交前运行 `uv run pytest`、`uv run ruff check .` 和格式检查。
+- 接口、工具表面、安全门禁、价格/额度逻辑或运行时参数变更时，同步更新测试、用户文档、路线图与相关持久提示词。
+- 保留无关用户改动，提交保持单一主题，不得将本机 local-only 配置或密钥纳入 Git。

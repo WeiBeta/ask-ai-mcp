@@ -9,6 +9,6 @@ delivery acceptance.
 
 The Core entry point registers twelve controller tools. Subagent adds three
 bounded local-Qwen source tools. H3 registers only four adapters for an
-independently managed loopback ComfyUI service. Full is a nineteen-tool
+independently managed loopback ComfyUI service. Full is a fifteen-tool
 compatibility union. No profile includes ComfyUI, model weights, media,
 credentials, personal application state, or business files.

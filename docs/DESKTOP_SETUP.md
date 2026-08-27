@@ -121,7 +121,7 @@ command = "C:\\Dev\\ask-ai-mcp\\.venv\\Scripts\\ask-ai-mcp-core.exe"
 cwd = "C:\\Dev\\ask-ai-mcp"
 enabled = true
 required = false
-enabled_tools = ["usage_status", "workflow_guidance", "list_pending_reviews", "open_budget_session", "budget_status", "add_budget_block", "close_budget_session", "build_helper_tool", "review_tool_candidate", "approve_tool_candidate", "list_registered_tools", "run_verified_tool"]
+enabled_tools = ["usage_status", "workflow_guidance", "list_pending_reviews", "build_helper_tool", "review_tool_candidate", "approve_tool_candidate", "list_registered_tools", "run_verified_tool"]
 default_tools_approval_mode = "prompt"
 startup_timeout_sec = 20
 tool_timeout_sec = 600
@@ -190,14 +190,12 @@ PYTHONIOENCODING = "utf-8"
 ```
 
 Restart Codex Desktop after saving, then use the settings UI to confirm Core has
-twelve tools and H3 is registered but disabled. Keep approval mode set to `prompt`.
+eight tools and H3 is registered but disabled. Keep approval mode set to `prompt`.
 Coding and Review must remain disabled until their specialized session. One paid
 Go account maps to one API-visible UID and one Credential Manager key; the optional
 alias is only a display name. Both modules share the UID-keyed ledger.
-Open one
-opaque budget session per conversation that needs Ask AI. Flash starts with CNY
-5, Pro with CNY 0, and either model is extended only in CNY 5 blocks after the
-required confirmation. A normal build may make up to three billed API calls
+Use `usage_status` to inspect the shared subscription ledger. USD 2/day is an
+informational utilization pace, not a hard daily cap. A normal build may make up to three billed API calls
 (one initial candidate and two repairs); one invalid initial structured response
 may add a single regeneration call.
 

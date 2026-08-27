@@ -3,9 +3,9 @@
 ## Implementation status
 
 The internal client, mocked integration tests, Windows credential storage, and
-real synthetic Flash smoke requests have passed. Candidate generation is
-exposed only through the bounded `build_helper_tool` lifecycle, after local
-budget and Docker-readiness checks.
+real synthetic Flash smoke requests have passed. The direct client is retained
+for historical audit compatibility and opt-in adapter tests. The active Core
+protocol uses the configured subscription provider and Docker-readiness checks.
 
 The 2026-08-01 smoke request used 656 cache-miss input tokens and 458 output
 tokens, including 265 reasoning tokens. Estimated cost was CNY 0.001572. The
@@ -22,7 +22,7 @@ POST https://api.deepseek.com/chat/completions
 Supported routes are pinned to:
 
 - `deepseek-v4-flash`: default tool-building route;
-- `deepseek-v4-pro`: requires a CNY 5 Pro grant in the current budget session.
+- `deepseek-v4-pro`: legacy direct route; not exposed by the active Core protocol.
 
 Initial candidates and semantic-test repairs use thinking mode with
 `reasoning_effort` set to `high` and a 65,536-token output cap. A single

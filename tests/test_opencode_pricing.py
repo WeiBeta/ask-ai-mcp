@@ -185,7 +185,7 @@ def test_shared_windows_and_reported_cost_are_displayed_without_double_counting(
             provider_reported_cost=2.5,
             account="team",
             subscription="go-a",
-            age=timedelta(hours=1),
+            age=timedelta(),
         )
     )
     store.record(
@@ -205,5 +205,9 @@ def test_shared_windows_and_reported_cost_are_displayed_without_double_counting(
     assert five_hour.provider_reported_spent_usd == 2.5
     assert five_hour.provider_reported_call_count == 1
     assert five_hour.total_call_count == 1
+    assert account.current_utc_day_spent_usd == 2.5
+    assert account.daily_pace_target_usd == 2.0
+    assert account.above_daily_pace is True
+    assert account.daily_pace_is_hard_limit is False
     assert weekly.spent_usd == 6.5
     assert weekly.estimated_spent_usd == 7.0

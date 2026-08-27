@@ -1,6 +1,10 @@
-# DeepSeek pricing and audit policy
+# Provider pricing and audit policy
 
-## Current status
+## Legacy direct DeepSeek catalog
+
+This catalog is retained for historical audit and opt-in adapter tests. Direct
+DeepSeek billing is suspended and its former CNY conversation-budget protocol is
+not exposed by the active Core MCP.
 
 The price snapshot uses the DeepSeek V4 prices published on 2026-08-01:
 
@@ -74,6 +78,11 @@ usage caps of $15 for GLM 5.3, GLM-5.3-Flash, Kimi K3, and DeepSeek V4 Pro,
 and $30 for DeepSeek V4 Flash. Effective monthly remaining is the lesser of shared monthly
 remaining and the selected model's remaining cap. Shared usage is aggregated
 once per explicit API-visible account UID, never once per model.
+
+`usage_status` also reports the current UTC-day ledger spend against a $2
+utilization pace derived from $60 per 30 days. It explicitly marks this pace as
+non-blocking: unused prepaid allowance has opportunity cost, while only the
+rolling windows, model allowance, or an authoritative upstream rejection block work.
 
 DeepSeek Go rates switch to peak on weekdays during UTC `[01:00, 04:00)` and
 `[06:00, 10:00)`; weekends remain off-peak. Input, output, cache-read, and cache-write are preserved as

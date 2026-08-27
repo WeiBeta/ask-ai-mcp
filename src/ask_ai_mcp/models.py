@@ -77,7 +77,7 @@ class ReviewMode(StrEnum):
 
 class WorkflowGuidanceTopic(StrEnum):
     OVERVIEW = "overview"
-    BUDGET = "budget"
+    USAGE = "usage"
     BUILD = "build"
     REVIEW = "review"
     APPROVAL = "approval"
@@ -427,7 +427,7 @@ class WorkflowGuidance(StrictModel):
 
 class CandidateLifecycleResult(StrictModel):
     lifecycle_id: str = Field(min_length=36, max_length=36)
-    budget_session_id: str = Field(min_length=36, max_length=36)
+    audit_scope_id: str = Field(min_length=36, max_length=36)
     status: CandidateLifecycleStatus
     tool_name: str = Field(min_length=3, max_length=64, pattern=r"^[a-z][a-z0-9_]+$")
     spec_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
@@ -655,6 +655,10 @@ class OpenCodeGoAccountUsage(StrictModel):
 
     account: str = Field(min_length=1, max_length=64)
     subscription_id: str = Field(min_length=1, max_length=128)
+    current_utc_day_spent_usd: float = Field(default=0.0, ge=0)
+    daily_pace_target_usd: float = Field(default=2.0, gt=0)
+    above_daily_pace: bool = False
+    daily_pace_is_hard_limit: bool = False
     windows: list[OpenCodeGoLimitWindow] = Field(default_factory=list, max_length=8)
     rolling_30d_by_model_usd: dict[str, float] = Field(default_factory=dict)
     model_allowances: list[OpenCodeGoModelAllowance] = Field(default_factory=list, max_length=32)

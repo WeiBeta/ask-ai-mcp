@@ -1,8 +1,8 @@
 # MCP candidate surface
 
 The server deliberately has no arbitrary model-prompt forwarding operation.
-Core advertises twelve tools, Subagent advertises fifteen, and compatibility
-Full advertises nineteen. Perception-only advertises exactly three source tools;
+Core advertises eight tools, Subagent advertises eleven, and compatibility
+Full advertises fifteen. Perception-only advertises exactly three source tools;
 H3-only advertises exactly four local video tools.
 Review-only advertises exactly four bounded review tools and is absent from
 all five existing surfaces, including compatibility Full.
@@ -123,11 +123,12 @@ token counts are provider usage. Specification, candidate, test, summary, and
 patch sizes are separately labelled character or UTF-8 byte measurements, with
 byte ratios; they are not presented as tokens. OpenCode calls also report
 virtual USD by provider model/account and conservative rolling 5-hour, 7-day,
-and 30-day allowance windows.
+and 30-day allowance windows. It also reports current UTC-day spend against a
+USD 2 utilization pace. That pace is informational and never blocks a call.
 
 ## `workflow_guidance`
 
-Loads one local protocol topic on demand: `overview`, `budget`, `build`,
+Loads one local protocol topic on demand: `overview`, `usage`, `build`,
 `review`, `approval`, or `run`. It is read-only, prompt-free, and makes no API
 call. This avoids repeating detailed protocol in every persistent prompt or
 tool description.
@@ -140,33 +141,15 @@ output-writing tools still waiting for the second desktop. Each item reports
 creator, model, hashes, registered versions, exact full-review attestation
 identities, approval identities, blocking reasons, and the next action.
 
-## Budget-session tools
-
-`open_budget_session` creates an opaque conversation-scoped ID bound to the
-configured desktop identity. It grants Flash CNY 5 and Pro CNY 0.
-`budget_status` reports local grants, recorded spend, remaining allowance,
-overshoot, lifecycle count, and API-call count. `add_budget_block` adds exactly
-CNY 5 to the selected model after the controller obtains user confirmation. It
-rejects pre-funding while that model still has an active allowance.
-`close_budget_session` closes the session without deleting its audit history.
-
-These four operations are local and prompt-free. They cannot call DeepSeek.
-The server cannot discover a native Claude/Codex conversation ID, so the host
-must retain and pass the opaque `budget_session_id` explicitly. A session is
-valid only for the desktop identity that created it.
-
 ## `build_helper_tool`
 
-Accepts one strict `ToolBuildSpec` and a `budget_session_id`. Before a direct
-DeepSeek billable call it verifies that the Linux Docker runner and pinned image
-are ready and the selected model has remaining session budget. Provider selection
-is separate from MCP profiles; subscription and local providers do not inherit
-the DeepSeek CNY gate. It then permits one
-initial candidate and at most two repairs. A started lifecycle may finish after
-slightly crossing the grant; the next lifecycle is blocked until another CNY 5
-block is confirmed. The only successful outcome is `review_pending`; the tool
-never promotes its own result. Pro cannot be selected with its default zero
-grant.
+Accepts one strict `ToolBuildSpec`. Before a billable call it verifies that the
+Linux Docker runner and pinned image are ready. Provider selection is separate
+from MCP profiles, and the configured provider enforces shared subscription
+windows and model allowances. It then permits one initial candidate and at most
+two repairs. The only successful outcome is `review_pending`; the tool never
+promotes its own result. Direct DeepSeek CNY budget sessions are retained only
+as historical audit data and are not part of the active MCP surface.
 
 The tool does not accept source paths, source files, arbitrary prompts, shell
 commands, retry counts, image names, resource limits, Pro overrides, or

@@ -50,7 +50,7 @@ if (-not (Test-Path -LiteralPath $entrypoint -PathType Leaf)) {
     throw "Expected profile entrypoint was not installed: $entrypoint"
 }
 
-$profileCounts = @{ core = 12; subagent = 15; h3 = 4; full = 19 }
+$profileCounts = @{ core = 8; subagent = 11; h3 = 4; full = 15 }
 $expectedCount = $profileCounts[$Profile]
 $check = @"
 import asyncio

@@ -591,6 +591,20 @@ class UsageStore:
         for account_row in accounts:
             account = str(account_row["provider_account"])
             subscription_id = str(account_row["subscription_id"])
+            utc_day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            day_spend_row = connection.execute(
+                """
+                SELECT COALESCE(SUM(COALESCE(provider_reported_cost_usd,
+                    estimated_cost_usd)), 0) AS ledger
+                FROM api_usage
+                WHERE provider = 'opencode' AND provider_account = ?
+                  AND COALESCE(provider_subscription_id,
+                      'legacy:' || provider_account) = ?
+                  AND timestamp >= ?
+                """,
+                (account, subscription_id, utc_day_start.isoformat()),
+            ).fetchone()
+            current_utc_day_spent = round(float(day_spend_row["ledger"]), 8)
             windows: list[OpenCodeGoLimitWindow] = []
             for name, delta in (
                 ("rolling_5h", timedelta(hours=5)),
@@ -654,6 +668,10 @@ class UsageStore:
                 OpenCodeGoAccountUsage(
                     account=account,
                     subscription_id=subscription_id,
+                    current_utc_day_spent_usd=current_utc_day_spent,
+                    daily_pace_target_usd=2.0,
+                    above_daily_pace=current_utc_day_spent > 2.0,
+                    daily_pace_is_hard_limit=False,
                     windows=windows,
                     rolling_30d_by_model_usd=by_model,
                     model_allowances=[

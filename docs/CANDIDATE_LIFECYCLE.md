@@ -34,10 +34,10 @@ regenerated once without the invalid response body; it does not expand the
 three-attempt candidate policy.
 
 One `build_helper_tool` lifecycle can therefore create as many as three billed
-DeepSeek API calls: the initial candidate and two bounded repair calls. An
+worker API calls: the initial candidate and two bounded repair calls. An
 invalid initial structured response can add one regeneration call. Usage
-accounting records each API call separately and binds it to the opaque budget
-session and lifecycle IDs.
+accounting records each API call separately and binds it to an internal opaque
+audit scope and lifecycle ID.
 
 New candidates declare one simple Python entrypoint and the fixed
 `json_files_v1` execution contract. Static analysis requires that entrypoint to
@@ -93,9 +93,9 @@ desktop does not satisfy the approval gate.
 
 ## Current exposure
 
-MCP exposes local usage and budget operations plus separate build, review,
-approval, registry-list, and verified-run tools. Build accepts only an opaque
-budget session ID and strict `ToolBuildSpec`; review accepts only a UUID job ID
+MCP exposes local subscription usage plus separate build, review,
+approval, registry-list, and verified-run tools. Build accepts only a strict
+`ToolBuildSpec`; review accepts only a UUID job ID
 and review mode; approval accepts only the reviewed job ID, exact candidate
 SHA-256, version, and capability labels. The server supplies the configured
 desktop identity, so the caller cannot name its own approver. Verified execution

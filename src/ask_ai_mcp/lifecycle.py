@@ -118,10 +118,13 @@ class CandidateLifecycle:
         spec: ToolBuildSpec,
         *,
         client_name: str,
-        budget_session_id: str,
+        budget_session_id: str | None = None,
         allow_pro: bool = False,
     ) -> CandidateLifecycleResult:
         lifecycle_id = str(uuid4())
+        # Preserve the historical database column without exposing the retired
+        # budget-session protocol to new MCP callers.
+        budget_session_id = budget_session_id or lifecycle_id
         started_at = datetime.now(UTC)
         spec_hash = tool_spec_sha256(spec)
         attempts: list[CandidateAttemptReport] = []
@@ -197,7 +200,7 @@ class CandidateLifecycle:
                     )
                     result = CandidateLifecycleResult(
                         lifecycle_id=lifecycle_id,
-                        budget_session_id=budget_session_id,
+                        audit_scope_id=budget_session_id,
                         status=CandidateLifecycleStatus.REVIEW_PENDING,
                         tool_name=spec.name,
                         spec_sha256=spec_hash,
@@ -269,7 +272,7 @@ class CandidateLifecycle:
 
             result = CandidateLifecycleResult(
                 lifecycle_id=lifecycle_id,
-                budget_session_id=budget_session_id,
+                audit_scope_id=budget_session_id,
                 status=CandidateLifecycleStatus.FAILED,
                 tool_name=spec.name,
                 spec_sha256=spec_hash,
