@@ -40,6 +40,19 @@ class CodeReviewFailureCode(StrEnum):
     INTERNAL_ERROR = "INTERNAL_ERROR"
 
 
+class CodeReviewValidationStage(StrEnum):
+    CHOICE_SHAPE = "CHOICE_SHAPE"
+    CONTENT_MISSING_OR_OVERSIZED = "CONTENT_MISSING_OR_OVERSIZED"
+    MARKDOWN_FENCE = "MARKDOWN_FENCE"
+    JSON_SYNTAX = "JSON_SYNTAX"
+    TOP_LEVEL_SHAPE = "TOP_LEVEL_SHAPE"
+    FINDINGS_SHAPE = "FINDINGS_SHAPE"
+    FINDING_SCHEMA = "FINDING_SCHEMA"
+    DUPLICATE_ID = "DUPLICATE_ID"
+    FILE_SCOPE = "FILE_SCOPE"
+    HUNK_SCOPE = "HUNK_SCOPE"
+
+
 class CodeReviewFindingCategory(StrEnum):
     CORRECTNESS = "correctness"
     SECURITY = "security"
@@ -201,6 +214,7 @@ class CodeReviewStatus(StrictModel):
     state: CodeReviewJobState
     detail: str = Field(min_length=1, max_length=1_000)
     failure_code: CodeReviewFailureCode | None = None
+    validation_stage: CodeReviewValidationStage | None = None
     model_identity_hidden: bool = True
     total_findings: int = Field(ge=0)
     offset: int = Field(ge=0)

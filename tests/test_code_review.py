@@ -23,6 +23,7 @@ from ask_ai_mcp.code_review_models import (
     CodeReviewProfile,
     CodeReviewStatusCommand,
     CodeReviewSubmitCommand,
+    CodeReviewValidationStage,
 )
 from ask_ai_mcp.code_review_store import CodeReviewStore
 from ask_ai_mcp.code_review_workspace import (
@@ -62,6 +63,86 @@ def _repository(tmp_path: Path) -> tuple[Path, str, str]:
     _git(root, "commit", "-m", "change")
     head = _git(root, "rev-parse", "HEAD")
     return root, base, head
+
+
+def _valid_review_payload() -> dict[str, object]:
+    return {
+        "findings": [
+            {
+                "finding_id": "valid_finding",
+                "category": "correctness",
+                "severity": "medium",
+                "confidence": 0.9,
+                "file": "app.py",
+                "line_start": 2,
+                "line_end": 3,
+                "evidence_summary": "Bounded evidence marker that must not enter audit metadata.",
+                "evidence_sha256": "0" * 64,
+                "rationale": "Bounded rationale marker that must not enter audit metadata.",
+                "suggested_validation_test": "Run one bounded test.",
+            }
+        ],
+        "omitted_context": [],
+        "truncated": False,
+    }
+
+
+def _run_review_fixture(
+    tmp_path: Path,
+    *,
+    content: object,
+    usage: dict[str, object] | None = None,
+    choices_override: object | None = None,
+) -> tuple[object, dict[str, object], int, Path]:
+    root, base, head = _repository(tmp_path)
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            200,
+            json={
+                "choices": (
+                    choices_override
+                    if choices_override is not None
+                    else [{"finish_reason": "stop", "message": {"content": content}}]
+                ),
+                "usage": usage or {"prompt_tokens": 100, "completion_tokens": 50},
+            },
+        )
+
+    store = CodeReviewStore(tmp_path / "review-state")
+    manager = CodeReviewManager(
+        store=store,
+        usage_store=UsageStore(tmp_path / "usage.db"),
+        snapshotter=CodeReviewSnapshotter(CodeReviewRepositoryCatalog({"sample": root})),
+        account=OpenCodeAccount(uid="go-user@example.com", alias="go-user@example.com"),
+        api_key_provider=lambda: "opaque-test-key-1234567890",
+        transport=httpx.MockTransport(handler),
+    )
+    submission = manager.submit(
+        CodeReviewSubmitCommand(
+            repository_id="sample",
+            base_ref=base,
+            head_ref=head,
+            review_profile=CodeReviewProfile.DATA_INTEGRITY,
+            model=CodeReviewModel.GLM_5_3,
+        )
+    )
+    deadline = time.monotonic() + 5
+    status = manager.status(CodeReviewStatusCommand(job_id=submission.job_id))
+    while status.state in {CodeReviewJobState.QUEUED, CodeReviewJobState.RUNNING}:
+        if time.monotonic() >= deadline:
+            raise AssertionError("review job did not complete")
+        time.sleep(0.02)
+        status = manager.status(CodeReviewStatusCommand(job_id=submission.job_id))
+    audit = json.loads(
+        (store.jobs_root / submission.job_id / "audit" / "provider-response.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    return status, audit, calls, root
 
 
 def test_review_mcp_is_a_three_tool_surface_excluded_from_full() -> None:
@@ -567,3 +648,189 @@ def test_review_failure_codes_are_explicit_and_never_retry(
             )
         legacy = manager.status(CodeReviewStatusCommand(job_id=submission.job_id))
         assert legacy.failure_code is CodeReviewFailureCode.REASONING_BUDGET_EXHAUSTED
+
+
+@pytest.mark.parametrize(
+    ("content", "expected_stage"),
+    [
+        (
+            "```json\n"
+            + json.dumps({"findings": [], "omitted_context": [], "truncated": False})
+            + "\n```",
+            CodeReviewValidationStage.MARKDOWN_FENCE,
+        ),
+        ("PRIVATE_MODEL_OUTPUT not json", CodeReviewValidationStage.JSON_SYNTAX),
+        (json.dumps({}), CodeReviewValidationStage.FINDINGS_SHAPE),
+        (
+            json.dumps({"findings": {}, "omitted_context": [], "truncated": False}),
+            CodeReviewValidationStage.FINDINGS_SHAPE,
+        ),
+        (
+            json.dumps({"findings": ["not-an-object"], "omitted_context": []}),
+            CodeReviewValidationStage.FINDINGS_SHAPE,
+        ),
+        (None, CodeReviewValidationStage.CONTENT_MISSING_OR_OVERSIZED),
+        (json.dumps([]), CodeReviewValidationStage.TOP_LEVEL_SHAPE),
+    ],
+    ids=[
+        "fence",
+        "json-syntax",
+        "missing-findings",
+        "findings-object",
+        "finding-string",
+        "missing-content",
+        "top-level-array",
+    ],
+)
+def test_review_validation_shape_stages_are_prompt_free_and_never_retry(
+    tmp_path: Path,
+    content: object,
+    expected_stage: CodeReviewValidationStage,
+) -> None:
+    status, audit, calls, root = _run_review_fixture(tmp_path, content=content)
+
+    assert calls == 1
+    assert status.state is CodeReviewJobState.FAILED
+    assert status.failure_code is CodeReviewFailureCode.INVALID_PROVIDER_RESPONSE
+    assert status.validation_stage is expected_stage
+    assert expected_stage.value in status.detail
+    assert audit["validation_stage"] == expected_stage.value
+    serialized = json.dumps(audit, ensure_ascii=False)
+    assert "PRIVATE_MODEL_OUTPUT" not in serialized
+    assert "not-an-object" not in serialized
+    assert "app.py" not in serialized
+    assert str(root) not in serialized
+    assert "choices" not in audit
+
+
+def test_review_choice_shape_is_diagnosed_without_retry(tmp_path: Path) -> None:
+    status, audit, calls, _ = _run_review_fixture(
+        tmp_path,
+        content=None,
+        choices_override=[],
+    )
+
+    assert calls == 1
+    assert status.failure_code is CodeReviewFailureCode.INVALID_PROVIDER_RESPONSE
+    assert status.validation_stage is CodeReviewValidationStage.CHOICE_SHAPE
+    assert audit["validation_stage"] == "CHOICE_SHAPE"
+
+
+def test_review_explicit_empty_findings_succeeds_without_retry(tmp_path: Path) -> None:
+    content = json.dumps({"findings": [], "omitted_context": [], "truncated": False})
+    status, audit, calls, _ = _run_review_fixture(tmp_path, content=content)
+
+    assert calls == 1
+    assert status.state is CodeReviewJobState.SUCCEEDED
+    assert status.validation_stage is None
+    assert status.total_findings == 0
+    assert audit["findings_present"] is True
+    assert audit["findings_type"] == "array"
+    assert audit["finding_count"] == 0
+    assert audit["validation_stage"] is None
+
+
+def _schema_case(field: str) -> dict[str, object]:
+    payload = _valid_review_payload()
+    finding = payload["findings"][0]
+    assert isinstance(finding, dict)
+    if field == "finding_id":
+        finding[field] = "X"
+    elif field == "category":
+        finding[field] = "unknown-category"
+    elif field == "severity":
+        finding[field] = "urgent"
+    elif field == "confidence":
+        finding[field] = 2
+    elif field == "evidence_summary":
+        finding[field] = "x" * 1_201
+    elif field == "extra":
+        finding["PRIVATE_EXTRA_FIELD"] = "PRIVATE_EXTRA_VALUE"
+    elif field == "reversed_range":
+        finding["line_start"] = 3
+        finding["line_end"] = 2
+    elif field == "wide_range":
+        finding["line_start"] = 2
+        finding["line_end"] = 83
+    else:  # pragma: no cover - guarded by the parametrization
+        raise AssertionError(field)
+    return payload
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "finding_id",
+        "category",
+        "severity",
+        "confidence",
+        "evidence_summary",
+        "extra",
+        "reversed_range",
+        "wide_range",
+    ],
+)
+def test_review_finding_schema_diagnostics_are_value_free(tmp_path: Path, field: str) -> None:
+    content = json.dumps(_schema_case(field))
+    status, audit, calls, root = _run_review_fixture(tmp_path, content=content)
+
+    assert calls == 1
+    assert status.validation_stage is CodeReviewValidationStage.FINDING_SCHEMA
+    assert audit["validation_stage"] == "FINDING_SCHEMA"
+    assert audit["validation_issues"]
+    assert all(set(item) == {"field_path", "error_type"} for item in audit["validation_issues"])
+    serialized = json.dumps(audit, ensure_ascii=False)
+    assert "PRIVATE_EXTRA_FIELD" not in serialized
+    assert "PRIVATE_EXTRA_VALUE" not in serialized
+    assert "Bounded evidence marker" not in serialized
+    assert "Bounded rationale marker" not in serialized
+    assert "app.py" not in serialized
+    assert str(root) not in serialized
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_stage"),
+    [
+        ("duplicate", CodeReviewValidationStage.DUPLICATE_ID),
+        ("file", CodeReviewValidationStage.FILE_SCOPE),
+        ("hunk", CodeReviewValidationStage.HUNK_SCOPE),
+    ],
+)
+def test_review_scope_stages_are_explicit_and_never_retry(
+    tmp_path: Path, case: str, expected_stage: CodeReviewValidationStage
+) -> None:
+    payload = _valid_review_payload()
+    finding = payload["findings"][0]
+    assert isinstance(finding, dict)
+    if case == "duplicate":
+        payload["findings"].append(dict(finding))
+    elif case == "file":
+        finding["file"] = "other.py"
+    else:
+        finding["line_start"] = 100
+        finding["line_end"] = 100
+
+    status, audit, calls, _ = _run_review_fixture(tmp_path, content=json.dumps(payload))
+
+    assert calls == 1
+    assert status.failure_code is CodeReviewFailureCode.INVALID_PROVIDER_RESPONSE
+    assert status.validation_stage is expected_stage
+    assert audit["validation_stage"] == expected_stage.value
+
+
+def test_review_stop_with_reasoning_heavy_usage_is_not_misclassified(tmp_path: Path) -> None:
+    status, audit, calls, _ = _run_review_fixture(
+        tmp_path,
+        content="not json",
+        usage={
+            "prompt_tokens": 21_111,
+            "completion_tokens": 6_892,
+            "completion_tokens_details": {"reasoning_tokens": 6_349},
+        },
+    )
+
+    assert calls == 1
+    assert status.failure_code is CodeReviewFailureCode.INVALID_PROVIDER_RESPONSE
+    assert status.validation_stage is CodeReviewValidationStage.JSON_SYNTAX
+    assert audit["visible_completion_tokens"] == 543
+    assert audit["reasoning_ratio"] == round(6_349 / 6_892, 6)

@@ -11,6 +11,8 @@ while preserving explicit deny-by-default Git-root allow-lists.
 Version 0.9.2 classifies Review output-budget failures before JSON parsing and
 records each model's actual reasoning effort and output cap. Token/cost preflight
 and explicit frozen-file shards remain a later P1 design item.
+Version 0.9.3 adds prompt-free Review validation-stage diagnostics without
+relaxing the response schema, retry policy, or model budgets.
 
 ## Phase 0: policy and skeleton
 

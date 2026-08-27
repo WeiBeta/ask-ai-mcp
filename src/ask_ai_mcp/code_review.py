@@ -16,6 +16,7 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
+from pydantic import ValidationError
 
 from ask_ai_mcp import __version__
 from ask_ai_mcp.code_review_models import (
@@ -31,6 +32,7 @@ from ask_ai_mcp.code_review_models import (
     CodeReviewStatusCommand,
     CodeReviewSubmission,
     CodeReviewSubmitCommand,
+    CodeReviewValidationStage,
 )
 from ask_ai_mcp.code_review_store import (
     CONTRACT_VERSION,
@@ -90,12 +92,37 @@ _CATEGORY_ALIASES = {
     "missing_tests": "testing",
     "test_coverage": "testing",
 }
+_CONTRACT_FIELDS = {
+    "findings",
+    "omitted_context",
+    "truncated",
+    "finding_id",
+    "category",
+    "severity",
+    "confidence",
+    "file",
+    "line_start",
+    "line_end",
+    "evidence_summary",
+    "evidence_sha256",
+    "rationale",
+    "suggested_validation_test",
+}
 
 
 class CodeReviewResponseError(ValueError):
-    def __init__(self, code: CodeReviewFailureCode, message: str) -> None:
+    def __init__(
+        self,
+        code: CodeReviewFailureCode,
+        message: str,
+        *,
+        validation_stage: CodeReviewValidationStage | None = None,
+        diagnostics: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
+        self.validation_stage = validation_stage
+        self.diagnostics = diagnostics or {}
 
 
 def _sha256(data: bytes) -> str:
@@ -129,6 +156,53 @@ def _output_failure_code(
     if completion_tokens > 0 and reasoning_tokens / completion_tokens >= 0.95:
         return CodeReviewFailureCode.REASONING_BUDGET_EXHAUSTED
     return CodeReviewFailureCode.OUTPUT_TRUNCATED
+
+
+def _json_type(value: object) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, dict):
+        return "object"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, (int, float)):
+        return "number"
+    return "unknown"
+
+
+def _safe_validation_issues(error: ValidationError) -> list[dict[str, str]]:
+    issues: list[dict[str, str]] = []
+    for item in error.errors(include_url=False, include_context=False, include_input=False)[:20]:
+        location = item.get("loc", ())
+        safe_parts = [
+            str(part) if isinstance(part, int) or part in _CONTRACT_FIELDS else "<unknown>"
+            for part in location
+        ]
+        issues.append(
+            {
+                "field_path": ".".join(safe_parts)[:256],
+                "error_type": str(item.get("type", "validation_error"))[:80],
+            }
+        )
+    return issues
+
+
+def _validation_diagnostics() -> dict[str, object]:
+    return {
+        "json_parse_succeeded": None,
+        "top_level_type": None,
+        "top_level_keys": [],
+        "unknown_top_level_key_count": 0,
+        "findings_present": False,
+        "findings_type": None,
+        "finding_count": None,
+        "validation_stage": None,
+        "validation_issues": [],
+    }
 
 
 class CodeReviewManager:
@@ -385,19 +459,21 @@ class CodeReviewManager:
         payload = CodeReviewPayload()
         artifacts: list[CodeReviewArtifact] = []
         failure_code: CodeReviewFailureCode | None = None
+        validation_stage: CodeReviewValidationStage | None = None
         if state is CodeReviewJobState.SUCCEEDED:
             output = self.store.jobs_root / command.job_id / "output" / "findings.json"
             payload = CodeReviewPayload.model_validate_json(output.read_text(encoding="utf-8"))
             artifacts = self._artifacts(command.job_id)
         elif state is CodeReviewJobState.FAILED:
             failure_code = self._public_failure_code(command.job_id, row["failure_kind"])
+            validation_stage = self._public_validation_stage(command.job_id)
             artifacts = self._artifacts(command.job_id, audit_only=True)
         total = len(payload.findings)
         findings = payload.findings[command.offset : command.offset + command.limit]
         next_offset = command.offset + len(findings)
         if next_offset >= total:
             next_offset = None
-        detail = self._status_detail(state, failure_code)
+        detail = self._status_detail(state, failure_code, validation_stage)
         return CodeReviewStatus(
             job_id=command.job_id,
             review_group_id=str(row["review_group_id"]),
@@ -405,6 +481,7 @@ class CodeReviewManager:
             state=state,
             detail=detail,
             failure_code=failure_code,
+            validation_stage=validation_stage,
             total_findings=total,
             offset=command.offset,
             limit=command.limit,
@@ -439,9 +516,22 @@ class CodeReviewManager:
             return CodeReviewFailureCode.INVALID_PROVIDER_RESPONSE
         return CodeReviewFailureCode.INTERNAL_ERROR
 
+    def _public_validation_stage(self, job_id: str) -> CodeReviewValidationStage | None:
+        audit_path = self.store.jobs_root / job_id / "audit" / "provider-response.json"
+        if not audit_path.is_file():
+            return None
+        try:
+            audit = json.loads(audit_path.read_text(encoding="utf-8"))
+            raw = audit.get("validation_stage") if isinstance(audit, dict) else None
+            return CodeReviewValidationStage(raw) if raw is not None else None
+        except (OSError, ValueError):
+            return None
+
     @staticmethod
     def _status_detail(
-        state: CodeReviewJobState, failure_code: CodeReviewFailureCode | None
+        state: CodeReviewJobState,
+        failure_code: CodeReviewFailureCode | None,
+        validation_stage: CodeReviewValidationStage | None = None,
     ) -> str:
         if state is CodeReviewJobState.SUCCEEDED:
             return "review completed; adjudicate while model identity remains hidden"
@@ -466,7 +556,16 @@ class CodeReviewManager:
                 "review failed before validated findings were available; no retry was attempted"
             ),
         }
-        return details[failure_code or CodeReviewFailureCode.INTERNAL_ERROR]
+        detail = details[failure_code or CodeReviewFailureCode.INTERNAL_ERROR]
+        if (
+            failure_code is CodeReviewFailureCode.INVALID_PROVIDER_RESPONSE
+            and validation_stage is not None
+        ):
+            return (
+                f"review response failed strict validation at {validation_stage.value}; "
+                "no retry was attempted"
+            )
+        return detail
 
     def _run(
         self,
@@ -480,14 +579,23 @@ class CodeReviewManager:
             response, priced_at, latency_ms = self._request(command, snapshot)
             output_root = self.store.jobs_root / job_id / "output"
             output_root.mkdir(parents=True, exist_ok=True)
+            response_audit = self._response_audit(response)
+            response_audit_path = self.store.jobs_root / job_id / "audit" / "provider-response.json"
             _atomic_json(
-                self.store.jobs_root / job_id / "audit" / "provider-response.json",
-                self._response_audit(response),
+                response_audit_path,
+                response_audit,
             )
             usage = self._usage(response, OpenCodeGoModel(command.model.value), priced_at)
             try:
-                payload, raw_text = self._validated_payload(response, snapshot)
-            except Exception:
+                payload, raw_text, diagnostics = self._validated_payload(response, snapshot)
+                response_audit.update(diagnostics)
+                _atomic_json(response_audit_path, response_audit)
+            except Exception as error:
+                if isinstance(error, CodeReviewResponseError):
+                    response_audit.update(error.diagnostics)
+                    if error.validation_stage is not None:
+                        response_audit["validation_stage"] = error.validation_stage.value
+                    _atomic_json(response_audit_path, response_audit)
                 self._record_usage(
                     command,
                     snapshot,
@@ -599,6 +707,14 @@ class CodeReviewManager:
     def _response_audit(response: dict[str, Any]) -> dict[str, Any]:
         serialized = json.dumps(response, ensure_ascii=False, sort_keys=True).encode("utf-8")
         choices = response.get("choices") if isinstance(response.get("choices"), list) else []
+        first_choice = choices[0] if len(choices) == 1 and isinstance(choices[0], dict) else {}
+        message = first_choice.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        usage = response.get("usage") if isinstance(response.get("usage"), dict) else {}
+        completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+        completion_details = usage.get("completion_tokens_details")
+        completion_details = completion_details if isinstance(completion_details, dict) else {}
+        reasoning_tokens = int(completion_details.get("reasoning_tokens", 0) or 0)
         return {
             "response_sha256": _sha256(serialized),
             "response_bytes": len(serialized),
@@ -607,7 +723,19 @@ class CodeReviewManager:
                 for item in choices
                 if isinstance(item, dict) and item.get("finish_reason") is not None
             ],
-            "usage": response.get("usage") if isinstance(response.get("usage"), dict) else {},
+            "usage": usage,
+            "content_present": isinstance(content, str) and bool(content),
+            "content_chars": len(content) if isinstance(content, str) else None,
+            "content_sha256": (
+                _sha256(content.encode("utf-8")) if isinstance(content, str) else None
+            ),
+            "starts_markdown_fence": (
+                content.lstrip().startswith("```") if isinstance(content, str) else False
+            ),
+            "visible_completion_tokens": max(0, completion_tokens - reasoning_tokens),
+            "reasoning_ratio": (
+                round(reasoning_tokens / completion_tokens, 6) if completion_tokens > 0 else None
+            ),
         }
 
     def _write_http_error(self, job_id: str, response: httpx.Response) -> None:
@@ -723,10 +851,31 @@ class CodeReviewManager:
     @staticmethod
     def _validated_payload(
         response: dict[str, Any], snapshot: CodeReviewSnapshot
-    ) -> tuple[CodeReviewPayload, str]:
+    ) -> tuple[CodeReviewPayload, str, dict[str, object]]:
+        diagnostics = _validation_diagnostics()
+
+        def fail(
+            stage: CodeReviewValidationStage,
+            message: str,
+            *,
+            issues: list[dict[str, str]] | None = None,
+        ) -> None:
+            diagnostics["validation_stage"] = stage.value
+            if issues is not None:
+                diagnostics["validation_issues"] = issues
+            raise CodeReviewResponseError(
+                CodeReviewFailureCode.INVALID_PROVIDER_RESPONSE,
+                message,
+                validation_stage=stage,
+                diagnostics=diagnostics.copy(),
+            )
+
         choices = response.get("choices")
         if not isinstance(choices, list) or len(choices) != 1 or not isinstance(choices[0], dict):
-            raise ValueError("review response must contain exactly one choice")
+            fail(
+                CodeReviewValidationStage.CHOICE_SHAPE,
+                "review response must contain exactly one choice",
+            )
         usage = response.get("usage") if isinstance(response.get("usage"), dict) else {}
         output_failure = _output_failure_code([choices[0].get("finish_reason")], usage)
         if output_failure is not None:
@@ -737,29 +886,90 @@ class CodeReviewManager:
         message = choices[0].get("message")
         content = message.get("content") if isinstance(message, dict) else None
         if not isinstance(content, str) or not content or len(content) > 1_000_000:
-            raise ValueError("review response content is missing or oversized")
+            fail(
+                CodeReviewValidationStage.CONTENT_MISSING_OR_OVERSIZED,
+                "review response content is missing or oversized",
+            )
         if content.lstrip().startswith("```"):
-            raise ValueError("review response must be plain JSON without markdown fences")
-        raw = json.loads(content)
-        if not isinstance(raw, dict) or not isinstance(raw.get("findings", []), list):
-            raise ValueError("review response did not match the findings object contract")
-        for finding in raw.get("findings", []):
+            fail(
+                CodeReviewValidationStage.MARKDOWN_FENCE,
+                "review response must be plain JSON without markdown fences",
+            )
+        try:
+            raw = json.loads(content)
+        except json.JSONDecodeError:
+            diagnostics["json_parse_succeeded"] = False
+            fail(
+                CodeReviewValidationStage.JSON_SYNTAX,
+                "review response was not valid JSON",
+            )
+        diagnostics["json_parse_succeeded"] = True
+        diagnostics["top_level_type"] = _json_type(raw)
+        if not isinstance(raw, dict):
+            fail(
+                CodeReviewValidationStage.TOP_LEVEL_SHAPE,
+                "review response top level must be an object",
+            )
+        keys = set(raw)
+        diagnostics["top_level_keys"] = sorted(keys & {"findings", "omitted_context", "truncated"})
+        diagnostics["unknown_top_level_key_count"] = len(
+            keys - {"findings", "omitted_context", "truncated"}
+        )
+        diagnostics["findings_present"] = "findings" in raw
+        if "findings" not in raw:
+            fail(
+                CodeReviewValidationStage.FINDINGS_SHAPE,
+                "review response must explicitly contain findings",
+            )
+        diagnostics["findings_type"] = _json_type(raw["findings"])
+        if not isinstance(raw["findings"], list):
+            fail(
+                CodeReviewValidationStage.FINDINGS_SHAPE,
+                "review response findings must be a list",
+            )
+        diagnostics["finding_count"] = len(raw["findings"])
+        for index, finding in enumerate(raw["findings"]):
             if not isinstance(finding, dict):
-                raise ValueError("review finding must be an object")
+                fail(
+                    CodeReviewValidationStage.FINDINGS_SHAPE,
+                    "review finding must be an object",
+                )
             category = finding.get("category")
             if isinstance(category, str):
                 finding["category"] = _CATEGORY_ALIASES.get(category.casefold(), category)
             evidence = finding.get("evidence_summary")
             if not isinstance(evidence, str):
-                raise ValueError("review finding evidence must be text")
+                fail(
+                    CodeReviewValidationStage.FINDING_SCHEMA,
+                    "review finding evidence must be text",
+                    issues=[
+                        {
+                            "field_path": f"findings.{index}.evidence_summary",
+                            "error_type": "string_type",
+                        }
+                    ],
+                )
             finding["evidence_sha256"] = _sha256(evidence.encode("utf-8"))
-        payload = CodeReviewPayload.model_validate(raw)
+        try:
+            payload = CodeReviewPayload.model_validate(raw)
+        except ValidationError as error:
+            fail(
+                CodeReviewValidationStage.FINDING_SCHEMA,
+                "review response fields did not match the strict contract",
+                issues=_safe_validation_issues(error),
+            )
         identifiers = [finding.finding_id for finding in payload.findings]
         if len(identifiers) != len(set(identifiers)):
-            raise ValueError("review finding IDs must be unique")
+            fail(
+                CodeReviewValidationStage.DUPLICATE_ID,
+                "review finding IDs must be unique",
+            )
         allowed = set(snapshot.changed_files)
         if any(finding.file not in allowed for finding in payload.findings):
-            raise ValueError("review finding referenced a file outside the changed snapshot")
+            fail(
+                CodeReviewValidationStage.FILE_SCOPE,
+                "review finding referenced a file outside the changed snapshot",
+            )
         changed_ranges = CodeReviewManager._changed_ranges(snapshot.diff_text)
         if any(
             not any(
@@ -768,8 +978,11 @@ class CodeReviewManager:
             )
             for finding in payload.findings
         ):
-            raise ValueError("review finding line range does not overlap a changed hunk")
-        return payload, content
+            fail(
+                CodeReviewValidationStage.HUNK_SCOPE,
+                "review finding line range does not overlap a changed hunk",
+            )
+        return payload, content, diagnostics
 
     @staticmethod
     def _changed_ranges(diff_text: str) -> dict[str, tuple[tuple[int, int], ...]]:
