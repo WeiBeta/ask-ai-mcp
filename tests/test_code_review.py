@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import stat
 import subprocess
 import time
 from pathlib import Path
@@ -21,6 +22,7 @@ from ask_ai_mcp.code_review_models import (
     CodeReviewJobState,
     CodeReviewModel,
     CodeReviewProfile,
+    CodeReviewStagePatchCommand,
     CodeReviewStatusCommand,
     CodeReviewSubmitCommand,
     CodeReviewValidationStage,
@@ -148,11 +150,12 @@ def _run_review_fixture(
     return status, audit, calls, root
 
 
-def test_review_mcp_is_a_three_tool_surface_excluded_from_full() -> None:
+def test_review_mcp_is_a_four_tool_surface_excluded_from_full() -> None:
     review_tools = {tool.name for tool in asyncio.run(server.review_mcp.list_tools())}
     full_tools = {tool.name for tool in asyncio.run(server.mcp.list_tools())}
     assert review_tools == {
         "code_review_backend_status",
+        "code_review_stage_patch",
         "code_review_submit",
         "code_review_status",
     }
@@ -177,24 +180,146 @@ def test_snapshot_uses_commit_hashes_and_never_exposes_host_root(tmp_path: Path)
 
 def test_patch_traversal_and_secret_bearing_diffs_are_rejected(tmp_path: Path) -> None:
     root, _, _ = _repository(tmp_path)
-    patch_root = tmp_path / "patches"
+    patch_root = tmp_path / "sample"
     patch_root.mkdir()
     snapshotter = CodeReviewSnapshotter(
         CodeReviewRepositoryCatalog({"sample": root}), patch_roots=(patch_root,)
     )
     traversal = b"diff --git a/../secret.py b/../secret.py\n+print('x')\n"
-    traversal_path = patch_root / "traversal.patch"
-    traversal_path.write_bytes(traversal)
     with pytest.raises(CodeReviewWorkspaceError, match="relative path"):
-        snapshotter.from_patch("sample", str(traversal_path), hashlib.sha256(traversal).hexdigest())
+        snapshotter.stage_patch("sample", traversal.decode())
 
     secret = (
         b"diff --git a/.env b/.env\n--- a/.env\n+++ b/.env\n+API_KEY='abcdefghijklmnopqrstuvwxyz'\n"
     )
-    secret_path = patch_root / "secret.patch"
-    secret_path.write_bytes(secret)
     with pytest.raises(CodeReviewWorkspaceError, match="no reviewable"):
-        snapshotter.from_patch("sample", str(secret_path), hashlib.sha256(secret).hexdigest())
+        snapshotter.stage_patch("sample", secret.decode())
+    unsanitized = (
+        "diff --git a/app.py b/app.py\n--- a/app.py\n+++ b/app.py\n"
+        "@@ -1 +1 @@\n-old\n+C:\\Users\\person\\private.txt\n"
+    )
+    with pytest.raises(CodeReviewWorkspaceError, match="fully sanitized review diff"):
+        snapshotter.stage_patch("sample", unsanitized)
+
+
+def test_patch_only_preflight_is_hash_pinned_and_root_bounded(tmp_path: Path) -> None:
+    root, base, head = _repository(tmp_path)
+    patch_root = tmp_path / "sample"
+    patch_root.mkdir()
+    patch_text = _git(root, "diff", "--no-renames", "--unified=3", base, head) + "\n"
+    patch_bytes = patch_text.encode("utf-8")
+    expected_sha256 = hashlib.sha256(patch_bytes).hexdigest()
+    snapshotter = CodeReviewSnapshotter(
+        CodeReviewRepositoryCatalog({"sample": root}), patch_roots=(patch_root,)
+    )
+    (root / "app.py").write_text("UNCOMMITTED_WORKTREE_CONTENT\n", encoding="utf-8")
+
+    staged = snapshotter.stage_patch("sample", patch_text)
+    patch_path = patch_root / f"{expected_sha256}.patch"
+    receipt_path = patch_root / f"{expected_sha256}.receipt.json"
+    snapshot = snapshotter.from_staged_patch("sample", staged.patch_sha256, staged.receipt_sha256)
+
+    assert staged.byte_length == len(patch_bytes)
+    assert patch_path.stat().st_size == len(patch_bytes)
+    assert hashlib.sha256(patch_path.read_bytes()).hexdigest() == expected_sha256
+    assert hashlib.sha256(receipt_path.read_bytes()).hexdigest() == staged.receipt_sha256
+    assert patch_path.stat().st_mode & stat.S_IWRITE == 0
+    assert receipt_path.stat().st_mode & stat.S_IWRITE == 0
+    assert not list(patch_root.glob(".*.tmp"))
+    assert snapshotter.stage_patch("sample", patch_text) == staged
+    assert snapshot.source_identity == {"patch_sha256": expected_sha256}
+    assert snapshot.changed_files == ("app.py",)
+    assert snapshot.context == ()
+    assert "UNCOMMITTED_WORKTREE_CONTENT" not in snapshot.diff_text
+    with pytest.raises(CodeReviewWorkspaceError, match="receipt SHA-256 does not match"):
+        snapshotter.from_staged_patch("sample", expected_sha256, "0" * 64)
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["byte_length"] += 1
+    tampered = (json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    receipt_path.chmod(stat.S_IWRITE | stat.S_IREAD)
+    receipt_path.write_bytes(tampered)
+    receipt_path.chmod(stat.S_IREAD)
+    with pytest.raises(CodeReviewWorkspaceError, match="receipt does not match its patch"):
+        snapshotter.from_staged_patch(
+            "sample", expected_sha256, hashlib.sha256(tampered).hexdigest()
+        )
+
+
+def test_staged_patch_requires_matching_pair_and_project_root(tmp_path: Path) -> None:
+    root, base, head = _repository(tmp_path)
+    wrong_root = tmp_path / "other-project"
+    wrong_root.mkdir()
+    patch_text = _git(root, "diff", "--no-renames", "--unified=3", base, head) + "\n"
+    snapshotter = CodeReviewSnapshotter(
+        CodeReviewRepositoryCatalog({"sample": root}), patch_roots=(wrong_root,)
+    )
+
+    with pytest.raises(CodeReviewWorkspaceError, match="project-specific patch root"):
+        snapshotter.stage_patch("sample", patch_text)
+
+    patch_root = tmp_path / "sample"
+    patch_root.mkdir()
+    snapshotter = CodeReviewSnapshotter(
+        CodeReviewRepositoryCatalog({"sample": root}), patch_roots=(patch_root,)
+    )
+    patch_sha256 = hashlib.sha256(patch_text.encode("utf-8")).hexdigest()
+    (patch_root / f"{patch_sha256}.patch").write_text(patch_text, encoding="utf-8")
+
+    with pytest.raises(CodeReviewWorkspaceError, match="must both exist"):
+        snapshotter.from_staged_patch("sample", patch_sha256, "0" * 64)
+
+
+def test_stage_patch_is_free_and_submit_requires_receipt_hash(tmp_path: Path) -> None:
+    root, base, head = _repository(tmp_path)
+    patch_root = tmp_path / "sample"
+    patch_root.mkdir()
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(500)
+
+    manager = CodeReviewManager(
+        store=CodeReviewStore(tmp_path / "review-state"),
+        usage_store=UsageStore(tmp_path / "usage.db"),
+        snapshotter=CodeReviewSnapshotter(
+            CodeReviewRepositoryCatalog({"sample": root}), patch_roots=(patch_root,)
+        ),
+        account=OpenCodeAccount(uid="go-test-uid", alias="go-test"),
+        api_key_provider=lambda: "opaque-test-key-1234567890",
+        transport=httpx.MockTransport(handler),
+    )
+    patch_text = _git(root, "diff", "--no-renames", "--unified=3", base, head) + "\n"
+
+    staged = manager.stage_patch(
+        CodeReviewStagePatchCommand(repository_id="sample", patch=patch_text)
+    )
+
+    assert calls == 0
+    assert staged.byte_length == len(patch_text.encode("utf-8"))
+    with pytest.raises(ValueError, match="receipt_sha256"):
+        CodeReviewSubmitCommand(
+            repository_id="sample",
+            patch_sha256=staged.patch_sha256,
+            review_profile=CodeReviewProfile.GENERAL,
+            model=CodeReviewModel.GLM_5_3,
+        )
+    receipt_path = patch_root / f"{staged.patch_sha256}.receipt.json"
+    receipt_path.chmod(stat.S_IWRITE | stat.S_IREAD)
+    receipt_path.write_bytes(b"{}\n")
+    receipt_path.chmod(stat.S_IREAD)
+    with pytest.raises(CodeReviewWorkspaceError, match="receipt SHA-256 does not match"):
+        manager.submit(
+            CodeReviewSubmitCommand(
+                repository_id="sample",
+                patch_sha256=staged.patch_sha256,
+                receipt_sha256=staged.receipt_sha256,
+                review_profile=CodeReviewProfile.GENERAL,
+                model=CodeReviewModel.GLM_5_3,
+            )
+        )
+    assert calls == 0
 
 
 def test_submodule_pointer_changes_are_not_sent_for_review(tmp_path: Path) -> None:
@@ -432,6 +557,30 @@ def test_backend_reports_model_specific_review_policies(tmp_path: Path) -> None:
     assert policies[CodeReviewModel.GLM_5_3] == ("high", 16_384)
     assert policies[CodeReviewModel.KIMI_K3] == ("max", 8_000)
     assert policies[CodeReviewModel.DEEPSEEK_V4_PRO] == ("max", 8_000)
+    assert status.patch_roots_configured is False
+    assert status.patch_root_count == 0
+
+
+def test_backend_reports_patch_root_presence_without_host_path(tmp_path: Path) -> None:
+    root, _base, _head = _repository(tmp_path)
+    patch_root = tmp_path / "dedicated-patches"
+    patch_root.mkdir()
+    manager = CodeReviewManager(
+        store=CodeReviewStore(tmp_path / "review-state"),
+        usage_store=UsageStore(tmp_path / "usage.db"),
+        snapshotter=CodeReviewSnapshotter(
+            CodeReviewRepositoryCatalog({"sample": root}), patch_roots=(patch_root,)
+        ),
+        account=OpenCodeAccount(uid="go-test-uid", alias="go-test"),
+        api_key_provider=lambda: "opaque-test-key-1234567890",
+    )
+
+    status = manager.backend_status(check_remote=False)
+    serialized = status.model_dump_json()
+
+    assert status.patch_roots_configured is True
+    assert status.patch_root_count == 1
+    assert str(patch_root) not in serialized
 
 
 def test_review_store_keeps_content_out_of_sqlite_and_versions_each_run(

@@ -29,6 +29,8 @@ from ask_ai_mcp.code_review_models import (
     CodeReviewModelAvailability,
     CodeReviewPayload,
     CodeReviewProfile,
+    CodeReviewStagedPatch,
+    CodeReviewStagePatchCommand,
     CodeReviewStatus,
     CodeReviewStatusCommand,
     CodeReviewSubmission,
@@ -317,6 +319,8 @@ class CodeReviewManager:
             configured=configured,
             detail="; ".join(details) if details else "bounded code review backend is ready",
             repository_ids=repository_ids,
+            patch_roots_configured=bool(self.snapshotter.patch_roots),
+            patch_root_count=len(self.snapshotter.patch_roots),
             state_root=str(self.store.root),
             account_uid=self.account_uid or None,
             account_alias=self.account_alias or None,
@@ -351,10 +355,10 @@ class CodeReviewManager:
                 command.repository_id, command.base_ref, command.head_ref or ""
             )
         else:
-            snapshot = self.snapshotter.from_patch(
+            snapshot = self.snapshotter.from_staged_patch(
                 command.repository_id,
-                command.patch_file or "",
                 command.patch_sha256 or "",
+                command.receipt_sha256 or "",
             )
         job_id = str(uuid4())
         group_id = command.review_group_id or str(uuid4())
@@ -449,6 +453,19 @@ class CodeReviewManager:
             snapshot_sha256=snapshot.snapshot_sha256,
             changed_file_count=len(snapshot.changed_files),
             changed_line_count=snapshot.changed_line_count,
+        )
+
+    def stage_patch(self, command: CodeReviewStagePatchCommand) -> CodeReviewStagedPatch:
+        staged = self.snapshotter.stage_patch(command.repository_id, command.patch)
+        return CodeReviewStagedPatch(
+            repository_id=staged.repository_id,
+            patch_sha256=staged.patch_sha256,
+            receipt_sha256=staged.receipt_sha256,
+            byte_length=staged.byte_length,
+            diff_sha256=staged.snapshot.diff_sha256,
+            snapshot_sha256=staged.snapshot.snapshot_sha256,
+            changed_file_count=len(staged.snapshot.changed_files),
+            changed_line_count=staged.snapshot.changed_line_count,
         )
 
     def status(self, command: CodeReviewStatusCommand) -> CodeReviewStatus:

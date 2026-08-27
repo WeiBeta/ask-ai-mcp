@@ -4,7 +4,7 @@ The server deliberately has no arbitrary model-prompt forwarding operation.
 Core advertises twelve tools, Subagent advertises fifteen, and compatibility
 Full advertises nineteen. Perception-only advertises exactly three source tools;
 H3-only advertises exactly four local video tools.
-Review-only advertises exactly three read-only review tools and is absent from
+Review-only advertises exactly four bounded review tools and is absent from
 all five existing surfaces, including compatibility Full.
 Coding-only advertises exactly three coding-candidate tools and is also absent
 from Core, Subagent, Perception, H3, Review, and compatibility Full.
@@ -22,9 +22,11 @@ working-tree write, apply, commit, push, or automatic account-switch operation.
 ## Optional heterogeneous code review
 
 `ask-ai-mcp-review.exe` is manually enabled only for heavy development review.
-It exposes `code_review_backend_status`, `code_review_submit`, and the paginated
-`code_review_status`. Submit accepts an allow-listed repository ID plus either
-two bounded refs or a hash-pinned patch, one fixed profile, and one of three fixed
+It exposes `code_review_backend_status`, `code_review_stage_patch`,
+`code_review_submit`, and the paginated `code_review_status`. Stage validates
+and atomically seals a patch plus receipt in the repository's dedicated external
+root. Submit accepts an allow-listed repository ID plus either two bounded refs
+or both staged hashes, one fixed profile, and one of three fixed
 OpenCode Go models. It has no generic prompt, shell, arbitrary path, Git-write,
 patch-generation, commit, push, or retry option.
 

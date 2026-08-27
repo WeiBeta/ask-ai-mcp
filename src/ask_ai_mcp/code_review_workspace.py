@@ -7,9 +7,11 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from uuid import uuid4
 
 REPOSITORIES_ENV = "ASK_AI_MCP_REVIEW_REPOSITORIES"
 PATCH_ROOTS_ENV = "ASK_AI_MCP_REVIEW_PATCH_ROOTS"
@@ -88,6 +90,15 @@ class CodeReviewSnapshot:
     context: tuple[dict[str, object], ...]
     omitted_context: tuple[str, ...]
     source_identity: dict[str, str]
+
+
+@dataclass(frozen=True)
+class CodeReviewStagedPatchRecord:
+    repository_id: str
+    patch_sha256: str
+    receipt_sha256: str
+    byte_length: int
+    snapshot: CodeReviewSnapshot
 
 
 def _sha256(value: bytes) -> str:
@@ -281,35 +292,151 @@ class CodeReviewSnapshotter:
             context_ref=head,
         )
 
-    def from_patch(
-        self, repository_id: str, patch_file: str, expected_sha256: str
-    ) -> CodeReviewSnapshot:
+    def stage_patch(self, repository_id: str, patch_text: str) -> CodeReviewStagedPatchRecord:
         root = self.catalog.require(repository_id)
-        candidate = Path(patch_file)
-        if not candidate.is_absolute() or not candidate.is_file():
-            raise CodeReviewWorkspaceError("patch input must be an absolute regular file")
-        resolved = candidate.resolve(strict=True)
-        allowed = next((item for item in self.patch_roots if _is_within(resolved, item)), None)
-        if allowed is None:
-            raise CodeReviewWorkspaceError("patch input is outside configured patch roots")
-        _assert_no_reparse_escape(resolved, allowed)
-        data = resolved.read_bytes()
+        patch_root = self._project_patch_root(repository_id)
+        data = patch_text.encode("utf-8")
         if len(data) > MAX_DIFF_BYTES:
             raise CodeReviewWorkspaceError("patch input exceeds the bounded diff size")
-        actual = _sha256(data)
-        if actual != expected_sha256:
-            raise CodeReviewWorkspaceError("patch SHA-256 does not match")
-        try:
-            raw_diff = data.decode("utf-8", errors="strict")
-        except UnicodeDecodeError as error:
-            raise CodeReviewWorkspaceError("patch input must be UTF-8") from error
-        return self._build(
+        patch_sha256 = _sha256(data)
+        snapshot = self._build(
             repository_id,
             root,
-            raw_diff,
-            source_identity={"patch_sha256": actual},
+            patch_text,
+            source_identity={"patch_sha256": patch_sha256},
             context_ref=None,
         )
+        if snapshot.diff_text.encode("utf-8") != data:
+            raise CodeReviewWorkspaceError(
+                "staged patches must already equal the fully sanitized review diff"
+            )
+        receipt = {
+            "schema_version": 1,
+            "repository_id": repository_id,
+            "patch_sha256": patch_sha256,
+            "byte_length": len(data),
+            "diff_sha256": snapshot.diff_sha256,
+            "snapshot_sha256": snapshot.snapshot_sha256,
+            "changed_file_count": len(snapshot.changed_files),
+            "changed_line_count": snapshot.changed_line_count,
+        }
+        receipt_data = (
+            json.dumps(receipt, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+        ).encode("utf-8")
+        receipt_sha256 = _sha256(receipt_data)
+        self._commit_staged_pair(patch_root, patch_sha256, data, receipt_data)
+        return CodeReviewStagedPatchRecord(
+            repository_id=repository_id,
+            patch_sha256=patch_sha256,
+            receipt_sha256=receipt_sha256,
+            byte_length=len(data),
+            snapshot=snapshot,
+        )
+
+    def from_staged_patch(
+        self, repository_id: str, patch_sha256: str, receipt_sha256: str
+    ) -> CodeReviewSnapshot:
+        root = self.catalog.require(repository_id)
+        patch_root = self._project_patch_root(repository_id)
+        patch_path, receipt_path = self._staged_paths(patch_root, patch_sha256)
+        if not patch_path.is_file() or not receipt_path.is_file():
+            raise CodeReviewWorkspaceError("staged patch and receipt must both exist")
+        _assert_no_reparse_escape(patch_path.resolve(strict=True), patch_root)
+        _assert_no_reparse_escape(receipt_path.resolve(strict=True), patch_root)
+        if patch_path.stat().st_mode & stat.S_IWRITE or receipt_path.stat().st_mode & stat.S_IWRITE:
+            raise CodeReviewWorkspaceError("staged patch and receipt must remain read-only")
+        data = patch_path.read_bytes()
+        receipt_data = receipt_path.read_bytes()
+        if _sha256(data) != patch_sha256 or _sha256(receipt_data) != receipt_sha256:
+            raise CodeReviewWorkspaceError("staged patch or receipt SHA-256 does not match")
+        if len(data) > MAX_DIFF_BYTES:
+            raise CodeReviewWorkspaceError("patch input exceeds the bounded diff size")
+        try:
+            receipt = json.loads(receipt_data.decode("utf-8", errors="strict"))
+            patch_text = data.decode("utf-8", errors="strict")
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise CodeReviewWorkspaceError("staged patch receipt is invalid") from error
+        expected = {
+            "schema_version": 1,
+            "repository_id": repository_id,
+            "patch_sha256": patch_sha256,
+            "byte_length": len(data),
+        }
+        if not isinstance(receipt, dict) or any(
+            receipt.get(key) != value for key, value in expected.items()
+        ):
+            raise CodeReviewWorkspaceError("staged patch receipt does not match its patch")
+        snapshot = self._build(
+            repository_id,
+            root,
+            patch_text,
+            source_identity={"patch_sha256": patch_sha256},
+            context_ref=None,
+        )
+        derived = {
+            "diff_sha256": snapshot.diff_sha256,
+            "snapshot_sha256": snapshot.snapshot_sha256,
+            "changed_file_count": len(snapshot.changed_files),
+            "changed_line_count": snapshot.changed_line_count,
+        }
+        if set(receipt) != set(expected) | set(derived) or any(
+            receipt.get(key) != value for key, value in derived.items()
+        ):
+            raise CodeReviewWorkspaceError("staged patch receipt does not match its snapshot")
+        return snapshot
+
+    def _project_patch_root(self, repository_id: str) -> Path:
+        matches = [root for root in self.patch_roots if root.name == repository_id]
+        if len(matches) != 1:
+            raise CodeReviewWorkspaceError(
+                "exactly one project-specific patch root must match the repository ID"
+            )
+        return matches[0]
+
+    @staticmethod
+    def _staged_paths(patch_root: Path, patch_sha256: str) -> tuple[Path, Path]:
+        if re.fullmatch(r"[a-f0-9]{64}", patch_sha256) is None:
+            raise CodeReviewWorkspaceError("patch SHA-256 is invalid")
+        return patch_root / f"{patch_sha256}.patch", patch_root / f"{patch_sha256}.receipt.json"
+
+    @classmethod
+    def _commit_staged_pair(
+        cls, patch_root: Path, patch_sha256: str, data: bytes, receipt_data: bytes
+    ) -> None:
+        patch_path, receipt_path = cls._staged_paths(patch_root, patch_sha256)
+        lock_path = patch_root / f".{patch_sha256}.lock"
+        try:
+            lock_path.mkdir()
+        except FileExistsError as error:
+            raise CodeReviewWorkspaceError("staged patch is locked or incomplete") from error
+        token = uuid4().hex
+        patch_temp = patch_root / f".{token}.patch.tmp"
+        receipt_temp = patch_root / f".{token}.receipt.tmp"
+        try:
+            if patch_path.exists() or receipt_path.exists():
+                if not patch_path.is_file() or not receipt_path.is_file():
+                    raise CodeReviewWorkspaceError("existing staged patch pair is incomplete")
+                if patch_path.read_bytes() != data or receipt_path.read_bytes() != receipt_data:
+                    raise CodeReviewWorkspaceError("existing staged patch pair does not match")
+                return
+            cls._write_synced(patch_temp, data)
+            cls._write_synced(receipt_temp, receipt_data)
+            os.replace(patch_temp, patch_path)
+            os.chmod(patch_path, stat.S_IREAD)
+            os.replace(receipt_temp, receipt_path)
+            os.chmod(receipt_path, stat.S_IREAD)
+        finally:
+            for temporary in (patch_temp, receipt_temp):
+                if temporary.exists():
+                    temporary.unlink()
+            lock_path.rmdir()
+
+    @staticmethod
+    def _write_synced(path: Path, data: bytes) -> None:
+        with path.open("xb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
 
     def _build(
         self,
@@ -325,7 +452,13 @@ class CodeReviewSnapshotter:
         accepted: list[tuple[str, str]] = []
         omitted: list[str] = []
         for relative, section in sections:
-            reason = self._exclusion_reason(relative, section, root, submodule_roots)
+            reason = self._exclusion_reason(
+                relative,
+                section,
+                root,
+                submodule_roots,
+                use_repository_context=context_ref is not None,
+            )
             if reason:
                 omitted.append(f"{relative}: {reason}")
             else:
@@ -399,6 +532,8 @@ class CodeReviewSnapshotter:
         section: str,
         root: Path,
         submodule_roots: tuple[PurePosixPath, ...],
+        *,
+        use_repository_context: bool,
     ) -> str | None:
         path = PurePosixPath(relative)
         if any(path == item or item in path.parents for item in submodule_roots):
@@ -415,7 +550,7 @@ class CodeReviewSnapshotter:
         if path.suffix.casefold() not in _TEXT_SUFFIXES:
             return "unsupported or binary file type excluded"
         candidate = root.joinpath(*path.parts)
-        if candidate.exists():
+        if use_repository_context and candidate.exists():
             resolved = candidate.resolve(strict=True)
             if not _is_within(resolved, root):
                 raise CodeReviewWorkspaceError("changed file escaped repository root")
@@ -426,12 +561,10 @@ class CodeReviewSnapshotter:
 
     @staticmethod
     def _submodule_roots(root: Path, context_ref: str | None) -> tuple[PurePosixPath, ...]:
+        if context_ref is None:
+            return ()
         roots: list[PurePosixPath] = []
-        listing = (
-            _run_git(root, "ls-tree", "-r", context_ref)
-            if context_ref is not None
-            else _run_git(root, "ls-files", "--stage")
-        )
+        listing = _run_git(root, "ls-tree", "-r", context_ref)
         for line in listing.splitlines():
             metadata, separator, relative = line.partition("\t")
             if separator and metadata.startswith("160000 "):
@@ -446,17 +579,13 @@ class CodeReviewSnapshotter:
         *,
         context_ref: str | None,
     ) -> list[dict[str, object]]:
+        if context_ref is None:
+            return []
         result: list[dict[str, object]] = []
         used = 0
         for relative, section in accepted:
-            candidate = root.joinpath(*PurePosixPath(relative).parts)
             try:
-                if context_ref is not None:
-                    text = _run_git(root, "show", f"{context_ref}:{relative}")
-                else:
-                    if not candidate.is_file():
-                        raise OSError("current file unavailable")
-                    text = candidate.read_text(encoding="utf-8", errors="strict")
+                text = _run_git(root, "show", f"{context_ref}:{relative}")
                 lines = text.splitlines()
             except (CodeReviewWorkspaceError, OSError, UnicodeDecodeError):
                 omitted.append(f"{relative}: UTF-8 context unavailable")

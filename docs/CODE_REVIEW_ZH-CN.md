@@ -6,14 +6,16 @@
 Subagent、Perception、H3 或 Full，普通开发保持关闭。固定工具只有：
 
 - `code_review_backend_status`：本地配置、三个固定模型的远端可用性、双层账本与月报；
-- `code_review_submit`：提交冻结 refs 或哈希固定的 patch；
+- `code_review_stage_patch`：免费校验并原子封存 bounded patch 与内容无关 receipt；
+- `code_review_submit`：提交冻结 refs 或同时固定 patch/receipt 哈希的 staged patch；
 - `code_review_status`：分页读结果，并记录盲审裁决或延迟 outcome。
 
 固定模型为 `glm-5.3`、`kimi-k3`、`deepseek-v4-pro`。真实业务灰度证明 GLM-5.3 的 `max`
 reasoning 会吞尽 8K completion 总预算，因此 GLM 固定使用 `reasoning_effort=high` 与 16K
 输出上限；Kimi/DeepSeek 暂保持 `max` 与 8K。固定 profile 为 `general`、`security`、
 `concurrency`、`data_integrity`。没有 generic prompt、任意模型、
-任意 URL、Shell、写文件、Git 写操作、提交、推送、自动重试或默认补丁。
+任意 URL、Shell、任意文件写入、Git 写操作、提交、推送、自动重试或默认补丁；唯一写入面是
+配置好的项目专属仓库外 patch staging 目录。
 
 每次任务把实际 reasoning effort 与输出上限写入 manifest、Review SQLite 和共享 API usage
 账本。若 provider 返回 `finish_reason=length`，且 reasoning token 占 completion token 至少 95%，
@@ -24,7 +26,11 @@ reasoning 会吞尽 8K completion 总预算，因此 GLM 固定使用 `reasoning
 
 `ASK_AI_MCP_REVIEW_REPOSITORIES` 是仓库 ID 到精确 Git 根目录的 JSON 映射。解析后拒绝盘符
 根、整个用户目录、非 Git 根、路径穿越、逃逸 symlink/junction/reparse point 和 submodule
-内容。patch 模式还必须位于 `ASK_AI_MCP_REVIEW_PATCH_ROOTS` 的专用小目录并匹配 SHA-256。
+内容。每个 patch root 的末级目录名必须与仓库 ID 完全一致。`code_review_stage_patch` 先验证
+patch 已是最终脱敏 diff，再在该目录写临时文件，由控制器计算精确 UTF-8 字节数和 SHA-256，
+按 hash 原子改名为只读 `.patch`，最后原子写只读 `.receipt.json`。任何中断最多留下无 receipt
+的孤立 patch，后续提交会 fail closed；不会从 refs 重建、修复或自动重试。
+`code_review_backend_status` 只报告 patch root 是否配置及数量，不返回宿主路径。
 Codex/Claude 的具体白名单配置片段、转义规则和重启验收见
 [简中使用与运维说明书](USER_MANUAL_ZH-CN.md#46-codingreview-仓库白名单配置)。
 

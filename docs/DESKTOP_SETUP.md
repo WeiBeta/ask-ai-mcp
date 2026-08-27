@@ -31,7 +31,7 @@ C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-core.exe  # 12 non-video tools
 C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-subagent.exe  # Core + 3 Qwen source tools
 C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-h3.exe  # 4 H3 tools only
 C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-coding.exe  # 3 coding candidate tools, opt-in
-C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-review.exe  # 3 review tools, opt-in
+C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-review.exe  # 4 review tools, opt-in
 C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-full.exe  # compatibility union, 19 tools
 ```
 
@@ -156,7 +156,7 @@ command = "C:\\Dev\\ask-ai-mcp\\.venv\\Scripts\\ask-ai-mcp-review.exe"
 cwd = "C:\\Dev\\ask-ai-mcp"
 enabled = false
 required = false
-enabled_tools = ["code_review_backend_status", "code_review_submit", "code_review_status"]
+enabled_tools = ["code_review_backend_status", "code_review_stage_patch", "code_review_submit", "code_review_status"]
 default_tools_approval_mode = "prompt"
 startup_timeout_sec = 20
 tool_timeout_sec = 900

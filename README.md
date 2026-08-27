@@ -47,7 +47,7 @@ Version 0.7.1 adds a bounded three-scope visual extraction contract without
 adding MCP tools: compact structure indexes, separate topology, and selected
 details based on explicit identifiers plus a deterministic normalized crop.
 
-Version 0.8.0 adds an independent, opt-in, three-tool Coding Review MCP and an
+Version 0.8.0 adds an independent, opt-in Coding Review MCP and an
 auditable OpenCode Go ledger with shared rolling windows, per-model monthly
 caps, DeepSeek peak/off-peak rates, and subscription isolation. Review is not
 loaded by Core, Subagent, Perception, H3, or Full.
@@ -66,6 +66,11 @@ Version 0.9.2 adds model-specific Review reasoning/output policies and explicit
 prompt-free failure codes for reasoning-budget exhaustion, output truncation,
 invalid structured responses, provider errors, and internal failures. Failed
 reviews never retry automatically.
+
+Version 0.10.0 adds a fourth Review tool that validates and atomically seals a
+bounded patch in a project-specific external staging root. Paid patch review
+accepts only a matching immutable patch/receipt pair pinned by both SHA-256
+values; incomplete, altered, or root-mismatched pairs fail before submission.
 
 The first full billed lifecycle smoke passed on 2026-08-02 in one Flash call:
 the generated synthetic helper passed four isolated tests, was reviewed, and

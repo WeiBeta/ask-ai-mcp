@@ -15,6 +15,8 @@ from ask_ai_mcp.budget import BudgetStore
 from ask_ai_mcp.code_review import CodeReviewManager
 from ask_ai_mcp.code_review_models import (
     CodeReviewBackendStatus,
+    CodeReviewStagedPatch,
+    CodeReviewStagePatchCommand,
     CodeReviewStatus,
     CodeReviewStatusCommand,
     CodeReviewSubmission,
@@ -359,6 +361,21 @@ def code_review_backend_status() -> CodeReviewBackendStatus:
     """Check fixed OpenCode models, repository IDs, ledger, and blind monthly metrics."""
 
     return get_code_review_manager().backend_status()
+
+
+@code_review_tool(
+    annotations=ToolAnnotations(
+        title="封存哈希固定的审查补丁",
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
+def code_review_stage_patch(command: CodeReviewStagePatchCommand) -> CodeReviewStagedPatch:
+    """Validate and atomically seal one bounded patch with a content-free receipt."""
+
+    return get_code_review_manager().stage_patch(command)
 
 
 @code_review_tool(

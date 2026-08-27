@@ -5,9 +5,9 @@ from __future__ import annotations
 from datetime import datetime
 from enum import StrEnum
 from pathlib import PurePosixPath
-from typing import Self
+from typing import Annotated, Self
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, StringConstraints, field_validator, model_validator
 
 from ask_ai_mcp.models import OpenCodeGoAccountUsage, StrictModel
 
@@ -127,12 +127,30 @@ class CodeReviewPayload(StrictModel):
     truncated: bool = False
 
 
+class CodeReviewStagePatchCommand(StrictModel):
+    repository_id: str = Field(pattern=r"^[a-z][a-z0-9_-]{1,63}$")
+    patch: Annotated[
+        str, StringConstraints(strip_whitespace=False, min_length=1, max_length=1_000_000)
+    ]
+
+
+class CodeReviewStagedPatch(StrictModel):
+    repository_id: str = Field(pattern=r"^[a-z][a-z0-9_-]{1,63}$")
+    patch_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    receipt_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    byte_length: int = Field(ge=1, le=1_000_000)
+    diff_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    snapshot_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    changed_file_count: int = Field(ge=1, le=100)
+    changed_line_count: int = Field(ge=0, le=10_000)
+
+
 class CodeReviewSubmitCommand(StrictModel):
     repository_id: str = Field(pattern=r"^[a-z][a-z0-9_-]{1,63}$")
     base_ref: str | None = Field(default=None, min_length=1, max_length=160)
     head_ref: str | None = Field(default=None, min_length=1, max_length=160)
-    patch_file: str | None = Field(default=None, min_length=3, max_length=1_024)
     patch_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    receipt_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     review_profile: CodeReviewProfile
     model: CodeReviewModel
     review_group_id: str | None = Field(
@@ -154,13 +172,13 @@ class CodeReviewSubmitCommand(StrictModel):
     @model_validator(mode="after")
     def choose_exactly_one_input_mode(self) -> Self:
         refs = self.base_ref is not None or self.head_ref is not None
-        patch = self.patch_file is not None or self.patch_sha256 is not None
+        patch = self.patch_sha256 is not None or self.receipt_sha256 is not None
         if refs == patch:
             raise ValueError("choose either base/head refs or a hash-pinned patch file")
         if refs and (self.base_ref is None or self.head_ref is None):
             raise ValueError("base_ref and head_ref must be provided together")
-        if patch and (self.patch_file is None or self.patch_sha256 is None):
-            raise ValueError("patch_file and patch_sha256 must be provided together")
+        if patch and (self.patch_sha256 is None or self.receipt_sha256 is None):
+            raise ValueError("patch_sha256 and receipt_sha256 must be provided together")
         return self
 
 
@@ -262,6 +280,8 @@ class CodeReviewBackendStatus(StrictModel):
     configured: bool
     detail: str = Field(min_length=1, max_length=1_000)
     repository_ids: list[str] = Field(default_factory=list, max_length=64)
+    patch_roots_configured: bool = False
+    patch_root_count: int = Field(default=0, ge=0, le=16)
     state_root: str | None = Field(default=None, max_length=1_024)
     account_uid: str | None = Field(default=None, max_length=64)
     account_alias: str | None = Field(default=None, max_length=64)

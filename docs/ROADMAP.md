@@ -3,7 +3,7 @@
 Current implementation status: phases 0 through 2 are complete, including the
 real opt-in synthetic Flash smoke request. Version 0.9.0 exposes seven explicit
 MCP profiles (Core 12, Perception 3, Subagent 15, H3 4, Full 19, independent
-Review 3, and independent Coding 3), conversation budget sessions, compact/full review,
+Review 4, and independent Coding 3), conversation budget sessions, compact/full review,
 verified execution, and the OpenCode Go dual-layer usage ledger. Cross-client
 Phase 3 acceptance and explicit real-input-root configuration remain pending.
 Version 0.9.1 separates the Coding and Review repository environment catalogs
@@ -21,7 +21,9 @@ and is therefore outside the Review module's single-call policy.
 Version 0.9.5 makes the immutable changed-file allow-list a separate exact JSON
 array in prompt v3. Findings must copy one entry verbatim; Git `a/` and `b/`
 prefixes, case changes, similar prefixes, and parent traversal remain rejected.
-
+Version 0.10.0 adds atomic, project-specific Review patch staging. A validated
+patch is committed with a content-free receipt and both hashes must match before
+patch-only submission can reach the provider.
 ## Phase 0: policy and skeleton
 
 - Establish Windows-only package layout and locked dependencies.

@@ -5,7 +5,7 @@
 适用客户端：Codex Desktop、Claude Desktop
 仓库：`xujinglong8814-WeiBeta/ask-ai-mcp`（私有）
 
-补充说明：第 4.6 节 Coding/Review 仓库白名单配置适用于 Ask AI MCP 0.9.5。
+补充说明：第 4.6 节 Coding/Review 仓库白名单配置适用于 Ask AI MCP 0.10.0。
 
 ## 1. 这套系统现在能做什么
 
@@ -175,6 +175,7 @@ ASK_AI_MCP_CODING_REPOSITORIES = '{"ask-ai-mcp":"C:\\Dev\\ask-ai-mcp","new-proje
 
 [mcp_servers.ask_ai_review.env]
 ASK_AI_MCP_REVIEW_REPOSITORIES = '{"ask-ai-mcp":"C:\\Dev\\ask-ai-mcp","new-project":"C:\\Dev\\new-project"}'
+ASK_AI_MCP_REVIEW_PATCH_ROOTS = "C:\\Users\\user\\Documents\\AskAI-Exchange\\staged-input\\review-patches\\new-project"
 ```
 
 若对应 `[mcp_servers.<name>.env]` 已存在，应在原表内新增或更新这一项，不要创建重复表头，
@@ -211,6 +212,11 @@ server 配置，不得用这个不含 `command`、`args` 的示例覆盖完整 s
 4. 保存配置后必须完全重启对应 GUI，使 MCP 进程重新读取环境变量。仅关闭设置页面不够。
 5. 重启后先调用 `coding_backend_status` 或 `code_review_backend_status`，确认 `repository_ids`
    同时包含原仓库和新增仓库；状态查询不会提交模型任务。
+
+Review patch root 必须是仓库外的项目专属小目录，且末级目录名与稳定
+repository ID 完全一致。多个 root 用分号分隔；不得配置整个用户目录、`C:\Dev`
+或业务仓库。先调用 `code_review_stage_patch` 得到 patch/receipt 两个 SHA-256；
+`code_review_submit` 的 patch 模式只接受这两个哈希，不接受任意宿主路径。
 
 白名单只授权 MCP 按既有安全边界读取冻结 commit、指定目标文件或冻结 diff，不授权读取未提交
 工作树、整库发送、任意路径访问、自动应用补丁或直接修改业务仓库。
