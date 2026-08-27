@@ -31,7 +31,9 @@ vendor、生成物、超大文件和过量上下文。模型只收到仓库 ID�
 说明，不收到真实宿主绝对路径或整个仓库。finding 必须落在给定改动 hunk 附近；模型返回的
 evidence hash 由 controller 根据结构化证据摘要重新计算。
 供应商常见的 `bug`、`regression`、`missing_tests` 等 category 同义词会被确定性归一到固定
-枚举；文件、行号、hunk、置信度和其余结构约束不会因此放宽。
+枚举；prompt v2 同时显式要求每条 finding 只能使用 `correctness`、`security`、
+`reliability`、`performance`、`maintainability`、`testing`。文件、行号、hunk、置信度和
+其余结构约束不会因此放宽。
 
 本地状态默认在 `%LOCALAPPDATA%\AskAIMCP\code-review`。每个 job 的 `input`、`output`、
 `audit` 分离。`review.db` 只保存快照/diff/结构化输出哈希、token/成本/延迟、finding 指纹、

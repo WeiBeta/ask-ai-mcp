@@ -235,10 +235,15 @@ def test_review_job_is_blind_paginated_and_records_adjudication(
         assert body["temperature"] == 0
         assert body["reasoning_effort"] == "high"
         assert body["max_tokens"] == 16_384
+        assert body["response_format"] == {"type": "json_object"}
         prompt = body["messages"][1]["content"]
         seen_prompts.append(prompt)
         assert str(root) not in prompt
         assert "app.py" in prompt
+        assert (
+            "Every finding.category must be exactly one of: correctness, security, reliability, "
+            "performance, maintainability, testing."
+        ) in prompt
         payload = {
             "findings": [
                 {
@@ -301,6 +306,7 @@ def test_review_job_is_blind_paginated_and_records_adjudication(
             encoding="utf-8"
         )
     )
+    assert manifest["prompt_version"] == "code-review-prompt-v2"
     assert manifest["reasoning_effort"] == "high"
     assert manifest["max_output_tokens"] == 16_384
     run = manager.store.get_run(submission.job_id)
@@ -834,3 +840,59 @@ def test_review_stop_with_reasoning_heavy_usage_is_not_misclassified(tmp_path: P
     assert status.validation_stage is CodeReviewValidationStage.JSON_SYNTAX
     assert audit["visible_completion_tokens"] == 543
     assert audit["reasoning_ratio"] == round(6_349 / 6_892, 6)
+
+
+def test_review_two_noncanonical_categories_fail_without_value_leak_or_retry(
+    tmp_path: Path,
+) -> None:
+    payload = _valid_review_payload()
+    first = payload["findings"][0]
+    assert isinstance(first, dict)
+    first["category"] = "PRIVATE_CATEGORY_ALPHA"
+    second = dict(first)
+    second["finding_id"] = "second_finding"
+    second["category"] = "PRIVATE_CATEGORY_BETA"
+    third = dict(first)
+    third["finding_id"] = "third_finding"
+    third["category"] = "testing"
+    payload["findings"] = [first, second, third]
+
+    status, audit, calls, _ = _run_review_fixture(tmp_path, content=json.dumps(payload))
+
+    assert calls == 1
+    assert status.failure_code is CodeReviewFailureCode.INVALID_PROVIDER_RESPONSE
+    assert status.validation_stage is CodeReviewValidationStage.FINDING_SCHEMA
+    assert audit["validation_stage"] == "FINDING_SCHEMA"
+    assert audit["validation_issues"] == [
+        {"field_path": "findings.0.category", "error_type": "enum"},
+        {"field_path": "findings.1.category", "error_type": "enum"},
+    ]
+    serialized = json.dumps(audit, ensure_ascii=False)
+    assert "PRIVATE_CATEGORY_ALPHA" not in serialized
+    assert "PRIVATE_CATEGORY_BETA" not in serialized
+    assert "testing" not in serialized
+
+
+def test_review_three_canonical_categories_succeed_without_retry(tmp_path: Path) -> None:
+    payload = _valid_review_payload()
+    first = payload["findings"][0]
+    assert isinstance(first, dict)
+    categories = ("correctness", "security", "testing")
+    findings = []
+    for index, category in enumerate(categories, start=1):
+        finding = dict(first)
+        finding["finding_id"] = f"canonical_{index}"
+        finding["category"] = category
+        findings.append(finding)
+    payload["findings"] = findings
+
+    status, audit, calls, _ = _run_review_fixture(tmp_path, content=json.dumps(payload))
+
+    assert calls == 1
+    assert status.state is CodeReviewJobState.SUCCEEDED
+    assert status.failure_code is None
+    assert status.validation_stage is None
+    assert status.total_findings == 3
+    assert [finding.category.value for finding in status.findings] == list(categories)
+    assert audit["finding_count"] == 3
+    assert audit["validation_stage"] is None

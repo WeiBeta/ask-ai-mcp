@@ -13,6 +13,11 @@ records each model's actual reasoning effort and output cap. Token/cost prefligh
 and explicit frozen-file shards remain a later P1 design item.
 Version 0.9.3 adds prompt-free Review validation-stage diagnostics without
 relaxing the response schema, retry policy, or model budgets.
+Version 0.9.4 makes all six canonical Review categories explicit in prompt v2.
+The Go Chat Completions endpoint remains in documented JSON-object mode because
+its official endpoint matrix does not promise strict JSON Schema enforcement;
+the separate OpenCode session structured-output API includes validation retries
+and is therefore outside the Review module's single-call policy.
 
 ## Phase 0: policy and skeleton
 
