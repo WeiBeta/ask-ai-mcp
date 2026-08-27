@@ -22,7 +22,6 @@ from ask_ai_mcp.code_review_models import (
 
 PROMPT_VERSION = "code-review-prompt-v3"
 CONTRACT_VERSION = "code-review-findings-v1"
-MAX_OUTPUT_TOKENS = 8_000
 TEMPERATURE = 0.0
 
 

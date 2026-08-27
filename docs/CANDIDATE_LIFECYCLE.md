@@ -28,7 +28,7 @@ That response is a hash-bound set of exact text replacements against existing
 Python files, not a complete candidate retransmission. The controller requires
 each old string to match exactly once, preserves the file set, applies the edits,
 rehashes the result, and reruns all policy checks. An isolated-test semantic
-failure uses Thinking High and a 65,536-token output
+failure uses Thinking High and a 131,072-token total generation
 cap. An empty, truncated, or schema-invalid initial API response may be
 regenerated once without the invalid response body; it does not expand the
 three-attempt candidate policy.

@@ -33,11 +33,21 @@ class CodeReviewJobState(StrEnum):
 
 
 class CodeReviewFailureCode(StrEnum):
+    REVIEW_PARTITION_REQUIRED = "REVIEW_PARTITION_REQUIRED"
     REASONING_BUDGET_EXHAUSTED = "REASONING_BUDGET_EXHAUSTED"
     OUTPUT_TRUNCATED = "OUTPUT_TRUNCATED"
     INVALID_PROVIDER_RESPONSE = "INVALID_PROVIDER_RESPONSE"
     PROVIDER_REQUEST_FAILED = "PROVIDER_REQUEST_FAILED"
     INTERNAL_ERROR = "INTERNAL_ERROR"
+
+
+class CodeReviewProviderFailureClass(StrEnum):
+    TIMEOUT = "TIMEOUT"
+    RATE_LIMIT = "RATE_LIMIT"
+    AUTH = "AUTH"
+    UPSTREAM = "UPSTREAM"
+    TRANSPORT = "TRANSPORT"
+    UNKNOWN = "UNKNOWN"
 
 
 class CodeReviewValidationStage(StrEnum):
@@ -182,6 +192,31 @@ class CodeReviewSubmitCommand(StrictModel):
         return self
 
 
+class CodeReviewPartitionShard(StrictModel):
+    index: int = Field(ge=1, le=100)
+    files: list[str] = Field(min_length=1, max_length=100)
+    changed_line_count: int = Field(ge=0, le=10_000)
+    diff_bytes: int = Field(ge=0, le=10_000_000)
+    estimated_prompt_tokens: int = Field(ge=0, le=10_000_000)
+    oversized_single_file: bool = False
+
+    @field_validator("files")
+    @classmethod
+    def validate_files(cls, values: list[str]) -> list[str]:
+        return [_validate_repo_relative(value) for value in values]
+
+
+class CodeReviewPartitionPlan(StrictModel):
+    strategy_version: str = Field(min_length=1, max_length=64)
+    reason: CodeReviewFailureCode = CodeReviewFailureCode.REVIEW_PARTITION_REQUIRED
+    estimated_prompt_tokens: int = Field(ge=0, le=10_000_000)
+    context_tokens: int = Field(ge=1, le=10_000_000)
+    max_output_tokens: int = Field(ge=1, le=1_000_000)
+    visible_output_reserve_tokens: int = Field(ge=1, le=1_000_000)
+    shards: list[CodeReviewPartitionShard] = Field(min_length=1, max_length=100)
+    advisory_only: bool = True
+
+
 class CodeReviewSubmission(StrictModel):
     job_id: str = Field(pattern=r"^[a-f0-9-]{36}$")
     review_group_id: str = Field(pattern=r"^[a-f0-9-]{36}$")
@@ -192,6 +227,8 @@ class CodeReviewSubmission(StrictModel):
     snapshot_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     changed_file_count: int = Field(ge=0)
     changed_line_count: int = Field(ge=0)
+    failure_code: CodeReviewFailureCode | None = None
+    partition_plan: CodeReviewPartitionPlan | None = None
 
 
 class CodeReviewAdjudicationCommand(StrictModel):
@@ -232,6 +269,7 @@ class CodeReviewStatus(StrictModel):
     state: CodeReviewJobState
     detail: str = Field(min_length=1, max_length=1_000)
     failure_code: CodeReviewFailureCode | None = None
+    provider_failure_class: CodeReviewProviderFailureClass | None = None
     validation_stage: CodeReviewValidationStage | None = None
     model_identity_hidden: bool = True
     total_findings: int = Field(ge=0)
@@ -241,6 +279,7 @@ class CodeReviewStatus(StrictModel):
     findings: list[CodeReviewFinding] = Field(default_factory=list, max_length=100)
     omitted_context: list[str] = Field(default_factory=list, max_length=100)
     truncated: bool = False
+    partition_plan: CodeReviewPartitionPlan | None = None
     artifacts: list[CodeReviewArtifact] = Field(default_factory=list, max_length=20)
 
 

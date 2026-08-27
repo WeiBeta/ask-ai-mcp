@@ -11,9 +11,10 @@ import httpx
 
 from ask_ai_mcp import __version__
 from ask_ai_mcp.credentials import OpenCodeCredentialStore
-from ask_ai_mcp.deepseek import DeepSeekClient
+from ask_ai_mcp.deepseek import STATIC_REPAIR_MAX_OUTPUT_TOKENS, DeepSeekClient
 from ask_ai_mcp.models import DeepSeekModel, ModelProvider, ToolBuildSpec, UsageEvent
 from ask_ai_mcp.opencode_account import OpenCodeAccount, load_opencode_account
+from ask_ai_mcp.opencode_generation import opencode_generation_policy
 from ask_ai_mcp.opencode_pricing import (
     OPENCODE_GO_PRICING_VERSION,
     OpenCodeGoModel,
@@ -66,7 +67,10 @@ class OpenCodeGoClient(DeepSeekClient):
         body = super()._request_body(
             spec, thinking_enabled=thinking_enabled, max_output_tokens=max_output_tokens
         )
-        body["model"] = self._initial_model(spec).value
+        model = self._initial_model(spec)
+        body["model"] = model.value
+        if thinking_enabled:
+            body["reasoning_effort"] = opencode_generation_policy(model).reasoning_effort
         body["_json_schema"] = self._strict_schema(self._candidate_schema())
         return body
 
@@ -292,6 +296,16 @@ class OpenCodeGoClient(DeepSeekClient):
                 provider_account=self.account,
                 provider_subscription_id=self.subscription_id,
                 thinking_enabled=thinking_enabled,
+                reasoning_effort=(
+                    opencode_generation_policy(model).reasoning_effort
+                    if thinking_enabled
+                    else "none"
+                ),
+                max_output_tokens=(
+                    opencode_generation_policy(model).max_output_tokens
+                    if thinking_enabled
+                    else STATIC_REPAIR_MAX_OUTPUT_TOKENS
+                ),
                 priced_at=priced_at.astimezone(UTC),
                 pricing_band=(
                     "peak"

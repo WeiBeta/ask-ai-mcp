@@ -174,3 +174,10 @@ fresh Codex session loads smaller guidance matching the deployed MCP version.
 legacy CNY budget tools are absent, and confirm `usage_status` reports the USD 2
 daily utilization pace as non-blocking. Then audit the user-level Codex
 `AGENTS.md`; model catalogs and prices remain MCP status data.
+
+0.12.0 release gate: centralize OpenCode Go generation policies; use a 131,072-token
+total generation cap for thinking-heavy Core, Coding, and Review routes while
+preserving the 4,096-token static-edit contract. Review preflight rejects only
+inputs approaching the model context boundary, returns an advisory deterministic
+partition plan with zero provider calls, and safely classifies request failures.
+Collect 10-15 days of per-model reasoning/visible-output logs before tightening.

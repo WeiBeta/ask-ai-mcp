@@ -291,7 +291,7 @@ def test_semantic_failure_uses_thinking_high_repair(tmp_path: Path) -> None:
     assert result.status is CandidateLifecycleStatus.REVIEW_PENDING
     assert client.repair_feedback[0].repair_kind is RepairKind.SEMANTIC_TEST
     assert client.repair_kwargs[0]["thinking_enabled"] is True
-    assert client.repair_kwargs[0]["max_output_tokens"] == 65_536
+    assert client.repair_kwargs[0]["max_output_tokens"] == 131_072
     assert result.attempts[1].repair_kind is RepairKind.SEMANTIC_TEST
 
 

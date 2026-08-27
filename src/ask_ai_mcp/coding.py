@@ -34,6 +34,7 @@ from ask_ai_mcp.coding_workspace import CodingSnapshot, CodingSnapshotter
 from ask_ai_mcp.credentials import CredentialError, OpenCodeCredentialStore
 from ask_ai_mcp.models import ModelProvider, PricingBand, UsageEvent
 from ask_ai_mcp.opencode_account import OpenCodeAccount, load_opencode_account
+from ask_ai_mcp.opencode_generation import opencode_generation_policy
 from ask_ai_mcp.opencode_pricing import (
     OPENCODE_GO_MODELS_URL,
     OPENCODE_GO_PRICING_SOURCE_URL,
@@ -46,7 +47,6 @@ from ask_ai_mcp.usage import UsageStore
 
 OPENCODE_GO_CHAT_URL = "https://opencode.ai/zen/go/v1/chat/completions"
 STATE_ROOT_ENV = "ASK_AI_MCP_CODING_STATE_ROOT"
-MAX_OUTPUT_TOKENS = 65_536
 REASONING_EFFORT = "max"
 _HOST_PATH = re.compile(r"(?i)(?:[A-Z]:[\\/]+(?:Users|Dev|AI)[\\/])")
 _SECRET_TEXT = re.compile(
@@ -188,7 +188,16 @@ class CodingManager:
             account_alias=self.account.alias if self.account else None,
             remote_models_checked=remote_checked,
             models=[
-                CodingModelAvailability(model_id=model, available=available[model.value])
+                CodingModelAvailability(
+                    model_id=model,
+                    available=available[model.value],
+                    requested_reasoning_effort=opencode_generation_policy(
+                        OpenCodeGoModel(model.value)
+                    ).reasoning_effort,
+                    max_output_tokens=opencode_generation_policy(
+                        OpenCodeGoModel(model.value)
+                    ).max_output_tokens,
+                )
                 for model in CodingModel
             ],
             account_ledger=ledger,
@@ -206,6 +215,7 @@ class CodingManager:
         if reason:
             raise RuntimeError(reason)
         snapshot = self.snapshotter.capture(command)
+        generation_policy = opencode_generation_policy(model)
         job_id = str(uuid4())
         job_root = self.jobs_root / job_id
         job_root.mkdir(parents=True, exist_ok=False)
@@ -216,6 +226,8 @@ class CodingManager:
             "command": command.model_dump(mode="json"),
             "base_commit": snapshot.base_commit,
             "snapshot_sha256": snapshot.snapshot_sha256,
+            "reasoning_effort": generation_policy.reasoning_effort,
+            "max_output_tokens": generation_policy.max_output_tokens,
             "detail": "coding candidate is queued",
         }
         _atomic_json(job_root / "job.json", record)
@@ -239,6 +251,8 @@ class CodingManager:
             base_commit=snapshot.base_commit,
             snapshot_sha256=snapshot.snapshot_sha256,
             model=command.model,
+            reasoning_effort=generation_policy.reasoning_effort,
+            max_output_tokens=generation_policy.max_output_tokens,
         )
 
     def status(self, command: CodingStatusCommand) -> CodingStatus:
@@ -267,6 +281,8 @@ class CodingManager:
             repository_id=submitted.repository_id,
             base_commit=str(record["base_commit"]),
             model=submitted.model,
+            reasoning_effort=str(record.get("reasoning_effort", "max")),
+            max_output_tokens=int(record.get("max_output_tokens", 131_072)),
             candidate_sha256=record.get("candidate_sha256"),
             changed_files=list(record.get("changed_files", [])),
             summary=candidate.get("summary"),
@@ -363,6 +379,12 @@ class CodingManager:
                 provider_account=self.account.uid if self.account else None,
                 provider_subscription_id=self.account.subscription_id if self.account else None,
                 thinking_enabled=True,
+                reasoning_effort=opencode_generation_policy(
+                    OpenCodeGoModel(command.model.value)
+                ).reasoning_effort,
+                max_output_tokens=opencode_generation_policy(
+                    OpenCodeGoModel(command.model.value)
+                ).max_output_tokens,
                 priced_at=priced_at,
                 pricing_band=usage["pricing_band"],
                 pricing_schedule_version=OPENCODE_GO_PRICING_VERSION,
@@ -438,7 +460,9 @@ class CodingManager:
             ],
             "reasoning_effort": REASONING_EFFORT,
             "temperature": 0.1,
-            "max_tokens": MAX_OUTPUT_TOKENS,
+            "max_tokens": opencode_generation_policy(
+                OpenCodeGoModel(command.model.value)
+            ).max_output_tokens,
             "response_format": {"type": "json_object"},
         }
         with self._client() as client:

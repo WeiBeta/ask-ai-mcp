@@ -111,6 +111,7 @@ def test_candidate_uses_max_reasoning_and_returns_paginated_external_diff(
         seen.append(body)
         assert body["model"] == CodingModel.GLM_5_3_FLASH.value
         assert body["reasoning_effort"] == "max"
+        assert body["max_tokens"] == 131_072
         assert str(root) not in body["messages"][1]["content"]
         payload = {
             "summary": "Increment by two.",
@@ -148,6 +149,8 @@ def test_candidate_uses_max_reasoning_and_returns_paginated_external_diff(
         state_root=tmp_path / "coding-state",
     )
     submission = manager.submit(_command(commit))
+    assert submission.reasoning_effort == "max"
+    assert submission.max_output_tokens == 131_072
     deadline = time.monotonic() + 5
     status = manager.status(CodingStatusCommand(job_id=submission.job_id, limit=1_000))
     while status.state in {CodingJobState.QUEUED, CodingJobState.RUNNING}:
@@ -157,6 +160,8 @@ def test_candidate_uses_max_reasoning_and_returns_paginated_external_diff(
         status = manager.status(CodingStatusCommand(job_id=submission.job_id, limit=1_000))
 
     assert status.state is CodingJobState.SUCCEEDED
+    assert status.reasoning_effort == "max"
+    assert status.max_output_tokens == 131_072
     assert "x + 2" in status.patch_chunk
     assert status.changed_files == ["Counter.cs"]
     assert (root / "Counter.cs").read_text(encoding="utf-8") == original

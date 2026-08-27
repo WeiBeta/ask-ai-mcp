@@ -9,7 +9,8 @@
 - `coding_status`：读取任务状态和分页候选 diff。
 
 模型只允许 `deepseek-v4-flash` 与 `glm-5.3-flash`，均请求
-`reasoning_effort=max`。服务端不接受 generic prompt、任意模型、任意 URL、Shell、测试命令、
+`reasoning_effort=max` 与 131,072 token 总生成上限。实际策略由 backend status、job manifest
+和共享 usage 账本共同记录，后续按模型日志收敛。服务端不接受 generic prompt、任意模型、任意 URL、Shell、测试命令、
 工作树写入、应用补丁、commit、push、重试次数或切换账户参数。
 
 ## 快照和候选

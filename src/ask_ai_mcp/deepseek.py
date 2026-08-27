@@ -27,14 +27,15 @@ from ask_ai_mcp.models import (
     ToolCandidateResult,
     UsageEvent,
 )
+from ask_ai_mcp.opencode_generation import WIDE_MAX_OUTPUT_TOKENS
 from ask_ai_mcp.policy import PolicyViolation, require_tool_spec_allowed
 from ask_ai_mcp.pricing import calculate_cost_estimate, load_peak_pricing_effective_at
 from ask_ai_mcp.usage import UsageStore
 
 DEEPSEEK_CHAT_COMPLETIONS_URL = "https://api.deepseek.com/chat/completions"
-INITIAL_MAX_OUTPUT_TOKENS = 65_536
+INITIAL_MAX_OUTPUT_TOKENS = WIDE_MAX_OUTPUT_TOKENS
 STATIC_REPAIR_MAX_OUTPUT_TOKENS = 4_096
-SEMANTIC_REPAIR_MAX_OUTPUT_TOKENS = 65_536
+SEMANTIC_REPAIR_MAX_OUTPUT_TOKENS = WIDE_MAX_OUTPUT_TOKENS
 PROMPT_TEMPLATE_VERSION = "toolsmith-json-v2"
 BUILD_INSTRUCTION = (
     "Generate a candidate that satisfies this bounded specification. "
@@ -680,6 +681,14 @@ class DeepSeekClient:
                 provider_model_id=spec.model.value,
                 provider_runtime=self.provider_runtime,
                 thinking_enabled=thinking_enabled,
+                reasoning_effort="high" if thinking_enabled else None,
+                max_output_tokens=(
+                    STATIC_REPAIR_MAX_OUTPUT_TOKENS
+                    if task_kind == "tool_repair" and not thinking_enabled
+                    else SEMANTIC_REPAIR_MAX_OUTPUT_TOKENS
+                    if task_kind == "tool_repair"
+                    else INITIAL_MAX_OUTPUT_TOKENS
+                ),
                 priced_at=cost.priced_at,
                 pricing_band=cost.pricing_band,
                 pricing_multiplier=cost.pricing_multiplier,

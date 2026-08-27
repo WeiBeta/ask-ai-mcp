@@ -72,6 +72,12 @@ bounded patch in a project-specific external staging root. Paid patch review
 accepts only a matching immutable patch/receipt pair pinned by both SHA-256
 values; incomplete, altered, or root-mismatched pairs fail before submission.
 
+Version 0.12.0 centralizes OpenCode Go generation policy and raises thinking-heavy
+Core, Coding, and Review calls to a 131,072-token total generation cap. Review
+preflight now blocks only context-boundary risk with a deterministic advisory
+partition plan and zero provider calls; provider failures expose content-free
+machine-readable subclasses. Static hash-bound repairs retain their 4,096-token cap.
+
 The first full billed lifecycle smoke passed on 2026-08-02 in one Flash call:
 the generated synthetic helper passed four isolated tests, was reviewed, and
 was registered under an exact hash with synthetic-input capability only.
@@ -107,7 +113,7 @@ Seven explicit profiles share the same codebase:
 - `ask-ai-mcp-subagent.exe` registers Core plus three multimodal source tools, but no H3.
 - `ask-ai-mcp-perception.exe` registers only the three multimodal source tools.
 - `ask-ai-mcp-h3.exe` registers only the four local video and ComfyUI tools.
-- `ask-ai-mcp-review.exe` registers only three read-only code-review tools and is opt-in.
+- `ask-ai-mcp-review.exe` registers only four read-only code-review/staging tools and is opt-in.
 - `ask-ai-mcp-coding.exe` registers only three bounded coding-candidate tools and is opt-in.
 - `ask-ai-mcp-full.exe` registers all fifteen tools, including source and H3 adapters.
 

@@ -22,6 +22,7 @@ from ask_ai_mcp.code_review_models import (
     CodeReviewJobState,
     CodeReviewModel,
     CodeReviewProfile,
+    CodeReviewProviderFailureClass,
     CodeReviewStagePatchCommand,
     CodeReviewStatusCommand,
     CodeReviewSubmitCommand,
@@ -30,6 +31,7 @@ from ask_ai_mcp.code_review_models import (
 from ask_ai_mcp.code_review_store import CodeReviewStore
 from ask_ai_mcp.code_review_workspace import (
     CodeReviewRepositoryCatalog,
+    CodeReviewSnapshot,
     CodeReviewSnapshotter,
     CodeReviewWorkspaceError,
 )
@@ -361,8 +363,8 @@ def test_review_job_is_blind_paginated_and_records_adjudication(
         body = json.loads(request.content)
         assert body["model"] == CodeReviewModel.GLM_5_3.value
         assert body["temperature"] == 0
-        assert body["reasoning_effort"] == "high"
-        assert body["max_tokens"] == 16_384
+        assert body["reasoning_effort"] == "max"
+        assert body["max_tokens"] == 131_072
         assert body["response_format"] == {"type": "json_object"}
         prompt = body["messages"][1]["content"]
         seen_prompts.append(prompt)
@@ -439,18 +441,18 @@ def test_review_job_is_blind_paginated_and_records_adjudication(
         )
     )
     assert manifest["prompt_version"] == "code-review-prompt-v3"
-    assert manifest["reasoning_effort"] == "high"
-    assert manifest["max_output_tokens"] == 16_384
+    assert manifest["reasoning_effort"] == "max"
+    assert manifest["max_output_tokens"] == 131_072
     run = manager.store.get_run(submission.job_id)
-    assert run["reasoning_effort"] == "high"
-    assert run["max_output_tokens"] == 16_384
+    assert run["reasoning_effort"] == "max"
+    assert run["max_output_tokens"] == 131_072
     import sqlite3
 
     with sqlite3.connect(tmp_path / "usage.db") as connection:
         usage_policy = connection.execute(
             "SELECT reasoning_effort, max_output_tokens FROM api_usage"
         ).fetchone()
-    assert usage_policy == ("high", 16_384)
+    assert usage_policy == ("max", 131_072)
     assert status.model_identity_hidden is True
     assert status.total_findings == 1
     assert status.findings[0].category.value == "correctness"
@@ -554,9 +556,9 @@ def test_backend_reports_model_specific_review_policies(tmp_path: Path) -> None:
         for item in status.models
     }
 
-    assert policies[CodeReviewModel.GLM_5_3] == ("high", 16_384)
-    assert policies[CodeReviewModel.KIMI_K3] == ("max", 8_000)
-    assert policies[CodeReviewModel.DEEPSEEK_V4_PRO] == ("max", 8_000)
+    assert policies[CodeReviewModel.GLM_5_3] == ("max", 131_072)
+    assert policies[CodeReviewModel.KIMI_K3] == ("max", 131_072)
+    assert policies[CodeReviewModel.DEEPSEEK_V4_PRO] == ("max", 131_072)
     assert status.patch_roots_configured is False
     assert status.patch_root_count == 0
 
@@ -996,6 +998,157 @@ def test_review_stop_with_reasoning_heavy_usage_is_not_misclassified(tmp_path: P
     assert status.validation_stage is CodeReviewValidationStage.JSON_SYNTAX
     assert audit["visible_completion_tokens"] == 543
     assert audit["reasoning_ratio"] == round(6_349 / 6_892, 6)
+
+
+def _synthetic_review_snapshot(diff_payload_bytes: int) -> CodeReviewSnapshot:
+    header = "diff --git a/src/large.py b/src/large.py\n"
+    hunk = "@@ -1,1 +1,1 @@\n-old\n+new\n"
+    padding = "+" + ("x" * max(1, diff_payload_bytes - len(header) - len(hunk) - 2)) + "\n"
+    diff_text = header + hunk + padding
+    digest = hashlib.sha256(diff_text.encode()).hexdigest()
+    return CodeReviewSnapshot(
+        repository_id="sample",
+        diff_text=diff_text,
+        diff_sha256=digest,
+        snapshot_sha256="1" * 64,
+        changed_files=("src/large.py",),
+        changed_line_count=3,
+        language="Python",
+        context=(),
+        omitted_context=(),
+        source_identity={"base_commit": "2" * 40, "head_commit": "3" * 40},
+    )
+
+
+def test_review_preflight_uses_context_boundary_not_old_reasoning_caps() -> None:
+    moderate = _synthetic_review_snapshot(150_000)
+    oversized = _synthetic_review_snapshot(2_600_000)
+    for model in CodeReviewModel:
+        command = CodeReviewSubmitCommand(
+            repository_id="sample",
+            base_ref="2" * 40,
+            head_ref="3" * 40,
+            review_profile=CodeReviewProfile.DATA_INTEGRITY,
+            model=model,
+        )
+        assert CodeReviewManager._preflight_partition_plan(command, moderate) is None
+        plan = CodeReviewManager._preflight_partition_plan(command, oversized)
+        assert plan is not None
+        assert plan.max_output_tokens == 131_072
+        assert plan.context_tokens == 1_000_000
+        assert plan.advisory_only is True
+        assert plan.shards[0].oversized_single_file is True
+
+
+def test_review_partition_preflight_creates_failed_job_without_provider_call(
+    tmp_path: Path,
+) -> None:
+    snapshot = _synthetic_review_snapshot(2_600_000)
+    calls = 0
+
+    class FixedSnapshotter:
+        def from_refs(self, *_args: object) -> CodeReviewSnapshot:
+            return snapshot
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        raise AssertionError("provider must not be called for partition-required input")
+
+    manager = CodeReviewManager(
+        store=CodeReviewStore(tmp_path / "review-state"),
+        usage_store=UsageStore(tmp_path / "usage.db"),
+        snapshotter=FixedSnapshotter(),  # type: ignore[arg-type]
+        account=OpenCodeAccount(uid="go-test-uid", alias="go-test"),
+        api_key_provider=lambda: "opaque-test-key-1234567890",
+        transport=httpx.MockTransport(handler),
+    )
+    submission = manager.submit(
+        CodeReviewSubmitCommand(
+            repository_id="sample",
+            base_ref="2" * 40,
+            head_ref="3" * 40,
+            review_profile=CodeReviewProfile.DATA_INTEGRITY,
+            model=CodeReviewModel.DEEPSEEK_V4_PRO,
+        )
+    )
+    status = manager.status(CodeReviewStatusCommand(job_id=submission.job_id))
+
+    assert calls == 0
+    assert submission.state is CodeReviewJobState.FAILED
+    assert submission.failure_code is CodeReviewFailureCode.REVIEW_PARTITION_REQUIRED
+    assert status.failure_code is CodeReviewFailureCode.REVIEW_PARTITION_REQUIRED
+    assert status.partition_plan == submission.partition_plan
+    assert status.partition_plan is not None
+    assert all(item.relative_path.startswith("audit/") for item in status.artifacts)
+
+
+@pytest.mark.parametrize(
+    ("response_status", "request_error", "expected"),
+    [
+        (401, None, CodeReviewProviderFailureClass.AUTH),
+        (429, None, CodeReviewProviderFailureClass.RATE_LIMIT),
+        (503, None, CodeReviewProviderFailureClass.UPSTREAM),
+        (418, None, CodeReviewProviderFailureClass.UNKNOWN),
+        (None, "timeout", CodeReviewProviderFailureClass.TIMEOUT),
+        (None, "transport", CodeReviewProviderFailureClass.TRANSPORT),
+    ],
+)
+def test_review_provider_failures_are_safely_classified_without_retry(
+    tmp_path: Path,
+    response_status: int | None,
+    request_error: str | None,
+    expected: CodeReviewProviderFailureClass,
+) -> None:
+    root, base, head = _repository(tmp_path)
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if request_error == "timeout":
+            raise httpx.ReadTimeout("PRIVATE_TIMEOUT_TEXT", request=request)
+        if request_error == "transport":
+            raise httpx.ConnectError("PRIVATE_TRANSPORT_TEXT", request=request)
+        return httpx.Response(
+            response_status or 500,
+            json={"error": {"message": "PRIVATE_PROVIDER_BODY", "type": "PRIVATE_TYPE"}},
+        )
+
+    store = CodeReviewStore(tmp_path / "review-state")
+    manager = CodeReviewManager(
+        store=store,
+        usage_store=UsageStore(tmp_path / "usage.db"),
+        snapshotter=CodeReviewSnapshotter(CodeReviewRepositoryCatalog({"sample": root})),
+        account=OpenCodeAccount(uid="go-test-uid", alias="go-test"),
+        api_key_provider=lambda: "opaque-test-key-1234567890",
+        transport=httpx.MockTransport(handler),
+    )
+    submission = manager.submit(
+        CodeReviewSubmitCommand(
+            repository_id="sample",
+            base_ref=base,
+            head_ref=head,
+            review_profile=CodeReviewProfile.GENERAL,
+            model=CodeReviewModel.GLM_5_3,
+        )
+    )
+    deadline = time.monotonic() + 5
+    status = manager.status(CodeReviewStatusCommand(job_id=submission.job_id))
+    while status.state in {CodeReviewJobState.QUEUED, CodeReviewJobState.RUNNING}:
+        if time.monotonic() >= deadline:
+            raise AssertionError("review job did not complete")
+        time.sleep(0.02)
+        status = manager.status(CodeReviewStatusCommand(job_id=submission.job_id))
+
+    audit_text = (store.jobs_root / submission.job_id / "audit" / "provider-error.json").read_text(
+        encoding="utf-8"
+    )
+    assert calls == 1
+    assert status.failure_code is CodeReviewFailureCode.PROVIDER_REQUEST_FAILED
+    assert status.provider_failure_class is expected
+    assert expected.value in audit_text
+    assert "PRIVATE_" not in audit_text
 
 
 def test_review_two_noncanonical_categories_fail_without_value_leak_or_retry(

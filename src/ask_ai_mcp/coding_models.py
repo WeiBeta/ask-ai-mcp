@@ -135,6 +135,7 @@ class CodingSubmission(StrictModel):
     snapshot_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     model: CodingModel
     reasoning_effort: str = "max"
+    max_output_tokens: int = Field(default=131_072, ge=1, le=131_072)
 
 
 class CodingStatusCommand(StrictModel):
@@ -151,6 +152,7 @@ class CodingStatus(StrictModel):
     base_commit: str = Field(pattern=r"^[a-f0-9]{40}$")
     model: CodingModel
     reasoning_effort: str = "max"
+    max_output_tokens: int = Field(default=131_072, ge=1, le=131_072)
     candidate_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     changed_files: list[str] = Field(default_factory=list, max_length=12)
     summary: str | None = Field(default=None, max_length=2_000)
@@ -165,6 +167,7 @@ class CodingModelAvailability(StrictModel):
     model_id: CodingModel
     available: bool
     requested_reasoning_effort: str = "max"
+    max_output_tokens: int = Field(default=131_072, ge=1, le=131_072)
 
 
 class CodingBackendStatus(StrictModel):

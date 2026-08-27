@@ -233,7 +233,7 @@ def test_initial_build_allows_reasoning_and_structured_candidate_output(tmp_path
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         assert body["thinking"] == {"type": "enabled"}
-        assert body["max_tokens"] == 65_536
+        assert body["max_tokens"] == 131_072
         assert body["max_tokens"] == INITIAL_MAX_OUTPUT_TOKENS
         return httpx.Response(200, json=api_response())
 

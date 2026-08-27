@@ -14,7 +14,8 @@ from Core, Subagent, Perception, H3, Review, and compatibility Full.
 `ask-ai-mcp-coding.exe` exposes `coding_backend_status`, `coding_submit`, and
 paginated `coding_status`. It accepts one allow-listed repository ID, an exact
 commit, named target/context files, a bounded task contract, and only
-`deepseek-v4-flash` or `glm-5.3-flash`. Both routes request `max` reasoning.
+`deepseek-v4-flash` or `glm-5.3-flash`. Both routes request `max` reasoning and
+a 131,072-token total generation cap exposed by backend status and job metadata.
 It freezes source with read-only Git operations and emits an external candidate
 diff; it has no generic prompt, arbitrary path/model/URL, shell, test runner,
 working-tree write, apply, commit, push, or automatic account-switch operation.
@@ -31,7 +32,10 @@ OpenCode Go models. It has no generic prompt, shell, arbitrary path, Git-write,
 patch-generation, commit, push, or retry option.
 
 Review models are fixed to `deepseek-v4-pro`, `glm-5.3`, and `kimi-k3`, each
-with requested reasoning effort `max`.
+with requested reasoning effort `max` and a 131,072-token total generation cap.
+Before a paid request, a context-boundary preflight either permits the single
+call or returns `REVIEW_PARTITION_REQUIRED` plus an advisory deterministic plan;
+it never automatically partitions, submits, or retries.
 
 The controller resolves immutable commits, removes secrets, binary/vendor/generated
 content, submodules, escaping reparse points, oversized files, and excess context,

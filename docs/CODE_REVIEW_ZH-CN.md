@@ -10,9 +10,10 @@ Subagent、Perception、H3 或 Full，普通开发保持关闭。固定工具只
 - `code_review_submit`：提交冻结 refs 或同时固定 patch/receipt 哈希的 staged patch；
 - `code_review_status`：分页读结果，并记录盲审裁决或延迟 outcome。
 
-固定模型为 `glm-5.3`、`kimi-k3`、`deepseek-v4-pro`。真实业务灰度证明 GLM-5.3 的 `max`
-reasoning 会吞尽 8K completion 总预算，因此 GLM 固定使用 `reasoning_effort=high` 与 16K
-输出上限；Kimi/DeepSeek 暂保持 `max` 与 8K。固定 profile 为 `general`、`security`、
+固定模型为 `glm-5.3`、`kimi-k3`、`deepseek-v4-pro`。三条 Review 路由统一请求
+`reasoning_effort=max` 与 131,072 token 总生成上限。该上限同时容纳 reasoning 和可见 JSON，
+不是上下文窗口；宽松基线用于预付额度测试期，后续根据分模型日志中的 reasoning、可见输出、
+finish reason 与成本分布再收敛。固定 profile 为 `general`、`security`、
 `concurrency`、`data_integrity`。没有 generic prompt、任意模型、
 任意 URL、Shell、任意文件写入、Git 写操作、提交、推送、自动重试或默认补丁；唯一写入面是
 配置好的项目专属仓库外 patch staging 目录。
@@ -21,6 +22,14 @@ reasoning 会吞尽 8K completion 总预算，因此 GLM 固定使用 `reasoning
 账本。若 provider 返回 `finish_reason=length`，且 reasoning token 占 completion token 至少 95%，
 任务以 `REASONING_BUDGET_EXHAUSTED` 失败；其他长度截断为 `OUTPUT_TRUNCATED`。状态接口返回
 机器可读 `failure_code`、安全明确的 detail 和仅含哈希/usage 的 audit artifact，不会自动重试。
+HTTP/传输失败另以不含响应正文的 `provider_failure_class` 区分 timeout、rate-limit、auth、
+upstream、transport 与 unknown。
+
+付费前的 prompt 预检只针对模型上下文硬边界：以固定 UTF-8 估算、1M context、128K 总生成
+预算和额外安全余量判断。普通 2–3 万 token 大审查不会因为旧 8K/16K 经验而被提前拒绝；只有
+逼近上下文边界时才以 `REVIEW_PARTITION_REQUIRED` 零 provider call 失败，并返回确定性、
+advisory-only 的按文件分片计划。Controller 必须显式生成并重新封存每个 bounded patch；服务端
+不会自动分片、自动提交或自动重试。
 
 ## 仓库与快照安全
 
@@ -87,9 +96,8 @@ recall proxy、false-positive burden、duplicate rate、severity calibration、�
 第一批样本对同一冻结 diff 做 GLM/Kimi/Pro 影子 A/B/C；积累样本后再由效果日志决定
 是否购买单模型 Coding Plan 或继续使用 Go 的异构深审组合，不预设赢家。
 
-## P1 设计备注（本版本不实现）
+## 后续数据回收
 
-后续可在付费提交前增加 prompt token/成本估算门禁。超过阈值时返回
-`REVIEW_PARTITION_REQUIRED` 和确定性分片计划，但不自动提交多个付费请求。若扩展提交契约，
-只允许显式 `include_files` 或固定 shard ID 从同一冻结 commit 选择文件，并为每个分片重新生成
-独立 diff/snapshot hash；不得静默截断、读取未提交工作树或自动并发调用。
+先运行约十天至半个月的真实工况，再按模型分别统计 reasoning/visible 比例、`length`、结构化
+成功率与成本分位数。只有日志证明 128K 长期没有收益时才下调；不得重新引入跨模型统一的
+8K/16K 紧上限。显式 `include_files` 或 shard ID 仍属于后续契约，当前计划只提供建议。

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 
 import httpx
@@ -68,6 +69,8 @@ def test_build_uses_fixed_chat_endpoint_and_records_virtual_usd(tmp_path: Path) 
         assert request.headers["Authorization"] == "Bearer opaque-opencode-key-12345"
         body = json.loads(request.content)
         assert body["model"] == OpenCodeGoModel.DSV4_FLASH.value
+        assert body["reasoning_effort"] == "max"
+        assert body["max_tokens"] == 131_072
         assert "_json_schema" not in body
         return httpx.Response(
             200,
@@ -99,6 +102,11 @@ def test_build_uses_fixed_chat_endpoint_and_records_virtual_usd(tmp_path: Path) 
     assert summary.prompt_cache_miss_tokens == 900
     assert summary.estimated_cost_usd > 0
     assert summary.opencode_go_accounts[0].account == "injected-test"
+    with sqlite3.connect(store.path) as connection:
+        policy = connection.execute(
+            "SELECT reasoning_effort, max_output_tokens FROM api_usage"
+        ).fetchone()
+    assert policy == ("max", 131_072)
 
 
 def test_semantic_repair_uses_luna_responses_and_normalizes_output(tmp_path: Path) -> None:
@@ -116,6 +124,8 @@ def test_semantic_repair_uses_luna_responses_and_normalizes_output(tmp_path: Pat
         assert str(request.url) == OPENCODE_GO_RESPONSES_URL
         body = json.loads(request.content)
         assert body["model"] == OpenCodeGoModel.GPT_5_6_LUNA.value
+        assert body["reasoning"] == {"effort": "high"}
+        assert body["max_output_tokens"] == 131_072
         assert "input" in body and "messages" not in body
         assert body["text"]["format"]["type"] == "json_schema"
         assert body["text"]["format"]["strict"] is True

@@ -10,7 +10,7 @@ OpenCode Go 是执行 provider，不是新的通用聊天工具。它复用现�
 
 - 常驻 toolsmith：使用 `ask-ai-mcp-core.exe`，不加载 H3 或多模态工具；
 - 仓库 coding：按需启用 `ask-ai-mcp-coding.exe`，只声明三个候选制造工具；
-- 冻结 diff 深审：按需启用 `ask-ai-mcp-review.exe`，只声明三个只读审查工具；
+- 冻结 diff 深审：按需启用 `ask-ai-mcp-review.exe`，只声明四个只读审查/封存工具；
 - 258V 多模态专机：使用 `ask-ai-mcp-perception.exe`，只声明
   `source_backend_status`、`source_extract`、`source_job_status` 三个工具；
 - 兼容 `subagent`/`full` 入口仍存在，但不建议给专用会话加载无关工具。
@@ -29,6 +29,11 @@ PDF、PPTX 和 UTF-8 文本；音频、视频需要独立预处理与时间码�
 | Review 深审 | DSV4 Pro、GLM-5.3 或 Kimi K3 | Chat Completions，`max` | `/zen/go/v1/chat/completions` |
 | Core 工具制造 | 固定服务端策略 | 固定协议 | 固定 Go 端点 |
 | 多模态来源结构化 | Qwen3.8 Max | Anthropic Messages | `/zen/go/v1/messages` |
+
+Core 初次生成/语义修复、Coding 两路与 Review 三路统一使用共享 Go 生成策略；文本 thinking
+工况的客户端总生成上限为 131,072 token。Core 静态哈希绑定小修保持 thinking off/4,096，
+Perception 保持 reasoning none 和按提取 profile 控制的结构化证据上限，H3 不使用 completion
+预算。所有实际 effort/cap 必须写入状态、manifest 或 usage 审计，不能再散落为入口私有策略。
 
 Responses 请求使用严格 JSON Schema；Messages 适配器只接受 MCP 已生成的 Base64 data image，
 不会读取 URL、`file://` 或任意路径。

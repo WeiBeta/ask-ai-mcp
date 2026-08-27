@@ -25,7 +25,7 @@ Supported routes are pinned to:
 - `deepseek-v4-pro`: legacy direct route; not exposed by the active Core protocol.
 
 Initial candidates and semantic-test repairs use thinking mode with
-`reasoning_effort` set to `high` and a 65,536-token output cap. A single
+`reasoning_effort` set to `high` and a 131,072-token total generation cap. A single
 static-policy repair disables thinking and uses a 4,096-token cap. Static
 repair returns only a base-hash-bound list of exact unique text edits; semantic
 repair still returns a complete candidate. Requests
