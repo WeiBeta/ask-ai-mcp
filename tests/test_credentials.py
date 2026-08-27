@@ -2,8 +2,9 @@
 
 import pytest
 
-from ask_ai_mcp.credential_cli import build_parser
+from ask_ai_mcp.credential_cli import _set_key, build_parser
 from ask_ai_mcp.credentials import CredentialError, CredentialStore, OpenCodeCredentialStore
+from ask_ai_mcp.opencode_account import load_opencode_account
 
 
 class FakeBackend:
@@ -63,3 +64,25 @@ def test_cli_selects_provider_without_accepting_a_secret() -> None:
     )
     assert args.provider == "opencode-go"
     assert args.account_uid == "visible-uid-02"
+
+
+def test_cli_visible_input_is_explicit_and_stores_matching_key(monkeypatch) -> None:
+    values = iter(["opaque-visible-opencode-key", "opaque-visible-opencode-key"])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(values))
+    store = OpenCodeCredentialStore("visible-uid", backend=FakeBackend())
+
+    assert _set_key(store, label="OpenCode", visible_input=True) == 0
+    assert store.get_api_key() == "opaque-visible-opencode-key"
+    args = build_parser().parse_args(["set", "--visible-input"])
+    assert args.visible_input is True
+
+
+def test_email_style_opencode_uid_and_alias_are_supported(monkeypatch) -> None:
+    monkeypatch.setenv("ASK_AI_MCP_OPENCODE_ACCOUNT_UID", "xujinglong8814@gmail.com")
+    monkeypatch.setenv("ASK_AI_MCP_OPENCODE_ACCOUNT_ALIAS", "xujinglong8814@gmail.com")
+
+    account = load_opencode_account()
+
+    assert account.uid == "xujinglong8814@gmail.com"
+    assert account.alias == "xujinglong8814@gmail.com"
+    assert account.subscription_id == "go-account:xujinglong8814@gmail.com"

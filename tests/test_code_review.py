@@ -160,7 +160,7 @@ def test_review_job_is_blind_paginated_and_records_adjudication(
             "findings": [
                 {
                     "finding_id": "none_semantics",
-                    "category": "correctness",
+                    "category": "regression",
                     "severity": "medium",
                     "confidence": 0.9,
                     "file": "app.py",
@@ -215,6 +215,7 @@ def test_review_job_is_blind_paginated_and_records_adjudication(
     assert status.state is CodeReviewJobState.SUCCEEDED
     assert status.model_identity_hidden is True
     assert status.total_findings == 1
+    assert status.findings[0].category.value == "correctness"
     assert (
         status.findings[0].evidence_sha256
         == hashlib.sha256(status.findings[0].evidence_summary.encode()).hexdigest()
@@ -367,3 +368,57 @@ def test_absolute_host_paths_are_deterministically_redacted_from_model_input(
     assert "private-user" not in serialized
     assert "<HOST_PATH_" in serialized
     assert any("host absolute paths redacted" in item for item in snapshot.omitted_context)
+
+
+def test_validation_failure_preserves_review_response_audit_and_usage(tmp_path: Path) -> None:
+    root, base, head = _repository(tmp_path)
+    usage = UsageStore(tmp_path / "usage.db")
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": '{"not_findings":true}'}}],
+                "usage": {"prompt_tokens": 30, "completion_tokens": 5},
+            },
+        )
+
+    store = CodeReviewStore(tmp_path / "review-state")
+    manager = CodeReviewManager(
+        store=store,
+        usage_store=usage,
+        snapshotter=CodeReviewSnapshotter(CodeReviewRepositoryCatalog({"sample": root})),
+        account=OpenCodeAccount(uid="go-user@example.com", alias="go-user@example.com"),
+        api_key_provider=lambda: "opaque-test-key-1234567890",
+        transport=httpx.MockTransport(handler),
+    )
+    submission = manager.submit(
+        CodeReviewSubmitCommand(
+            repository_id="sample",
+            base_ref=base,
+            head_ref=head,
+            review_profile=CodeReviewProfile.GENERAL,
+            model=CodeReviewModel.GLM_5_3,
+        )
+    )
+    deadline = time.monotonic() + 5
+    status = manager.status(CodeReviewStatusCommand(job_id=submission.job_id))
+    while status.state in {CodeReviewJobState.QUEUED, CodeReviewJobState.RUNNING}:
+        if time.monotonic() >= deadline:
+            raise AssertionError("review job did not complete")
+        time.sleep(0.02)
+        status = manager.status(CodeReviewStatusCommand(job_id=submission.job_id))
+
+    assert status.state is CodeReviewJobState.FAILED
+    audit = json.loads(
+        (store.jobs_root / submission.job_id / "audit" / "provider-response.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert audit["response_bytes"] > 0
+    assert len(audit["response_sha256"]) == 64
+    assert "choices" not in audit
+    summary = usage.summarize(days=30)
+    assert summary.total_calls == 1
+    assert summary.failed_calls == 1
+    assert summary.prompt_cache_miss_tokens == 30

@@ -9,8 +9,8 @@ from dataclasses import dataclass
 ACCOUNT_UID_ENV = "ASK_AI_MCP_OPENCODE_ACCOUNT_UID"
 ACCOUNT_ALIAS_ENV = "ASK_AI_MCP_OPENCODE_ACCOUNT_ALIAS"
 
-_UID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{1,63}$")
-_ALIAS_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_. -]{0,63}$")
+_UID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@+-]{1,63}$")
+_ALIAS_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_. @+-]{0,63}$")
 
 
 @dataclass(frozen=True)
@@ -30,7 +30,7 @@ def validate_account_uid(value: str) -> str:
     if _UID_PATTERN.fullmatch(normalized) is None:
         raise ValueError(
             "OpenCode Go account UID must be a stable non-secret identifier containing only "
-            "letters, digits, dots, underscores, colons, or hyphens"
+            "letters, digits, dots, underscores, colons, at signs, plus signs, or hyphens"
         )
     return normalized
 

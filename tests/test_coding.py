@@ -223,3 +223,47 @@ def test_candidate_rejects_secret_metadata_and_separates_multiple_diffs(tmp_path
     response = {"choices": [{"message": {"content": unsafe.model_dump_json()}}]}
     with pytest.raises(ValueError, match="metadata"):
         CodingManager._validated_payload(response, snapshot)
+
+
+def test_validation_failure_preserves_response_audit_and_usage(tmp_path: Path) -> None:
+    root, commit = _repository(tmp_path)
+    usage = UsageStore(tmp_path / "usage.db")
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": '{"not_a_candidate":true}'}}],
+                "usage": {"prompt_tokens": 25, "completion_tokens": 4},
+            },
+        )
+
+    manager = CodingManager(
+        usage_store=usage,
+        snapshotter=CodingSnapshotter(CodeReviewRepositoryCatalog({"unity": root})),
+        account=OpenCodeAccount(uid="go-user@example.com", alias="go-user@example.com"),
+        api_key_provider=lambda: "opaque-test-key-1234567890",
+        transport=httpx.MockTransport(handler),
+        state_root=tmp_path / "coding-state",
+    )
+    submission = manager.submit(_command(commit))
+    deadline = time.monotonic() + 5
+    status = manager.status(CodingStatusCommand(job_id=submission.job_id))
+    while status.state in {CodingJobState.QUEUED, CodingJobState.RUNNING}:
+        if time.monotonic() >= deadline:
+            raise AssertionError("coding job did not complete")
+        time.sleep(0.02)
+        status = manager.status(CodingStatusCommand(job_id=submission.job_id))
+
+    assert status.state is CodingJobState.FAILED
+    audit_path = (
+        tmp_path / "coding-state" / "jobs" / submission.job_id / "audit" / "provider-response.json"
+    )
+    audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    assert audit["response_bytes"] > 0
+    assert len(audit["response_sha256"]) == 64
+    assert "choices" not in audit
+    summary = usage.summarize(days=30)
+    assert summary.total_calls == 1
+    assert summary.failed_calls == 1
+    assert summary.prompt_cache_miss_tokens == 25

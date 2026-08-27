@@ -14,9 +14,15 @@ def build_parser() -> argparse.ArgumentParser:
         description="Manage provider keys in Windows Credential Manager.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
-    for command in ("set", "status"):
-        command_parser = subparsers.add_parser(command)
-        _add_provider_arguments(command_parser)
+    set_parser = subparsers.add_parser("set")
+    _add_provider_arguments(set_parser)
+    set_parser.add_argument(
+        "--visible-input",
+        action="store_true",
+        help="show the key while typing; use only in a private trusted terminal",
+    )
+    status_parser = subparsers.add_parser("status")
+    _add_provider_arguments(status_parser)
     delete_parser = subparsers.add_parser("delete")
     _add_provider_arguments(delete_parser)
     delete_parser.add_argument("--yes", action="store_true", help="skip confirmation")
@@ -35,9 +41,14 @@ def _label(provider: str, account_uid: str | None) -> str:
     return "DeepSeek" if provider == "deepseek" else f"OpenCode Go account {account_uid}"
 
 
-def _set_key(store, *, label: str) -> int:
-    first = getpass.getpass(f"{label} API key: ")
-    second = getpass.getpass("Confirm API key: ")
+def _set_key(store, *, label: str, visible_input: bool = False) -> int:
+    if visible_input:
+        print("Warning: API key input is visible on screen.")
+        first = input(f"{label} API key: ")
+        second = input("Confirm API key: ")
+    else:
+        first = getpass.getpass(f"{label} API key: ")
+        second = getpass.getpass("Confirm API key: ")
     if first != second:
         print("Keys did not match. Nothing was stored.")
         return 2
@@ -78,7 +89,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     try:
         if args.command == "set":
-            return _set_key(store, label=label)
+            return _set_key(store, label=label, visible_input=args.visible_input)
         if args.command == "status":
             return _status(store, label=label)
         return _delete(store, label=label, assume_yes=args.yes)

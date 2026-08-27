@@ -35,10 +35,12 @@ ASK_AI_MCP_OPENCODE_ACCOUNT_ALIAS=<Go 账户名>
 以同一 UID 聚合共享 5 小时、周、月窗口，避免重复额度。切换账号由管理员显式修改配置并重启
 客户端，不提供 MCP 切号工具，也不会自动轮转或绕过供应商限制。
 
-凭据通过隐藏交互写入：
+凭据默认通过隐藏交互写入；内嵌终端无法粘贴时，在用户自行打开的 PowerShell 7 中采用显式
+可见输入兼容模式：
 
 ```powershell
 ask-ai-mcp-credentials set --provider opencode-go --account-uid <UID>
+ask-ai-mcp-credentials set --provider opencode-go --account-uid <UID> --visible-input
 ```
 
 ## 验收顺序
@@ -48,4 +50,4 @@ ask-ai-mcp-credentials set --provider opencode-go --account-uid <UID>
 3. 对两个 Coding 模型提交同一合成 C# 小任务，确认 `max` 被服务端接受。
 4. 对照 OpenCode 控制台核对 token、缓存和虚拟美元。
 5. 实际仓库任务仍由 Sol 独立验证；候选成功不等于可直接合并。
-
+6. DeepSeek 模型需先在对应 Go 工作区完成中国托管 opt-in；未完成时区域门禁返回 403。

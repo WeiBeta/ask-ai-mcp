@@ -23,6 +23,8 @@ Controller 用固定的只读 Git 子命令解析两个 commit，生成不可变
 vendor、生成物、超大文件和过量上下文。模型只收到仓库 ID、相对路径、最小 hunk 邻域和遗漏
 说明，不收到真实宿主绝对路径或整个仓库。finding 必须落在给定改动 hunk 附近；模型返回的
 evidence hash 由 controller 根据结构化证据摘要重新计算。
+供应商常见的 `bug`、`regression`、`missing_tests` 等 category 同义词会被确定性归一到固定
+枚举；文件、行号、hunk、置信度和其余结构约束不会因此放宽。
 
 本地状态默认在 `%LOCALAPPDATA%\AskAIMCP\code-review`。每个 job 的 `input`、`output`、
 `audit` 分离。`review.db` 只保存快照/diff/结构化输出哈希、token/成本/延迟、finding 指纹、
@@ -44,6 +46,9 @@ off-peak，边界采用左闭右开。
 权威余额时 `estimated=true`。所有共享窗口按 API 可见账户 UID 聚合一次，
 不会把同一笔跨模型消费重复扣除。多个合法订阅必须显式配置不同 ID、凭据和路由；模块不会
 自动轮转账户或绕过限额。
+
+远端成功但本地结构校验失败也会计入失败调用和估算成本。审计仅保留响应 SHA-256、字节数、
+finish reason 与 usage，完整常规模型响应不进入日志；通过校验的 findings 才进入独立输出。
 
 官方目录：<https://opencode.ai/docs/go/>。
 

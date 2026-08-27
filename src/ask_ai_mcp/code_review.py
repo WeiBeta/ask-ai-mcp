@@ -76,6 +76,17 @@ _PROFILE_GUIDANCE = {
         "Prioritize migrations, idempotence, provenance, and data loss."
     ),
 }
+_CATEGORY_ALIASES = {
+    "bug": "correctness",
+    "logic": "correctness",
+    "regression": "correctness",
+    "vulnerability": "security",
+    "robustness": "reliability",
+    "code_quality": "maintainability",
+    "missing_test": "testing",
+    "missing_tests": "testing",
+    "test_coverage": "testing",
+}
 
 
 def _sha256(data: bytes) -> str:
@@ -378,50 +389,39 @@ class CodeReviewManager:
         self.store.mark_running(job_id)
         try:
             response, priced_at, latency_ms = self._request(command, snapshot)
-            payload, raw_text = self._validated_payload(response, snapshot)
             output_root = self.store.jobs_root / job_id / "output"
+            output_root.mkdir(parents=True, exist_ok=True)
+            _atomic_json(
+                self.store.jobs_root / job_id / "audit" / "provider-response.json",
+                self._response_audit(response),
+            )
+            usage = self._usage(response, OpenCodeGoModel(command.model.value), priced_at)
+            try:
+                payload, raw_text = self._validated_payload(response, snapshot)
+            except Exception:
+                self._record_usage(
+                    command,
+                    snapshot,
+                    usage,
+                    priced_at=priced_at,
+                    latency_ms=latency_ms,
+                    status="failed",
+                    candidate_hash=None,
+                    response_chars=len(json.dumps(response, ensure_ascii=False)),
+                )
+                raise
             findings_json = payload.model_dump_json(indent=2)
             findings_hash = _sha256(findings_json.encode("utf-8"))
             (output_root / "findings.json").write_text(findings_json, encoding="utf-8")
-            _atomic_json(output_root / "provider-response.json", response)
-            usage = self._usage(response, OpenCodeGoModel(command.model.value), priced_at)
-            usage_id = self.usage_store.record(
-                UsageEvent(
-                    timestamp=priced_at,
-                    client_name=os.environ.get("ASK_AI_MCP_CLIENT_NAME", "code_review"),
-                    task_kind="code_review",
-                    model=command.model.value,
-                    provider=ModelProvider.OPENCODE,
-                    provider_model_id=command.model.value,
-                    provider_runtime="chat_completions",
-                    provider_account=self.account_uid,
-                    provider_subscription_id=self.subscription_id,
-                    thinking_enabled=True,
-                    priced_at=priced_at,
-                    pricing_band=PricingBand(str(usage["pricing_band"])),
-                    pricing_schedule_version=OPENCODE_GO_PRICING_VERSION,
-                    prompt_cache_hit_tokens=int(usage["cache_read_tokens"]),
-                    prompt_cache_miss_tokens=max(
-                        0,
-                        int(usage["input_tokens"])
-                        - int(usage["cache_read_tokens"])
-                        - int(usage["cache_write_tokens"]),
-                    ),
-                    completion_tokens=int(usage["output_tokens"]),
-                    reasoning_tokens=int(usage["reasoning_tokens"]),
-                    cache_read_tokens=int(usage["cache_read_tokens"]),
-                    cache_write_tokens=int(usage["cache_write_tokens"]),
-                    estimated_cost_usd=float(usage["estimated_cost_usd"]),
-                    provider_reported_cost_usd=usage["provider_reported_cost_usd"],
-                    cost_source=UsageCostSource(str(usage["usage_source"])),
-                    latency_ms=latency_ms,
-                    retries=0,
-                    status="success",
-                    candidate_hash=findings_hash,
-                    request_chars=len(snapshot.diff_text)
-                    + len(json.dumps(snapshot.context, ensure_ascii=False)),
-                    response_chars=len(raw_text),
-                )
+            usage_id = self._record_usage(
+                command,
+                snapshot,
+                usage,
+                priced_at=priced_at,
+                latency_ms=latency_ms,
+                status="success",
+                candidate_hash=findings_hash,
+                response_chars=len(raw_text),
             )
             usage["latency_ms"] = latency_ms
             self.store.complete(
@@ -445,11 +445,101 @@ class CodeReviewManager:
                 },
             )
         except Exception as error:
+            if isinstance(error, httpx.HTTPStatusError):
+                self._write_http_error(job_id, error.response)
             self.store.fail(
                 job_id,
-                type(error).__name__,
+                self._failure_kind(error),
                 latency_ms=max(0, round((perf_counter() - started) * 1_000)),
             )
+
+    def _record_usage(
+        self,
+        command: CodeReviewSubmitCommand,
+        snapshot: CodeReviewSnapshot,
+        usage: dict[str, object],
+        *,
+        priced_at: datetime,
+        latency_ms: int,
+        status: str,
+        candidate_hash: str | None,
+        response_chars: int,
+    ) -> int:
+        return self.usage_store.record(
+            UsageEvent(
+                timestamp=priced_at,
+                client_name=os.environ.get("ASK_AI_MCP_CLIENT_NAME", "code_review"),
+                task_kind="code_review",
+                model=command.model.value,
+                provider=ModelProvider.OPENCODE,
+                provider_model_id=command.model.value,
+                provider_runtime="chat_completions",
+                provider_account=self.account_uid,
+                provider_subscription_id=self.subscription_id,
+                thinking_enabled=True,
+                priced_at=priced_at,
+                pricing_band=PricingBand(str(usage["pricing_band"])),
+                pricing_schedule_version=OPENCODE_GO_PRICING_VERSION,
+                prompt_cache_hit_tokens=int(usage["cache_read_tokens"]),
+                prompt_cache_miss_tokens=max(
+                    0,
+                    int(usage["input_tokens"])
+                    - int(usage["cache_read_tokens"])
+                    - int(usage["cache_write_tokens"]),
+                ),
+                completion_tokens=int(usage["output_tokens"]),
+                reasoning_tokens=int(usage["reasoning_tokens"]),
+                cache_read_tokens=int(usage["cache_read_tokens"]),
+                cache_write_tokens=int(usage["cache_write_tokens"]),
+                estimated_cost_usd=float(usage["estimated_cost_usd"]),
+                provider_reported_cost_usd=usage["provider_reported_cost_usd"],
+                cost_source=UsageCostSource(str(usage["usage_source"])),
+                latency_ms=latency_ms,
+                retries=0,
+                status=status,
+                candidate_hash=candidate_hash,
+                request_chars=len(snapshot.diff_text)
+                + len(json.dumps(snapshot.context, ensure_ascii=False)),
+                response_chars=response_chars,
+            )
+        )
+
+    @staticmethod
+    def _response_audit(response: dict[str, Any]) -> dict[str, Any]:
+        serialized = json.dumps(response, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        choices = response.get("choices") if isinstance(response.get("choices"), list) else []
+        return {
+            "response_sha256": _sha256(serialized),
+            "response_bytes": len(serialized),
+            "finish_reasons": [
+                str(item.get("finish_reason"))[:64]
+                for item in choices
+                if isinstance(item, dict) and item.get("finish_reason") is not None
+            ],
+            "usage": response.get("usage") if isinstance(response.get("usage"), dict) else {},
+        }
+
+    def _write_http_error(self, job_id: str, response: httpx.Response) -> None:
+        error_type = "HTTPError"
+        message = "provider request failed"
+        try:
+            payload = response.json()
+            error = payload.get("error", {}) if isinstance(payload, dict) else {}
+            if isinstance(error, dict):
+                error_type = str(error.get("type", error_type))[:80]
+                message = str(error.get("message", message))[:500]
+        except ValueError:
+            pass
+        _atomic_json(
+            self.store.jobs_root / job_id / "audit" / "provider-error.json",
+            {"status_code": response.status_code, "error_type": error_type, "message": message},
+        )
+
+    @staticmethod
+    def _failure_kind(error: Exception) -> str:
+        if isinstance(error, httpx.HTTPStatusError):
+            return f"HTTP_{error.response.status_code}"
+        return type(error).__name__
 
     def _request(
         self, command: CodeReviewSubmitCommand, snapshot: CodeReviewSnapshot
@@ -491,31 +581,29 @@ class CodeReviewManager:
 
     @staticmethod
     def _prompt(profile: CodeReviewProfile, snapshot: CodeReviewSnapshot) -> str:
+        example_file = snapshot.changed_files[0]
+        example_ranges = CodeReviewManager._changed_ranges(snapshot.diff_text).get(
+            example_file, ((1, 1),)
+        )
+        example_line = example_ranges[0][0]
         contract = {
             "findings": [
                 {
-                    "finding_id": "bounded lowercase identifier",
-                    "category": [
-                        "correctness",
-                        "security",
-                        "reliability",
-                        "performance",
-                        "maintainability",
-                        "testing",
-                    ],
-                    "severity": ["critical", "high", "medium", "low"],
-                    "confidence": "0..1",
-                    "file": "repository-relative changed file",
-                    "line_start": "positive integer",
-                    "line_end": "positive integer, at most 80 lines after start",
-                    "evidence_summary": "short source-backed evidence",
-                    "evidence_sha256": "64 zeros; controller replaces this placeholder",
-                    "rationale": "why behavior is wrong or risky",
-                    "suggested_validation_test": "one bounded verification test",
+                    "finding_id": "correctness_example",
+                    "category": "correctness",
+                    "severity": "medium",
+                    "confidence": 0.95,
+                    "file": example_file,
+                    "line_start": example_line,
+                    "line_end": example_line,
+                    "evidence_summary": "Short source-backed evidence.",
+                    "evidence_sha256": "0" * 64,
+                    "rationale": "Why the changed behavior is wrong or risky.",
+                    "suggested_validation_test": "One bounded verification test.",
                 }
             ],
-            "omitted_context": "array of short limitations",
-            "truncated": "boolean",
+            "omitted_context": [],
+            "truncated": False,
         }
         context = {
             "repository_id": snapshot.repository_id,
@@ -555,6 +643,9 @@ class CodeReviewManager:
         for finding in raw.get("findings", []):
             if not isinstance(finding, dict):
                 raise ValueError("review finding must be an object")
+            category = finding.get("category")
+            if isinstance(category, str):
+                finding["category"] = _CATEGORY_ALIASES.get(category.casefold(), category)
             evidence = finding.get("evidence_summary")
             if not isinstance(evidence, str):
                 raise ValueError("review finding evidence must be text")

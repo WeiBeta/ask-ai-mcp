@@ -1,8 +1,8 @@
 # OpenCode Go 预部署交接
 
 更新日期：2026-08-27（Asia/Shanghai）
-状态：固定协议适配、UID 账户、共享虚拟额度账本及独立 Coding/Review 入口已实现；真实付费
-联调尚未执行。
+状态：固定协议适配、UID 账户、共享虚拟额度账本及独立 Coding/Review 入口已实现；五个固定
+模型的真实付费联调已于 2026-08-27 完成。
 
 ## 目标与工具面
 
@@ -41,6 +41,10 @@ Responses 请求使用严格 JSON Schema；Messages 适配器只接受 MCP 已�
 ask-ai-mcp-credentials set --provider opencode-go --account-uid <API可见UID>
 ask-ai-mcp-credentials status --provider opencode-go --account-uid <API可见UID>
 ```
+
+UID 和显示别名支持邮箱形式。若 Codex 内嵌终端无法完成 `getpass` 粘贴，可在用户自行打开的
+PowerShell 7 中使用 `set --visible-input`；该模式会明确警告输入可见，仍不把密钥写进命令行、
+配置或日志。这是终端交互兼容路径，不是 Credential Manager 权限修复。
 
 每个合法付费 Go 账户只登记一个 API key。UID 是非秘密的 API 可见稳定主键，账户名只是
 显示别名；运行时不会自动轮换或跨账户规避额度：
@@ -86,3 +90,15 @@ unsupported，不默认为 0。
 4. 对照 OpenCode 控制台核对 token、缓存和虚拟美元；字段语义不同则先修正账本。
 5. 验证常态只启用 Core；Coding、Review、Perception 和 H3 均独立按需开关。
 6. 真实 API 集成测试必须保持 opt-in，不进入普通 `pytest`。
+
+## 2026-08-27 联调结论
+
+- GLM-5.3-Flash 与 DeepSeek V4 Flash 均成功生成同一修复候选；候选 SHA-256 完全一致。
+- Kimi K3、GLM-5.3 与 DeepSeek V4 Pro 均返回可解析 Review；常见 category 同义词会在本地
+  映射到固定枚举，finding 仍须经过改动 hunk 校验。
+- DeepSeek 两模型首次返回区域门禁 403；在 Go 工作区显式同意中国托管后成功。新账户执行
+  DeepSeek smoke 前必须完成同一 opt-in，不能把该 403 误判为密钥或额度故障。
+- 成功调用但本地结构校验失败时仍记录 token、估算成本和失败状态；审计只保存响应哈希、
+  字节数、finish reason 与 usage，不保存完整常规模型输出。
+- 首轮旧代码漏记了一次成功响应及三次极小诊断请求；这批联调的本地账本不能作为控制台的
+  完整对账样本。修复后的后续账本才适合长期比较。

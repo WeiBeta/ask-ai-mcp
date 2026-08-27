@@ -287,44 +287,40 @@ class CodingManager:
         priced_at = datetime.now(UTC)
         try:
             response = self._request(command, snapshot)
-            payload, raw_content = self._validated_payload(response, snapshot)
-            patch = self._diff(payload, snapshot)
-            candidate_hash = _sha256(patch.encode("utf-8"))
             output = job_root / "output"
             output.mkdir(parents=True, exist_ok=True)
+            _atomic_json(
+                job_root / "audit" / "provider-response.json",
+                self._response_audit(response),
+            )
+            usage = self._usage(response, OpenCodeGoModel(command.model.value), priced_at)
+            try:
+                payload, raw_content = self._validated_payload(response, snapshot)
+            except Exception:
+                self._record_usage(
+                    command,
+                    snapshot,
+                    usage,
+                    priced_at=priced_at,
+                    started=started,
+                    status="failed",
+                    candidate_hash=None,
+                    response_chars=len(json.dumps(response, ensure_ascii=False)),
+                )
+                raise
+            patch = self._diff(payload, snapshot)
+            candidate_hash = _sha256(patch.encode("utf-8"))
             (output / "candidate.diff").write_text(patch, encoding="utf-8")
             _atomic_json(output / "candidate.json", payload.model_dump(mode="json"))
-            usage = self._usage(response, OpenCodeGoModel(command.model.value), priced_at)
-            self.usage_store.record(
-                UsageEvent(
-                    client_name=os.environ.get("ASK_AI_MCP_CLIENT_NAME", "coding"),
-                    task_kind="coding_candidate",
-                    model=command.model.value,
-                    provider=ModelProvider.OPENCODE,
-                    provider_model_id=command.model.value,
-                    provider_runtime="chat_completions",
-                    provider_account=self.account.uid if self.account else None,
-                    provider_subscription_id=(
-                        self.account.subscription_id if self.account else None
-                    ),
-                    thinking_enabled=True,
-                    priced_at=priced_at,
-                    pricing_band=usage["pricing_band"],
-                    pricing_schedule_version=OPENCODE_GO_PRICING_VERSION,
-                    prompt_cache_hit_tokens=usage["cache_read_tokens"],
-                    prompt_cache_miss_tokens=(usage["input_tokens"] - usage["cache_read_tokens"]),
-                    completion_tokens=usage["output_tokens"],
-                    reasoning_tokens=usage["reasoning_tokens"],
-                    cache_read_tokens=usage["cache_read_tokens"],
-                    cache_write_tokens=usage["cache_write_tokens"],
-                    estimated_cost_usd=usage["estimated_cost_usd"],
-                    provider_reported_cost_usd=usage["provider_reported_cost_usd"],
-                    latency_ms=max(0, round((perf_counter() - started) * 1_000)),
-                    status="success",
-                    candidate_hash=candidate_hash,
-                    request_chars=sum(len(item.content) for item in snapshot.files),
-                    response_chars=len(raw_content),
-                )
+            self._record_usage(
+                command,
+                snapshot,
+                usage,
+                priced_at=priced_at,
+                started=started,
+                status="success",
+                candidate_hash=candidate_hash,
+                response_chars=len(raw_content),
             )
             record.update(
                 state=CodingJobState.SUCCEEDED.value,
@@ -334,13 +330,95 @@ class CodingManager:
                 changed_files=[change.file for change in payload.changes],
             )
         except Exception as error:
+            if isinstance(error, httpx.HTTPStatusError):
+                self._write_http_error(job_root, error.response)
             record.update(
                 state=CodingJobState.FAILED.value,
                 detail="coding candidate failed; inspect prompt-free local error metadata",
                 completed_at=datetime.now(UTC).isoformat(),
-                error_kind=type(error).__name__,
+                error_kind=self._failure_kind(error),
             )
         _atomic_json(record_path, record)
+
+    def _record_usage(
+        self,
+        command: CodingSubmitCommand,
+        snapshot: CodingSnapshot,
+        usage: dict[str, Any],
+        *,
+        priced_at: datetime,
+        started: float,
+        status: str,
+        candidate_hash: str | None,
+        response_chars: int,
+    ) -> int:
+        return self.usage_store.record(
+            UsageEvent(
+                client_name=os.environ.get("ASK_AI_MCP_CLIENT_NAME", "coding"),
+                task_kind="coding_candidate",
+                model=command.model.value,
+                provider=ModelProvider.OPENCODE,
+                provider_model_id=command.model.value,
+                provider_runtime="chat_completions",
+                provider_account=self.account.uid if self.account else None,
+                provider_subscription_id=self.account.subscription_id if self.account else None,
+                thinking_enabled=True,
+                priced_at=priced_at,
+                pricing_band=usage["pricing_band"],
+                pricing_schedule_version=OPENCODE_GO_PRICING_VERSION,
+                prompt_cache_hit_tokens=usage["cache_read_tokens"],
+                prompt_cache_miss_tokens=(usage["input_tokens"] - usage["cache_read_tokens"]),
+                completion_tokens=usage["output_tokens"],
+                reasoning_tokens=usage["reasoning_tokens"],
+                cache_read_tokens=usage["cache_read_tokens"],
+                cache_write_tokens=usage["cache_write_tokens"],
+                estimated_cost_usd=usage["estimated_cost_usd"],
+                provider_reported_cost_usd=usage["provider_reported_cost_usd"],
+                latency_ms=max(0, round((perf_counter() - started) * 1_000)),
+                status=status,
+                candidate_hash=candidate_hash,
+                request_chars=sum(len(item.content) for item in snapshot.files),
+                response_chars=response_chars,
+            )
+        )
+
+    @staticmethod
+    def _response_audit(response: dict[str, Any]) -> dict[str, Any]:
+        serialized = json.dumps(response, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        choices = response.get("choices") if isinstance(response.get("choices"), list) else []
+        return {
+            "response_sha256": _sha256(serialized),
+            "response_bytes": len(serialized),
+            "finish_reasons": [
+                str(item.get("finish_reason"))[:64]
+                for item in choices
+                if isinstance(item, dict) and item.get("finish_reason") is not None
+            ],
+            "usage": response.get("usage") if isinstance(response.get("usage"), dict) else {},
+        }
+
+    @staticmethod
+    def _write_http_error(job_root: Path, response: httpx.Response) -> None:
+        error_type = "HTTPError"
+        message = "provider request failed"
+        try:
+            payload = response.json()
+            error = payload.get("error", {}) if isinstance(payload, dict) else {}
+            if isinstance(error, dict):
+                error_type = str(error.get("type", error_type))[:80]
+                message = str(error.get("message", message))[:500]
+        except ValueError:
+            pass
+        _atomic_json(
+            job_root / "audit" / "provider-error.json",
+            {"status_code": response.status_code, "error_type": error_type, "message": message},
+        )
+
+    @staticmethod
+    def _failure_kind(error: Exception) -> str:
+        if isinstance(error, httpx.HTTPStatusError):
+            return f"HTTP_{error.response.status_code}"
+        return type(error).__name__
 
     def _request(self, command: CodingSubmitCommand, snapshot: CodingSnapshot) -> dict[str, Any]:
         body = {
