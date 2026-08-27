@@ -8,6 +8,7 @@ from enum import StrEnum
 
 
 class OpenCodeGoModel(StrEnum):
+    GLM_5_3_FLASH = "glm-5.3-flash"
     GLM_5_3 = "glm-5.3"
     KIMI_K3 = "kimi-k3"
     DSV4_FLASH = "deepseek-v4-flash"
@@ -65,8 +66,8 @@ class OpenCodeGoCostBreakdown:
     estimated: bool = True
 
 
-OPENCODE_GO_PRICING_VERSION = "opencode-go-2026-08-21"
-OPENCODE_GO_PRICING_EFFECTIVE_AT = datetime(2026, 8, 21, tzinfo=UTC)
+OPENCODE_GO_PRICING_VERSION = "opencode-go-2026-08-27"
+OPENCODE_GO_PRICING_EFFECTIVE_AT = datetime(2026, 8, 27, tzinfo=UTC)
 OPENCODE_GO_PRICING_SOURCE_URL = "https://opencode.ai/docs/go/"
 OPENCODE_GO_MODELS_URL = "https://opencode.ai/zen/go/v1/models"
 OPENCODE_GO_LIMITS_USD = {"rolling_5h": 12.0, "rolling_7d": 30.0, "rolling_30d": 60.0}
@@ -87,6 +88,11 @@ def _rates(
 
 
 OPENCODE_GO_PRICES = {
+    OpenCodeGoModel.GLM_5_3_FLASH: OpenCodeGoPrice(
+        OpenCodeGoProtocol.CHAT_COMPLETIONS,
+        _rates(0.15, 0.50, 0.03),
+        included_limit_usd=15.0,
+    ),
     OpenCodeGoModel.GLM_5_3: OpenCodeGoPrice(
         OpenCodeGoProtocol.CHAT_COMPLETIONS,
         _rates(1.40, 4.40, 0.26),
@@ -125,7 +131,10 @@ OPENCODE_GO_PRICES = {
 def is_deepseek_peak(at: datetime) -> bool:
     """Return whether ``at`` falls in an official DeepSeek peak window."""
 
-    utc_time = at.astimezone(UTC).time()
+    utc_instant = at.astimezone(UTC)
+    if utc_instant.weekday() >= 5:
+        return False
+    utc_time = utc_instant.time()
     return time(1) <= utc_time < time(4) or time(6) <= utc_time < time(10)
 
 

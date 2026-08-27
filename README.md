@@ -2,14 +2,14 @@
 
 Private, Windows-only MCP server for Claude Desktop and Codex Desktop.
 
-Ask AI MCP gives top-tier host models a constrained DeepSeek assistant for two
+Ask AI MCP gives top-tier host models constrained external-model workers for two
 purposes only:
 
 1. Build and repair bounded preprocessing, extraction, conversion, and format
    validation tools.
 2. Produce source-faithful structured data with traceable source locations.
 
-DeepSeek is never a document co-author. It must not draft final report prose,
+An external worker is never a document co-author. It must not draft final report prose,
 decide facts, resolve source conflicts, or produce delivery-ready conclusions.
 Opus/Sol remains responsible for evidence selection, reasoning, narrative,
 layout, repository changes, and final acceptance.
@@ -52,6 +52,12 @@ auditable OpenCode Go ledger with shared rolling windows, per-model monthly
 caps, DeepSeek peak/off-peak rates, and subscription isolation. Review is not
 loaded by Core, Subagent, Perception, H3, or Full.
 
+Version 0.9.0 adds a separate three-tool Coding MCP for bounded candidate
+patches, fixes Coding to DeepSeek V4 Flash or GLM-5.3-Flash, and narrows Review
+to DeepSeek V4 Pro, GLM-5.3, or Kimi K3. Both request the provider's highest
+`max` reasoning setting, share one UID-keyed OpenCode Go ledger, and never write
+the source repository. Direct DeepSeek routing is suspended by default.
+
 The first full billed lifecycle smoke passed on 2026-08-02 in one Flash call:
 the generated synthetic helper passed four isolated tests, was reviewed, and
 was registered under an exact hash with synthetic-input capability only.
@@ -81,17 +87,18 @@ The recommended always-on MCP entry point is:
 C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-core.exe
 ```
 
-Six explicit profiles share the same codebase:
+Seven explicit profiles share the same codebase:
 
 - `ask-ai-mcp-core.exe` registers the twelve non-video tools only.
 - `ask-ai-mcp-subagent.exe` registers Core plus three multimodal source tools, but no H3.
 - `ask-ai-mcp-perception.exe` registers only the three multimodal source tools.
 - `ask-ai-mcp-h3.exe` registers only the four local video and ComfyUI tools.
 - `ask-ai-mcp-review.exe` registers only three read-only code-review tools and is opt-in.
+- `ask-ai-mcp-coding.exe` registers only three bounded coding-candidate tools and is opt-in.
 - `ask-ai-mcp-full.exe` registers all nineteen tools, including source and H3 adapters.
 
 The legacy `ask-ai-mcp.exe` entry point defaults to Full and accepts
-`ASK_AI_MCP_PROFILE=core|subagent|perception|h3|review|full`. New desktop deployments should use the explicit
+`ASK_AI_MCP_PROFILE=core|subagent|perception|h3|review|coding|full`. New desktop deployments should use the explicit
 profile executable so a missing environment variable cannot silently change the
 advertised tool surface.
 

@@ -26,14 +26,13 @@ def build_parser() -> argparse.ArgumentParser:
 def _add_provider_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--provider", choices=("deepseek", "opencode-go"), default="deepseek")
     parser.add_argument(
-        "--account",
-        default="primary",
-        help="explicit OpenCode Go account alias; no automatic account rotation",
+        "--account-uid",
+        help="stable non-secret OpenCode Go account UID; exactly one API key is stored per UID",
     )
 
 
-def _label(provider: str, account: str) -> str:
-    return "DeepSeek" if provider == "deepseek" else f"OpenCode Go {account}"
+def _label(provider: str, account_uid: str | None) -> str:
+    return "DeepSeek" if provider == "deepseek" else f"OpenCode Go account {account_uid}"
 
 
 def _set_key(store, *, label: str) -> int:
@@ -69,11 +68,13 @@ def _delete(store, *, label: str, assume_yes: bool) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    label = _label(args.provider, args.account)
+    if args.provider == "opencode-go" and not args.account_uid:
+        build_parser().error("--account-uid is required for OpenCode Go")
+    label = _label(args.provider, args.account_uid)
     store = (
         CredentialStore()
         if args.provider == "deepseek"
-        else OpenCodeCredentialStore(profile=args.account)
+        else OpenCodeCredentialStore(account_uid=args.account_uid)
     )
     try:
         if args.command == "set":

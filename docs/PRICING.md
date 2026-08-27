@@ -62,7 +62,7 @@ of truth for actual deductions.
 
 ## OpenCode Go catalog and limits
 
-The independent OpenCode Go catalog is pinned as `opencode-go-2026-08-21` with
+The independent OpenCode Go catalog is pinned as `opencode-go-2026-08-27` with
 an effective instant and source URL. Remote model discovery may check
 `/zen/go/v1/models`, but it cannot change prices or expand the fixed reviewer
 model enum. Catalog updates require a code change, fixed-value tests, and manual
@@ -70,13 +70,13 @@ review; historical rows retain their recorded catalog version.
 
 The subscription ledger enforces shared rolling virtual-USD windows of $12 per
 5 hours, $30 per 7 days, and $60 per 30 days. It also tracks monthly included
-usage caps of $15 for GLM 5.3, Kimi K3, and DeepSeek V4 Pro, and $30 for
-DeepSeek V4 Flash. Effective monthly remaining is the lesser of shared monthly
+usage caps of $15 for GLM 5.3, GLM-5.3-Flash, Kimi K3, and DeepSeek V4 Pro,
+and $30 for DeepSeek V4 Flash. Effective monthly remaining is the lesser of shared monthly
 remaining and the selected model's remaining cap. Shared usage is aggregated
-once per explicit `(account_alias, subscription_id)`, never once per model.
+once per explicit API-visible account UID, never once per model.
 
-DeepSeek Go rates switch to peak during UTC `[01:00, 04:00)` and
-`[06:00, 10:00)`. Input, output, cache-read, and cache-write are preserved as
+DeepSeek Go rates switch to peak on weekdays during UTC `[01:00, 04:00)` and
+`[06:00, 10:00)`; weekends remain off-peak. Input, output, cache-read, and cache-write are preserved as
 separate components. A missing official component price is represented as
 unsupported (`null`) and cannot silently become zero. Provider-reported usage
 or cost remains separate from local estimates; the local allowance view is

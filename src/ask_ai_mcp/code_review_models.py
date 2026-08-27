@@ -16,7 +16,6 @@ class CodeReviewModel(StrEnum):
     GLM_5_3 = "glm-5.3"
     KIMI_K3 = "kimi-k3"
     DEEPSEEK_V4_PRO = "deepseek-v4-pro"
-    DEEPSEEK_V4_FLASH = "deepseek-v4-flash"
 
 
 class CodeReviewProfile(StrEnum):
@@ -207,6 +206,7 @@ class CodeReviewStatus(StrictModel):
 class CodeReviewModelAvailability(StrictModel):
     model_id: CodeReviewModel
     available: bool
+    requested_reasoning_effort: str = "max"
 
 
 class CodeReviewMetricSlice(StrictModel):
@@ -239,10 +239,10 @@ class CodeReviewBackendStatus(StrictModel):
     detail: str = Field(min_length=1, max_length=1_000)
     repository_ids: list[str] = Field(default_factory=list, max_length=64)
     state_root: str | None = Field(default=None, max_length=1_024)
+    account_uid: str | None = Field(default=None, max_length=64)
     account_alias: str | None = Field(default=None, max_length=64)
-    subscription_id: str | None = Field(default=None, max_length=128)
     remote_models_checked: bool
-    models: list[CodeReviewModelAvailability] = Field(default_factory=list, max_length=4)
+    models: list[CodeReviewModelAvailability] = Field(default_factory=list, max_length=3)
     account_ledger: OpenCodeGoAccountUsage | None = None
     monthly_report: CodeReviewMonthlyReport | None = None
     catalog_version: str = Field(min_length=1, max_length=64)

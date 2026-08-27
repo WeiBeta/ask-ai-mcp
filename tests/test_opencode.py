@@ -98,7 +98,7 @@ def test_build_uses_fixed_chat_endpoint_and_records_virtual_usd(tmp_path: Path) 
     assert summary.prompt_cache_hit_tokens == 100
     assert summary.prompt_cache_miss_tokens == 900
     assert summary.estimated_cost_usd > 0
-    assert summary.opencode_go_accounts[0].account == "primary"
+    assert summary.opencode_go_accounts[0].account == "injected-test"
 
 
 def test_semantic_repair_uses_luna_responses_and_normalizes_output(tmp_path: Path) -> None:

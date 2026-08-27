@@ -23,6 +23,8 @@ def test_profile_defaults_to_full(monkeypatch) -> None:
         ("H3", server.h3_mcp),
         ("review", server.review_mcp),
         ("code-review", server.review_mcp),
+        ("coding", server.coding_mcp),
+        ("code", server.coding_mcp),
         ("full", server.mcp),
     ],
 )
@@ -34,6 +36,7 @@ def test_profile_environment_selects_server(monkeypatch, value, expected) -> Non
 def test_invalid_profile_fails_closed(monkeypatch) -> None:
     monkeypatch.setenv("ASK_AI_MCP_PROFILE", "video-ish")
     with pytest.raises(
-        RuntimeError, match="must be core, subagent, perception, h3, review, or full"
+        RuntimeError,
+        match="must be core, subagent, perception, h3, coding, review, or full",
     ):
         __main__.selected_mcp()

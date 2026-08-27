@@ -20,6 +20,14 @@ from ask_ai_mcp.code_review_models import (
     CodeReviewSubmission,
     CodeReviewSubmitCommand,
 )
+from ask_ai_mcp.coding import CodingManager
+from ask_ai_mcp.coding_models import (
+    CodingBackendStatus,
+    CodingStatus,
+    CodingStatusCommand,
+    CodingSubmission,
+    CodingSubmitCommand,
+)
 from ask_ai_mcp.collaboration import ReviewCollaborationService
 from ask_ai_mcp.guidance import workflow_guidance_for
 from ask_ai_mcp.h3 import H3ComfyClient
@@ -71,10 +79,10 @@ from ask_ai_mcp.verified_execution import VerifiedToolRunner
 from ask_ai_mcp.workspace import CandidateWorkspaceManager
 
 SERVER_INSTRUCTIONS = """
-DeepSeek is a constrained toolsmith and source-structuring worker only. Never
+Ask AI exposes constrained external-model workers only. Never
 use this server to draft or co-author final document prose, decide facts,
 resolve source conflicts, or generate delivery-ready conclusions. Opus/Sol is
-the controller and final authority. DeepSeek-generated code is untrusted: it
+the controller and final authority. Externally generated code is untrusted: it
 must remain outside the repository, pass isolated tests, and receive explicit
 Opus/Sol approval before it can process real file copies. Original source files
 are always read-only. Do not send secrets or entire knowledge bases.
@@ -98,6 +106,14 @@ explicitly allow-listed repositories. The reviewer cannot modify a repository,
 run tests or shell commands, access arbitrary files, choose arbitrary models,
 or produce patches. Findings are untrusted suggestions for Sol/human blind
 adjudication. Keep this optional module disabled during ordinary development.
+""".strip()
+
+CODING_SERVER_INSTRUCTIONS = """
+Use these tools only to request bounded, untrusted coding candidates from an
+immutable allow-listed repository snapshot. The worker can replace only named
+target files and cannot modify the repository, run commands, access arbitrary
+paths, choose arbitrary models, or apply its patch. Sol must review, test, and
+apply any accepted candidate.
 """.strip()
 
 mcp = FastMCP(
@@ -128,6 +144,11 @@ h3_mcp = FastMCP(
 review_mcp = FastMCP(
     "Ask AI MCP Code Review",
     instructions=CODE_REVIEW_SERVER_INSTRUCTIONS,
+    version=__version__,
+)
+coding_mcp = FastMCP(
+    "Ask AI MCP Coding",
+    instructions=CODING_SERVER_INSTRUCTIONS,
     version=__version__,
 )
 
@@ -177,6 +198,16 @@ def code_review_tool(**kwargs):
     return decorator
 
 
+def coding_tool(**kwargs):
+    """Register a tool only on the optional coding-candidate server."""
+
+    def decorator(function):
+        coding_mcp.tool(**kwargs)(function)
+        return function
+
+    return decorator
+
+
 _DESKTOP_CLIENT_NAMES = frozenset({"claude_desktop", "codex_desktop"})
 
 
@@ -192,6 +223,7 @@ subagent_mcp.add_middleware(ProtocolAuditMiddleware(lambda: get_usage_store()))
 source_mcp.add_middleware(ProtocolAuditMiddleware(lambda: get_usage_store()))
 h3_mcp.add_middleware(ProtocolAuditMiddleware(lambda: get_usage_store()))
 review_mcp.add_middleware(ProtocolAuditMiddleware(lambda: get_usage_store()))
+coding_mcp.add_middleware(ProtocolAuditMiddleware(lambda: get_usage_store()))
 
 
 @lru_cache(maxsize=1)
@@ -262,6 +294,56 @@ def get_source_manager() -> SourceJobManager:
 @lru_cache(maxsize=1)
 def get_code_review_manager() -> CodeReviewManager:
     return CodeReviewManager(usage_store=get_usage_store())
+
+
+@lru_cache(maxsize=1)
+def get_coding_manager() -> CodingManager:
+    return CodingManager(usage_store=get_usage_store())
+
+
+@coding_tool(
+    annotations=ToolAnnotations(
+        title="受限编码后端状态",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    )
+)
+def coding_backend_status() -> CodingBackendStatus:
+    """Check the two fixed coding models, account ledger, and repository IDs."""
+
+    return get_coding_manager().backend_status()
+
+
+@coding_tool(
+    annotations=ToolAnnotations(
+        title="提交受限编码候选",
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    )
+)
+def coding_submit(command: CodingSubmitCommand) -> CodingSubmission:
+    """Freeze selected files and request one repository-external candidate."""
+
+    return get_coding_manager().submit(command)
+
+
+@coding_tool(
+    annotations=ToolAnnotations(
+        title="读取编码候选状态",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
+def coding_status(command: CodingStatusCommand) -> CodingStatus:
+    """Read bounded metadata and a paginated candidate diff for Sol review."""
+
+    return get_coding_manager().status(command)
 
 
 @code_review_tool(

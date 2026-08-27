@@ -1,6 +1,6 @@
 # Ask AI MCP 通用模块与接口说明
 
-适用版本：0.8.0
+适用版本：0.9.0
 本文档只描述可复用产品结构，不记录某一台物理机的用户名、安装位置、环境变量值或 GUI
 配置。机器实况由同目录脚本生成到 `local-only/`。
 
@@ -14,6 +14,7 @@
 | `ask-ai-mcp-subagent.exe` | 15 | Core + Perception 的兼容组合入口 |
 | `ask-ai-mcp-full.exe` | 19 | Core + Perception + H3 的兼容全功能入口 |
 | `ask-ai-mcp-review.exe` | 3 | 独立、只读、默认关闭的异构 Coding Review |
+| `ask-ai-mcp-coding.exe` | 3 | 独立、默认关闭、只产出外部候选 diff 的 Coding worker |
 
 专用会话优先启用最窄入口：coding/文档工具制造只启用 Core，视觉来源处理只启用
 Perception，视频生成只启用 H3，冻结代码评审才临时启用 Review。Review 不并入任何既有
@@ -185,7 +186,7 @@ ComfyUI 不猜测画风。任务完成后保持 ComfyUI 在线，只卸载模型
 
 ## 5. 特化本地 ACE 1.5 agent
 
-状态：规划占位，当前 0.8.0 仓库没有 ACE 1.5 MCP 接口、运行器、模型清单或已验证安装。
+状态：规划占位，当前 0.9.0 仓库没有 ACE 1.5 MCP 接口、运行器、模型清单或已验证安装。
 未来应保持独立音频入口，避免向 Core、Perception 或 H3 注入音频 schema。建议边界：
 
 - `audio_backend_status`；
@@ -211,14 +212,21 @@ DeepSeek 候选及其测试是参考实现，不是绝对正确的金标准；�
 ## 7. 独立异构 Coding Review
 
 Review 入口固定三个接口：`code_review_backend_status`、`code_review_submit`、
-`code_review_status`。模型枚举固定为 GLM 5.3、Kimi K3、DeepSeek V4 Pro 和 Flash；接口
+`code_review_status`。模型枚举固定为 GLM 5.3、Kimi K3 和 DeepSeek V4 Pro，均请求 `max`；接口
 不接受自由 prompt、任意模型、Shell、网络地址、工作树写入、提交、推送或补丁生成参数。
 
 Controller 只从仓库白名单生成不可变 diff 和最小上下文，排除密钥、二进制、vendor、生成物、
 超大文件、submodule 与越界 reparse point；模型只看到仓库相对路径。finding 必须是严格 JSON，
 落在实际改动 hunk，并由 Sol/人工盲审裁决。输入、输出和审计产物位于独立 job 目录；SQLite
-只保留哈希、计量、finding 指纹、裁决和后续 outcome。详细配置与 A/B/C/D 流程见
+只保留哈希、计量、finding 指纹、裁决和后续 outcome。详细配置与 A/B/C 流程见
 `docs/CODE_REVIEW_ZH-CN.md`。
+
+## 8. 独立 Coding Subagent
+
+Coding 入口固定 `coding_backend_status`、`coding_submit`、`coding_status` 三个接口，仅允许
+DeepSeek V4 Flash 与 GLM-5.3-Flash，均请求 `max`。它从白名单仓库的不可变 commit 冻结指定
+文件，只在独立 job 目录生成候选 diff，不运行命令、不修改工作树、不应用或推送补丁。详见
+`docs/CODING_SUBAGENT_ZH-CN.md`。
 
 ## 8. OpenCode Go 计量
 

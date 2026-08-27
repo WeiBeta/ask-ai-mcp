@@ -30,6 +30,7 @@ Register additional explicit profiles only where needed:
 C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-core.exe  # 12 non-video tools
 C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-subagent.exe  # Core + 3 Qwen source tools
 C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-h3.exe  # 4 H3 tools only
+C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-coding.exe  # 3 coding candidate tools, opt-in
 C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-review.exe  # 3 review tools, opt-in
 C:\Dev\ask-ai-mcp\.venv\Scripts\ask-ai-mcp-full.exe  # compatibility union, 19 tools
 ```
@@ -164,17 +165,35 @@ tool_timeout_sec = 900
 ASK_AI_MCP_CLIENT_NAME = "codex_desktop"
 ASK_AI_MCP_REVIEW_REPOSITORIES = '{"ask-ai-mcp":"C:\\Dev\\ask-ai-mcp"}'
 ASK_AI_MCP_REVIEW_PATCH_ROOTS = ""
-ASK_AI_MCP_REVIEW_ACCOUNT_ALIAS = "primary"
-ASK_AI_MCP_REVIEW_SUBSCRIPTION_ID = "go-primary"
+ASK_AI_MCP_OPENCODE_ACCOUNT_UID = "<API-visible-UID>"
+ASK_AI_MCP_OPENCODE_ACCOUNT_ALIAS = "<Go-account-name>"
+PYTHONUTF8 = "1"
+PYTHONIOENCODING = "utf-8"
+
+[mcp_servers.ask_ai_coding]
+command = "C:\\Dev\\ask-ai-mcp\\.venv\\Scripts\\ask-ai-mcp-coding.exe"
+cwd = "C:\\Dev\\ask-ai-mcp"
+enabled = false
+required = false
+enabled_tools = ["coding_backend_status", "coding_submit", "coding_status"]
+default_tools_approval_mode = "prompt"
+startup_timeout_sec = 20
+tool_timeout_sec = 900
+
+[mcp_servers.ask_ai_coding.env]
+ASK_AI_MCP_CLIENT_NAME = "codex_desktop"
+ASK_AI_MCP_CODING_REPOSITORIES = '{"ask-ai-mcp":"C:\\Dev\\ask-ai-mcp"}'
+ASK_AI_MCP_OPENCODE_ACCOUNT_UID = "<API-visible-UID>"
+ASK_AI_MCP_OPENCODE_ACCOUNT_ALIAS = "<Go-account-name>"
 PYTHONUTF8 = "1"
 PYTHONIOENCODING = "utf-8"
 ```
 
 Restart Codex Desktop after saving, then use the settings UI to confirm Core has
 twelve tools and H3 is registered but disabled. Keep approval mode set to `prompt`.
-Review must also remain disabled until a frozen diff is ready. The subscription ID
-is a local opaque ledger identity; configure a distinct value for each legitimately
-purchased subscription and never use it to rotate around provider limits.
+Coding and Review must remain disabled until their specialized session. One paid
+Go account maps to one API-visible UID and one Credential Manager key; the optional
+alias is only a display name. Both modules share the UID-keyed ledger.
 Open one
 opaque budget session per conversation that needs Ask AI. Flash starts with CNY
 5, Pro with CNY 0, and either model is extended only in CNY 5 blocks after the
@@ -207,10 +226,10 @@ conversation so the instructions are in context.
 
 ## Credential rule
 
-When the opt-in API smoke test is approved, store the DeepSeek key through:
+When the opt-in OpenCode Go smoke test is approved, store the key through:
 
 ```powershell
-uv run ask-ai-mcp-credentials set
+uv run ask-ai-mcp-credentials set --provider opencode-go --account-uid <API-visible-UID>
 ```
 
 The hidden interactive prompt writes it to Windows Credential Manager. It must

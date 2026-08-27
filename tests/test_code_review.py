@@ -29,6 +29,7 @@ from ask_ai_mcp.code_review_workspace import (
     CodeReviewSnapshotter,
     CodeReviewWorkspaceError,
 )
+from ask_ai_mcp.opencode_account import OpenCodeAccount
 from ask_ai_mcp.usage import UsageStore
 
 
@@ -142,7 +143,6 @@ def test_review_job_is_blind_paginated_and_records_adjudication(
     tmp_path: Path, monkeypatch
 ) -> None:
     root, base, head = _repository(tmp_path)
-    monkeypatch.setenv("ASK_AI_MCP_REVIEW_SUBSCRIPTION_ID", "go-test-subscription")
     seen_prompts: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -151,6 +151,7 @@ def test_review_job_is_blind_paginated_and_records_adjudication(
         body = json.loads(request.content)
         assert body["model"] == CodeReviewModel.GLM_5_3.value
         assert body["temperature"] == 0
+        assert body["reasoning_effort"] == "max"
         prompt = body["messages"][1]["content"]
         seen_prompts.append(prompt)
         assert str(root) not in prompt
@@ -190,6 +191,7 @@ def test_review_job_is_blind_paginated_and_records_adjudication(
         store=CodeReviewStore(tmp_path / "review-state"),
         usage_store=UsageStore(tmp_path / "usage.db"),
         snapshotter=CodeReviewSnapshotter(CodeReviewRepositoryCatalog({"sample": root})),
+        account=OpenCodeAccount(uid="go-test-uid", alias="go-test"),
         api_key_provider=lambda: "opaque-test-key-1234567890",
         transport=httpx.MockTransport(handler),
     )
@@ -263,6 +265,7 @@ def test_group_binding_rejects_a_changed_diff_contract(tmp_path: Path) -> None:
         "contract_version": "code-review-findings-v1",
         "max_output_tokens": 8000,
         "temperature": 0.0,
+        "account_uid": "uid-primary",
         "account_alias": "primary",
         "subscription_id": "go-a",
         "catalog_version": "v",

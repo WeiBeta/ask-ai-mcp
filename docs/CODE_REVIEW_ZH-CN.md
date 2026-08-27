@@ -5,11 +5,11 @@
 `ask-ai-mcp-review.exe` 是可选的只读 reviewer，不是 coding agent。它不属于 Core、
 Subagent、Perception、H3 或 Full，普通开发保持关闭。固定工具只有：
 
-- `code_review_backend_status`：本地配置、四个固定模型的远端可用性、双层账本与月报；
+- `code_review_backend_status`：本地配置、三个固定模型的远端可用性、双层账本与月报；
 - `code_review_submit`：提交冻结 refs 或哈希固定的 patch；
 - `code_review_status`：分页读结果，并记录盲审裁决或延迟 outcome。
 
-固定模型为 `glm-5.3`、`kimi-k3`、`deepseek-v4-pro`、`deepseek-v4-flash`；固定 profile
+固定模型为 `glm-5.3`、`kimi-k3`、`deepseek-v4-pro`，均请求 `reasoning_effort=max`；固定 profile
 为 `general`、`security`、`concurrency`、`data_integrity`。没有 generic prompt、任意模型、
 任意 URL、Shell、写文件、Git 写操作、提交、推送、自动重试或默认补丁。
 
@@ -30,28 +30,28 @@ evidence hash 由 controller 根据结构化证据摘要重新计算。
 
 ## OpenCode Go 双层账本
 
-价格目录固定为 `opencode-go-2026-08-21`，带 `effective_at` 和官方 source URL；远端
+价格目录固定为 `opencode-go-2026-08-27`，带 `effective_at` 和官方 source URL；远端
 `/zen/go/v1/models` 只用于健康/可用性检查，不能静默改价或扩张 reviewer 模型枚举。
 
 官方 Go 是双层限制：订阅共享滚动 5 小时 `$12`、每周 `$30`、每月 `$60`；模型月度 included
-usage 上限分别为 GLM `$15`、Kimi `$15`、DeepSeek Pro `$15`、DeepSeek Flash `$30`。
-模型有效月余额是共享月余额与模型月余额的较小值。例如前三个模型各消费 `$15` 后，共享月
-余额只有 `$15`，所以 Flash 虽有自身 `$30` 上限，有效余额仍为 `$15`。
+usage 上限分别为 GLM `$15`、Kimi `$15`、DeepSeek Pro `$15`。Coding 模块另用 GLM Flash
+`$15` 与 DeepSeek Flash `$30`，但五个模型仍共享同一订阅的 `$60` 月窗口。
 
-DeepSeek 在 UTC `01:00–04:00`、`06:00–10:00` 使用 peak 费率，边界采用左闭右开。
+DeepSeek 仅在周一至周五 UTC `01:00–04:00`、`06:00–10:00` 使用 peak 费率；周末全天
+off-peak，边界采用左闭右开。
 账本分别保存 input、output、cache-read、cache-write token 与单价；官方未给出的价格项为
 `null/unsupported`，不能默认为零。API 返回的实际 usage/成本与本地估算分开；拿不到供应商
-权威余额时 `estimated=true`。所有共享窗口按 `(account_alias, subscription_id)` 聚合一次，
+权威余额时 `estimated=true`。所有共享窗口按 API 可见账户 UID 聚合一次，
 不会把同一笔跨模型消费重复扣除。多个合法订阅必须显式配置不同 ID、凭据和路由；模块不会
 自动轮转账户或绕过限额。
 
 官方目录：<https://opencode.ai/docs/go/>。
 
-## 冻结 A/B/C/D 与裁决
+## 冻结 A/B/C 与裁决
 
 先完成实现、测试、真实灰度和 Sol 常规审查，再冻结明确的 base/head commit 与 diff hash。
 同一 `review_group_id` 强制绑定完全相同的 diff hash、prompt/contract 版本、输出上限和采样
-配置；四个模型隔离运行，不能互看结果。修复不改写基线，而是在之后另开提交。
+配置；三个模型隔离运行，不能互看结果。修复不改写基线，而是在之后另开提交。
 
 裁决阶段 `code_review_status` 隐藏模型名，逐条记录 TP、FP、duplicate、non-actionable 或
 uncertain，以及 severity agreement、accepted/fixed、test-confirmed 和耗时。月报按语言、
@@ -59,5 +59,5 @@ uncertain，以及 severity agreement、accepted/fixed、test-confirmed 和耗�
 recall proxy、false-positive burden、duplicate rate、severity calibration、测试确认率、
 每千改动行发现数、每个采纳问题成本/延迟和 escaped defects。recall proxy 不代表绝对 recall。
 
-第一批样本对同一冻结 diff 做 GLM/Kimi/Pro/Flash 影子 A/B/C/D；积累样本后再由效果日志决定
-是否采用 Flash 高频基线加轮换深审，不预设赢家。
+第一批样本对同一冻结 diff 做 GLM/Kimi/Pro 影子 A/B/C；积累样本后再由效果日志决定
+是否购买单模型 Coding Plan 或继续使用 Go 的异构深审组合，不预设赢家。

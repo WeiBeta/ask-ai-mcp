@@ -19,12 +19,13 @@
 ## Model responsibility boundary
 
 - Opus/Sol is the controller and final authority.
-- DeepSeek is a constrained toolsmith and source-structuring worker.
-- Never add a generic `ask_deepseek(prompt)` or unrestricted delegation tool.
-- Never use DeepSeek to draft final document prose, co-author delivery content,
+- Ask AI providers are constrained external-model workers. A provider or model
+  name is routing metadata, not a role name.
+- Never add a generic prompt-forwarding or unrestricted delegation tool.
+- Never use an external worker to draft final document prose, co-author delivery content,
   decide facts, resolve source conflicts, or generate final conclusions.
-- DeepSeek output is untrusted until validated and reviewed by Opus/Sol.
-- DeepSeek-generated code must be created outside the repository, tested in an
+- External-worker output is untrusted until validated and reviewed by Opus/Sol.
+- Externally generated code must be created outside the repository, tested in an
   isolated candidate workspace, and returned as a candidate patch. It must not
   modify the working tree directly.
 - Delegate only mechanically verifiable work likely to need at least three
@@ -40,7 +41,7 @@
   user-profile access.
 - Preserve source provenance: file hash, page/slide/sheet/cell location,
   extraction method, tool version, and warnings.
-- Do not send an entire knowledge base to DeepSeek. Send only the minimum
+- Do not send an entire knowledge base to an external worker. Send only the minimum
   contract, sanitized fixtures, error excerpts, or selected evidence required.
 - Do not log API keys, full prompts, full source text, or normal model outputs.
 
@@ -48,7 +49,7 @@
 
 1. Sol defines a bounded tool specification and acceptance tests.
 2. The controller opens one opaque budget session for the current conversation.
-3. DeepSeek Flash Thinking may generate a candidate.
+3. The configured bounded toolsmith model may generate a candidate.
 4. Static checks and isolated tests run with bounded policy-routed retries.
 5. Sol reviews the summary, then loads the full patch when a code review is needed.
 6. Only an explicitly approved, hash-pinned tool may process real file copies.

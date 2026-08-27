@@ -11,6 +11,7 @@ from ask_ai_mcp.opencode import OpenCodeGoClient
 from ask_ai_mcp.qwen_toolsmith import LocalQwenToolsmithClient
 
 TOOLSMITH_PROVIDER_ENV = "ASK_AI_MCP_TOOLSMITH_PROVIDER"
+DEEPSEEK_STATE_ENV = "ASK_AI_MCP_DEEPSEEK_STATE"
 
 
 class ToolsmithProviderError(RuntimeError):
@@ -29,7 +30,7 @@ class CandidateProvider(Protocol):
 
 
 def load_toolsmith_provider() -> ToolsmithProviderConfiguration:
-    raw = os.environ.get(TOOLSMITH_PROVIDER_ENV, ModelProvider.DEEPSEEK.value)
+    raw = os.environ.get(TOOLSMITH_PROVIDER_ENV, ModelProvider.OPENCODE.value)
     try:
         provider = ModelProvider(raw.strip().casefold())
     except ValueError as error:
@@ -38,6 +39,13 @@ def load_toolsmith_provider() -> ToolsmithProviderConfiguration:
         ) from error
     if provider is ModelProvider.UNKNOWN:
         raise ToolsmithProviderError(f"{TOOLSMITH_PROVIDER_ENV} cannot be unknown")
+    if provider is ModelProvider.DEEPSEEK:
+        state = os.environ.get(DEEPSEEK_STATE_ENV, "suspended").strip().casefold()
+        if state != "active":
+            raise ToolsmithProviderError(
+                "DeepSeek direct API is suspended; select the OpenCode provider or explicitly "
+                f"set {DEEPSEEK_STATE_ENV}=active after funding the direct account"
+            )
     return ToolsmithProviderConfiguration(
         provider=provider,
         requires_budget_gate=provider is ModelProvider.DEEPSEEK,

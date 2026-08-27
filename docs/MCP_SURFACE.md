@@ -6,15 +6,30 @@ Full advertises nineteen. Perception-only advertises exactly three source tools;
 H3-only advertises exactly four local video tools.
 Review-only advertises exactly three read-only review tools and is absent from
 all five existing surfaces, including compatibility Full.
+Coding-only advertises exactly three coding-candidate tools and is also absent
+from Core, Subagent, Perception, H3, Review, and compatibility Full.
+
+## Optional bounded coding worker
+
+`ask-ai-mcp-coding.exe` exposes `coding_backend_status`, `coding_submit`, and
+paginated `coding_status`. It accepts one allow-listed repository ID, an exact
+commit, named target/context files, a bounded task contract, and only
+`deepseek-v4-flash` or `glm-5.3-flash`. Both routes request `max` reasoning.
+It freezes source with read-only Git operations and emits an external candidate
+diff; it has no generic prompt, arbitrary path/model/URL, shell, test runner,
+working-tree write, apply, commit, push, or automatic account-switch operation.
 
 ## Optional heterogeneous code review
 
 `ask-ai-mcp-review.exe` is manually enabled only for heavy development review.
 It exposes `code_review_backend_status`, `code_review_submit`, and the paginated
 `code_review_status`. Submit accepts an allow-listed repository ID plus either
-two bounded refs or a hash-pinned patch, one fixed profile, and one of four fixed
+two bounded refs or a hash-pinned patch, one fixed profile, and one of three fixed
 OpenCode Go models. It has no generic prompt, shell, arbitrary path, Git-write,
 patch-generation, commit, push, or retry option.
+
+Review models are fixed to `deepseek-v4-pro`, `glm-5.3`, and `kimi-k3`, each
+with requested reasoning effort `max`.
 
 The controller resolves immutable commits, removes secrets, binary/vendor/generated
 content, submodules, escaping reparse points, oversized files, and excess context,

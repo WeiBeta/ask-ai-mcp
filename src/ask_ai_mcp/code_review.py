@@ -46,6 +46,7 @@ from ask_ai_mcp.code_review_workspace import (
 )
 from ask_ai_mcp.credentials import CredentialError, OpenCodeCredentialStore
 from ask_ai_mcp.models import ModelProvider, PricingBand, UsageCostSource, UsageEvent
+from ask_ai_mcp.opencode_account import OpenCodeAccount, load_opencode_account
 from ask_ai_mcp.opencode_pricing import (
     OPENCODE_GO_MODELS_URL,
     OPENCODE_GO_PRICES,
@@ -59,11 +60,8 @@ from ask_ai_mcp.opencode_pricing import (
 from ask_ai_mcp.usage import UsageStore
 
 OPENCODE_GO_CHAT_URL = "https://opencode.ai/zen/go/v1/chat/completions"
-ACCOUNT_ALIAS_ENV = "ASK_AI_MCP_REVIEW_ACCOUNT_ALIAS"
-SUBSCRIPTION_ID_ENV = "ASK_AI_MCP_REVIEW_SUBSCRIPTION_ID"
 STATE_ROOT_ENV = "ASK_AI_MCP_REVIEW_STATE_ROOT"
-_ACCOUNT_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
-_SUBSCRIPTION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+REASONING_EFFORT = "max"
 _PROFILE_GUIDANCE = {
     CodeReviewProfile.GENERAL: (
         "Prioritize correctness, regressions, missing tests, and API contracts."
@@ -102,17 +100,18 @@ class CodeReviewManager:
         store: CodeReviewStore | None = None,
         usage_store: UsageStore | None = None,
         snapshotter: CodeReviewSnapshotter | None = None,
+        account: OpenCodeAccount | None = None,
         api_key_provider=None,
         transport: httpx.BaseTransport | None = None,
         timeout_seconds: float = 900.0,
         executor: ThreadPoolExecutor | None = None,
     ) -> None:
-        self.account_alias = os.environ.get(ACCOUNT_ALIAS_ENV, "primary").strip().casefold()
-        self.subscription_id = os.environ.get(SUBSCRIPTION_ID_ENV, "").strip()
-        if _ACCOUNT_PATTERN.fullmatch(self.account_alias) is None:
-            raise RuntimeError("code review account alias is invalid")
-        if self.subscription_id and _SUBSCRIPTION_PATTERN.fullmatch(self.subscription_id) is None:
-            raise RuntimeError("code review subscription ID is invalid")
+        self.account = account if account is not None else load_opencode_account(required=False)
+        if self.account is None and api_key_provider is not None:
+            self.account = OpenCodeAccount(uid="injected-test", alias="injected-test")
+        self.account_uid = self.account.uid if self.account else ""
+        self.account_alias = self.account.alias if self.account else ""
+        self.subscription_id = self.account.subscription_id if self.account else ""
         configured_root = os.environ.get(STATE_ROOT_ENV, "").strip()
         state_root = Path(configured_root) if configured_root else default_code_review_root()
         if not state_root.is_absolute():
@@ -132,10 +131,14 @@ class CodeReviewManager:
         self.store = store or CodeReviewStore(state_root)
         self.usage_store = usage_store or UsageStore()
         self.snapshotter = snapshotter or CodeReviewSnapshotter()
-        credentials = OpenCodeCredentialStore(self.account_alias)
-        self.api_key_provider = api_key_provider or credentials.get_api_key
+        credentials = OpenCodeCredentialStore(self.account_uid) if self.account else None
+        self.api_key_provider = api_key_provider or (
+            credentials.get_api_key if credentials is not None else self._missing_credential
+        )
         self._credential_configured = (
-            credentials.is_configured if api_key_provider is None else lambda: True
+            credentials.is_configured
+            if credentials is not None and api_key_provider is None
+            else lambda: api_key_provider is not None
         )
         self.transport = transport
         self.timeout = httpx.Timeout(timeout_seconds, connect=15.0)
@@ -144,6 +147,10 @@ class CodeReviewManager:
         )
         self._futures: dict[str, Future[None]] = {}
         self._future_lock = threading.Lock()
+
+    @staticmethod
+    def _missing_credential() -> str:
+        raise CredentialError("OpenCode Go account UID and credential are not configured")
 
     @classmethod
     def configured_repository_ids(cls) -> list[str]:
@@ -159,8 +166,8 @@ class CodeReviewManager:
             credentials_ready = bool(self._credential_configured())
         except CredentialError:
             details.append("OpenCode Go credential lookup failed")
-        if not self.subscription_id:
-            details.append(f"{SUBSCRIPTION_ID_ENV} is required before submitting reviews")
+        if self.account is None:
+            details.append("OpenCode Go account UID is not selected")
         if not repository_ids:
             details.append("no allow-listed review repositories are configured")
         if not credentials_ready:
@@ -185,19 +192,18 @@ class CodeReviewManager:
             (
                 item
                 for item in self.usage_store.summarize(days=30).opencode_go_accounts
-                if item.account == self.account_alias
-                and item.subscription_id == self.subscription_id
+                if item.account == self.account_uid and item.subscription_id == self.subscription_id
             ),
             None,
         )
-        configured = bool(repository_ids and self.subscription_id and credentials_ready)
+        configured = bool(repository_ids and self.account and credentials_ready)
         return CodeReviewBackendStatus(
             configured=configured,
             detail="; ".join(details) if details else "bounded code review backend is ready",
             repository_ids=repository_ids,
             state_root=str(self.store.root),
-            account_alias=self.account_alias,
-            subscription_id=self.subscription_id or None,
+            account_uid=self.account_uid or None,
+            account_alias=self.account_alias or None,
             remote_models_checked=remote_checked,
             models=[
                 CodeReviewModelAvailability(model_id=model, available=available[model.value])
@@ -211,11 +217,11 @@ class CodeReviewManager:
         )
 
     def submit(self, command: CodeReviewSubmitCommand) -> CodeReviewSubmission:
-        if not self.subscription_id:
-            raise RuntimeError(f"{SUBSCRIPTION_ID_ENV} must identify the selected subscription")
+        if self.account is None:
+            raise RuntimeError("OpenCode Go account UID must be selected before review submission")
         model = OpenCodeGoModel(command.model.value)
         reason = self.usage_store.opencode_limit_reason(
-            self.account_alias, model.value, self.subscription_id
+            self.account_uid, model.value, self.subscription_id
         )
         if reason:
             raise RuntimeError(reason)
@@ -284,6 +290,7 @@ class CodeReviewManager:
                     "contract_version": CONTRACT_VERSION,
                     "max_output_tokens": MAX_OUTPUT_TOKENS,
                     "temperature": TEMPERATURE,
+                    "account_uid": self.account_uid,
                     "account_alias": self.account_alias,
                     "subscription_id": self.subscription_id,
                     "catalog_version": OPENCODE_GO_PRICING_VERSION,
@@ -387,7 +394,7 @@ class CodeReviewManager:
                     provider=ModelProvider.OPENCODE,
                     provider_model_id=command.model.value,
                     provider_runtime="chat_completions",
-                    provider_account=self.account_alias,
+                    provider_account=self.account_uid,
                     provider_subscription_id=self.subscription_id,
                     thinking_enabled=True,
                     priced_at=priced_at,
@@ -401,6 +408,7 @@ class CodeReviewManager:
                         - int(usage["cache_write_tokens"]),
                     ),
                     completion_tokens=int(usage["output_tokens"]),
+                    reasoning_tokens=int(usage["reasoning_tokens"]),
                     cache_read_tokens=int(usage["cache_read_tokens"]),
                     cache_write_tokens=int(usage["cache_write_tokens"]),
                     estimated_cost_usd=float(usage["estimated_cost_usd"]),
@@ -462,6 +470,7 @@ class CodeReviewManager:
                 {"role": "user", "content": prompt},
             ],
             "temperature": TEMPERATURE,
+            "reasoning_effort": REASONING_EFFORT,
             "max_tokens": MAX_OUTPUT_TOKENS,
             "response_format": {"type": "json_object"},
         }
@@ -592,6 +601,12 @@ class CodeReviewManager:
         usage = response.get("usage") if isinstance(response.get("usage"), dict) else {}
         input_tokens = int(usage.get("prompt_tokens", 0) or 0)
         output_tokens = int(usage.get("completion_tokens", 0) or 0)
+        completion_details = usage.get("completion_tokens_details")
+        reasoning_tokens = (
+            int(completion_details.get("reasoning_tokens", 0) or 0)
+            if isinstance(completion_details, dict)
+            else 0
+        )
         details = usage.get("prompt_tokens_details")
         cache_read = int(details.get("cached_tokens", 0) or 0) if isinstance(details, dict) else 0
         cache_write = int(usage.get("cache_write_tokens", 0) or 0)
@@ -610,6 +625,7 @@ class CodeReviewManager:
         return {
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
+            "reasoning_tokens": reasoning_tokens,
             "cache_read_tokens": cache_read,
             "cache_write_tokens": cache_write,
             "input_rate": cost.rates.input_usd_per_million,

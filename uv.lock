@@ -37,7 +37,7 @@ wheels = [
 
 [[package]]
 name = "ask-ai-mcp"
-version = "0.8.0"
+version = "0.9.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastmcp" },

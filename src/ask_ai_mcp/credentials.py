@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import platform
-import re
 from typing import Protocol
 
 import keyring
@@ -12,7 +11,6 @@ from keyring.errors import KeyringError
 SERVICE_NAME = "Ask AI MCP"
 ACCOUNT_NAME = "deepseek-api-key"
 OPENCODE_ACCOUNT_PREFIX = "opencode-go"
-OPENCODE_PROFILE_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 
 
 class CredentialBackend(Protocol):
@@ -108,17 +106,17 @@ class CredentialStore:
 
 
 class OpenCodeCredentialStore:
-    """Store one explicitly selected OpenCode Go account credential."""
+    """Store exactly one credential for one non-secret OpenCode account UID."""
 
-    def __init__(self, profile: str = "primary", backend: CredentialBackend | None = None) -> None:
-        normalized = profile.strip().casefold()
-        if OPENCODE_PROFILE_PATTERN.fullmatch(normalized) is None:
-            raise CredentialError(
-                "OpenCode Go account alias must start with a letter and contain only "
-                "lowercase letters, digits, underscores, or hyphens"
-            )
-        self.profile = normalized
-        self.account_name = f"{OPENCODE_ACCOUNT_PREFIX}-{normalized}-api-key"
+    def __init__(self, account_uid: str, backend: CredentialBackend | None = None) -> None:
+        from ask_ai_mcp.opencode_account import validate_account_uid
+
+        try:
+            self.account_uid = validate_account_uid(account_uid)
+        except ValueError as error:
+            raise CredentialError(str(error)) from error
+        self.profile = self.account_uid  # bounded compatibility alias
+        self.account_name = f"{OPENCODE_ACCOUNT_PREFIX}-{self.account_uid}-api-key"
         self._backend = backend
 
     @property
@@ -140,7 +138,7 @@ class OpenCodeCredentialStore:
             raise CredentialError("Windows Credential Manager read failed") from None
         if api_key is None:
             raise CredentialNotFoundError(
-                f"OpenCode Go {self.profile} API key is not configured; "
+                f"OpenCode Go account {self.account_uid} API key is not configured; "
                 "run ask-ai-mcp-credentials set --provider opencode-go"
             )
         return validate_opencode_api_key(api_key)

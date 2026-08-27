@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from time import perf_counter
@@ -18,7 +17,7 @@ from ask_ai_mcp.models import (
     SourceExtractionProfile,
     UsageEvent,
 )
-from ask_ai_mcp.opencode import OPENCODE_ACCOUNT_ENV, OPENCODE_SUBSCRIPTION_ENV
+from ask_ai_mcp.opencode_account import OpenCodeAccount, load_opencode_account
 from ask_ai_mcp.opencode_pricing import (
     OPENCODE_GO_PRICING_VERSION,
     OpenCodeGoModel,
@@ -44,18 +43,21 @@ class OpenCodeQwenMessagesClient:
     def __init__(
         self,
         *,
-        account: str | None = None,
+        account: OpenCodeAccount | None = None,
         api_key_provider=None,
         usage_store: UsageStore | None = None,
         transport: httpx.BaseTransport | None = None,
         timeout_seconds: float = 600.0,
     ) -> None:
-        selected = (account or os.environ.get(OPENCODE_ACCOUNT_ENV, "primary")).strip().casefold()
-        credentials = OpenCodeCredentialStore(profile=selected)
-        self.account = credentials.profile
-        self.subscription_id = (
-            os.environ.get(OPENCODE_SUBSCRIPTION_ENV, "").strip() or f"legacy:{self.account}"
+        selected = account or (
+            OpenCodeAccount(uid="injected-test", alias="injected-test")
+            if api_key_provider is not None
+            else load_opencode_account(required=True)
         )
+        credentials = OpenCodeCredentialStore(selected.uid)
+        self.account = selected.uid
+        self.account_alias = selected.alias
+        self.subscription_id = selected.subscription_id
         self.api_key_provider = api_key_provider or credentials.get_api_key
         self.usage_store = usage_store or UsageStore()
         self.transport = transport

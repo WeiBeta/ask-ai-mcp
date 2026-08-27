@@ -58,6 +58,8 @@ def test_opencode_profiles_are_separate_and_accept_opaque_keys() -> None:
 
 
 def test_cli_selects_provider_without_accepting_a_secret() -> None:
-    args = build_parser().parse_args(["set", "--provider", "opencode-go", "--account", "secondary"])
+    args = build_parser().parse_args(
+        ["set", "--provider", "opencode-go", "--account-uid", "visible-uid-02"]
+    )
     assert args.provider == "opencode-go"
-    assert args.account == "secondary"
+    assert args.account_uid == "visible-uid-02"

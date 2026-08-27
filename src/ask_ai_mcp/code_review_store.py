@@ -69,6 +69,7 @@ class CodeReviewStore:
                     contract_version TEXT NOT NULL,
                     max_output_tokens INTEGER NOT NULL,
                     temperature REAL NOT NULL,
+                    account_uid TEXT,
                     account_alias TEXT NOT NULL,
                     subscription_id TEXT NOT NULL,
                     catalog_version TEXT NOT NULL,
@@ -80,6 +81,7 @@ class CodeReviewStore:
                     status TEXT NOT NULL,
                     input_tokens INTEGER,
                     output_tokens INTEGER,
+                    reasoning_tokens INTEGER,
                     cache_read_tokens INTEGER,
                     cache_write_tokens INTEGER,
                     input_rate REAL,
@@ -155,6 +157,24 @@ class CodeReviewStore:
                     ON code_review_outcomes(run_id);
                 """
             )
+            columns = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(code_review_runs)").fetchall()
+            }
+            if "account_uid" not in columns:
+                connection.execute("ALTER TABLE code_review_runs ADD COLUMN account_uid TEXT")
+                connection.execute(
+                    "UPDATE code_review_runs SET account_uid = account_alias "
+                    "WHERE account_uid IS NULL"
+                )
+            if "reasoning_tokens" not in columns:
+                connection.execute(
+                    "ALTER TABLE code_review_runs ADD COLUMN reasoning_tokens INTEGER"
+                )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_code_review_runs_account_uid "
+                "ON code_review_runs(account_uid, subscription_id, created_at)"
+            )
 
     def create_run(self, values: dict[str, object]) -> None:
         invariant_fields = (
@@ -181,7 +201,7 @@ class CodeReviewStore:
                     run_id, review_group_id, blind_label, repository_id,
                     repo_snapshot_hash, diff_hash, model, provider, protocol,
                     prompt_version, contract_version, max_output_tokens, temperature,
-                    account_alias, subscription_id, catalog_version,
+                    account_uid, account_alias, subscription_id, catalog_version,
                     catalog_effective_at, catalog_source_url, created_at, status,
                     usage_source, pricing_band, file_count, changed_line_count,
                     language, task_type, diff_size_bucket, artifact_relative_path
@@ -189,7 +209,7 @@ class CodeReviewStore:
                     :run_id, :review_group_id, :blind_label, :repository_id,
                     :repo_snapshot_hash, :diff_hash, :model, :provider, :protocol,
                     :prompt_version, :contract_version, :max_output_tokens, :temperature,
-                    :account_alias, :subscription_id, :catalog_version,
+                    :account_uid, :account_alias, :subscription_id, :catalog_version,
                     :catalog_effective_at, :catalog_source_url, :created_at, :status,
                     :usage_source, :pricing_band, :file_count, :changed_line_count,
                     :language, :task_type, :diff_size_bucket, :artifact_relative_path
@@ -226,6 +246,7 @@ class CodeReviewStore:
                 UPDATE code_review_runs SET
                     completed_at = :completed_at, status = 'succeeded',
                     input_tokens = :input_tokens, output_tokens = :output_tokens,
+                    reasoning_tokens = :reasoning_tokens,
                     cache_read_tokens = :cache_read_tokens,
                     cache_write_tokens = :cache_write_tokens,
                     input_rate = :input_rate, output_rate = :output_rate,

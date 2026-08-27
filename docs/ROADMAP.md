@@ -1,9 +1,9 @@
 # Roadmap
 
 Current implementation status: phases 0 through 2 are complete, including the
-real opt-in synthetic Flash smoke request. Version 0.8.0 exposes six explicit
-MCP profiles (Core 12, Perception 3, Subagent 15, H3 4, Full 19, and the
-independent Review 3), conversation budget sessions, compact/full review,
+real opt-in synthetic Flash smoke request. Version 0.9.0 exposes seven explicit
+MCP profiles (Core 12, Perception 3, Subagent 15, H3 4, Full 19, independent
+Review 3, and independent Coding 3), conversation budget sessions, compact/full review,
 verified execution, and the OpenCode Go dual-layer usage ledger. Cross-client
 Phase 3 acceptance and explicit real-input-root configuration remain pending.
 
@@ -146,3 +146,8 @@ Exit criteria: the controller can switch a bounded worker between DeepSeek and
 OpenCode Go without changing its public role contract or safety guarantees; no
 active global instruction incorrectly treats `DeepSeek` as the role name; and a
 fresh Codex session loads smaller guidance matching the deployed MCP version.
+
+0.9.0 release gate: deploy and inspect the Coding/Review executables first, then
+back up and revise the user-level Codex `AGENTS.md`. The global wording must name
+Core, Coding, and Review by capability rather than provider, state that direct
+DeepSeek is suspended, and leave model catalogs and prices to MCP status.

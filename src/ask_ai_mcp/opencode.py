@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from datetime import UTC, datetime
 from time import perf_counter
 from typing import Any
@@ -14,6 +13,7 @@ from ask_ai_mcp import __version__
 from ask_ai_mcp.credentials import OpenCodeCredentialStore
 from ask_ai_mcp.deepseek import DeepSeekClient
 from ask_ai_mcp.models import DeepSeekModel, ModelProvider, ToolBuildSpec, UsageEvent
+from ask_ai_mcp.opencode_account import OpenCodeAccount, load_opencode_account
 from ask_ai_mcp.opencode_pricing import (
     OPENCODE_GO_PRICING_VERSION,
     OpenCodeGoModel,
@@ -25,8 +25,6 @@ from ask_ai_mcp.usage import UsageStore
 
 OPENCODE_GO_CHAT_URL = "https://opencode.ai/zen/go/v1/chat/completions"
 OPENCODE_GO_RESPONSES_URL = "https://opencode.ai/zen/go/v1/responses"
-OPENCODE_ACCOUNT_ENV = "ASK_AI_MCP_OPENCODE_ACCOUNT"
-OPENCODE_SUBSCRIPTION_ENV = "ASK_AI_MCP_OPENCODE_SUBSCRIPTION_ID"
 
 
 class OpenCodeGoClient(DeepSeekClient):
@@ -40,18 +38,21 @@ class OpenCodeGoClient(DeepSeekClient):
     def __init__(
         self,
         *,
-        account: str | None = None,
+        account: OpenCodeAccount | None = None,
         api_key_provider=None,
         usage_store: UsageStore | None = None,
         transport: httpx.BaseTransport | None = None,
         timeout_seconds: float = 600.0,
     ) -> None:
-        selected = (account or os.environ.get(OPENCODE_ACCOUNT_ENV, "primary")).strip().casefold()
-        credential_store = OpenCodeCredentialStore(profile=selected)
-        self.account = credential_store.profile
-        self.subscription_id = (
-            os.environ.get(OPENCODE_SUBSCRIPTION_ENV, "").strip() or f"legacy:{self.account}"
+        selected = account or (
+            OpenCodeAccount(uid="injected-test", alias="injected-test")
+            if api_key_provider is not None
+            else load_opencode_account(required=True)
         )
+        credential_store = OpenCodeCredentialStore(selected.uid)
+        self.account = selected.uid
+        self.account_alias = selected.alias
+        self.subscription_id = selected.subscription_id
         super().__init__(
             api_key_provider=api_key_provider or credential_store.get_api_key,
             usage_store=usage_store,

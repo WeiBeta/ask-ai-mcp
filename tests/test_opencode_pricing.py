@@ -22,11 +22,12 @@ from ask_ai_mcp.opencode_pricing import (
 from ask_ai_mcp.usage import UsageStore
 
 
-def test_catalog_matches_2026_08_21_official_fixed_values() -> None:
-    assert OPENCODE_GO_PRICING_VERSION == "opencode-go-2026-08-21"
-    assert datetime(2026, 8, 21, tzinfo=UTC) == OPENCODE_GO_PRICING_EFFECTIVE_AT
+def test_catalog_matches_2026_08_27_official_fixed_values() -> None:
+    assert OPENCODE_GO_PRICING_VERSION == "opencode-go-2026-08-27"
+    assert datetime(2026, 8, 27, tzinfo=UTC) == OPENCODE_GO_PRICING_EFFECTIVE_AT
     assert OPENCODE_GO_PRICING_SOURCE_URL == "https://opencode.ai/docs/go/"
     expected = {
+        OpenCodeGoModel.GLM_5_3_FLASH: (0.15, 0.50, 0.03, 15.0),
         OpenCodeGoModel.GLM_5_3: (1.40, 4.40, 0.26, 15.0),
         OpenCodeGoModel.KIMI_K3: (3.00, 15.00, 0.30, 15.0),
         OpenCodeGoModel.DSV4_PRO: (0.66, 1.98, 0.022, 15.0),
@@ -58,6 +59,14 @@ def test_catalog_matches_2026_08_21_official_fixed_values() -> None:
 def test_deepseek_peak_windows_are_half_open(instant: datetime, expected) -> None:
     band, _ = rates_for(OpenCodeGoModel.DSV4_FLASH, priced_at=instant)
     assert band is expected
+
+
+def test_deepseek_weekends_are_always_off_peak() -> None:
+    band, _ = rates_for(
+        OpenCodeGoModel.DSV4_FLASH,
+        priced_at=datetime(2026, 8, 22, 6, 30, tzinfo=UTC),
+    )
+    assert band is OpenCodeGoRateBand.OFF_PEAK
 
 
 def test_peak_cost_is_twice_off_peak_and_cache_write_is_unsupported() -> None:

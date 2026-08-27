@@ -1,12 +1,11 @@
 {
   "mcpServers": {
-    "ask-ai-review": {
-      "command": "__MCP_REVIEW_EXE__",
+    "ask-ai-coding": {
+      "command": "__MCP_CODING_EXE__",
       "args": [],
       "env": {
         "ASK_AI_MCP_CLIENT_NAME": "claude_desktop",
-        "ASK_AI_MCP_REVIEW_REPOSITORIES": "__REVIEW_REPOSITORIES_JSON__",
-        "ASK_AI_MCP_REVIEW_PATCH_ROOTS": "__REVIEW_PATCH_ROOTS__",
+        "ASK_AI_MCP_CODING_REPOSITORIES": "__CODING_REPOSITORIES_JSON__",
         "ASK_AI_MCP_OPENCODE_ACCOUNT_UID": "__OPENCODE_ACCOUNT_UID__",
         "ASK_AI_MCP_OPENCODE_ACCOUNT_ALIAS": "__OPENCODE_ACCOUNT_ALIAS__",
         "PYTHONUTF8": "1",

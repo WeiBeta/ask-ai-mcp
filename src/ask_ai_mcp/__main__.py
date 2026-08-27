@@ -4,7 +4,15 @@ from __future__ import annotations
 
 import os
 
-from ask_ai_mcp.server import core_mcp, h3_mcp, mcp, review_mcp, source_mcp, subagent_mcp
+from ask_ai_mcp.server import (
+    coding_mcp,
+    core_mcp,
+    h3_mcp,
+    mcp,
+    review_mcp,
+    source_mcp,
+    subagent_mcp,
+)
 
 _PROFILE_ENV = "ASK_AI_MCP_PROFILE"
 
@@ -26,7 +34,11 @@ def selected_mcp(profile: str | None = None):
         return h3_mcp
     if normalized in {"review", "code-review"}:
         return review_mcp
-    raise RuntimeError(f"{_PROFILE_ENV} must be core, subagent, perception, h3, review, or full")
+    if normalized in {"coding", "code"}:
+        return coding_mcp
+    raise RuntimeError(
+        f"{_PROFILE_ENV} must be core, subagent, perception, h3, coding, review, or full"
+    )
 
 
 def main() -> None:
@@ -62,6 +74,12 @@ def main_perception() -> None:
 def main_review() -> None:
     """Run only the three bounded heterogeneous code-review tools."""
     review_mcp.run()
+
+
+def main_coding() -> None:
+    """Run only the three bounded coding-candidate tools."""
+
+    coding_mcp.run()
 
 
 if __name__ == "__main__":
