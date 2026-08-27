@@ -85,6 +85,18 @@ def test_snapshot_is_frozen_and_excludes_uncommitted_content(tmp_path: Path) -> 
     assert snapshot.target_files["Counter.cs"].exists is True
 
 
+def test_coding_catalog_reads_only_its_own_repository_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, _commit = _repository(tmp_path)
+    monkeypatch.setenv("ASK_AI_MCP_CODING_REPOSITORIES", json.dumps({"coding-repo": str(root)}))
+    monkeypatch.setenv("ASK_AI_MCP_REVIEW_REPOSITORIES", "{}")
+
+    snapshotter = CodingSnapshotter()
+
+    assert snapshotter.catalog.repositories == {"coding-repo": root.resolve()}
+
+
 def test_candidate_uses_max_reasoning_and_returns_paginated_external_diff(
     tmp_path: Path,
 ) -> None:

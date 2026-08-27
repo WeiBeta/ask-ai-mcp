@@ -144,24 +144,37 @@ def _validate_relative(value: str) -> str:
 
 
 class CodeReviewRepositoryCatalog:
-    def __init__(self, repositories: dict[str, Path] | None = None) -> None:
-        configured = repositories if repositories is not None else self._load_environment()
+    def __init__(
+        self,
+        repositories: dict[str, Path] | None = None,
+        *,
+        environment_variable: str = REPOSITORIES_ENV,
+    ) -> None:
+        configured = (
+            repositories
+            if repositories is not None
+            else self._load_environment(environment_variable)
+        )
         self.repositories = {
             identifier: self._validate_root(identifier, path)
             for identifier, path in configured.items()
         }
 
     @staticmethod
-    def _load_environment() -> dict[str, Path]:
-        raw = os.environ.get(REPOSITORIES_ENV, "").strip()
+    def _load_environment(environment_variable: str = REPOSITORIES_ENV) -> dict[str, Path]:
+        raw = os.environ.get(environment_variable, "").strip()
         if not raw:
             return {}
         try:
             value = json.loads(raw)
         except json.JSONDecodeError as error:
-            raise CodeReviewWorkspaceError(f"{REPOSITORIES_ENV} must be a JSON object") from error
+            raise CodeReviewWorkspaceError(
+                f"{environment_variable} must be a JSON object"
+            ) from error
         if not isinstance(value, dict) or len(value) > 64:
-            raise CodeReviewWorkspaceError(f"{REPOSITORIES_ENV} must map repository IDs to paths")
+            raise CodeReviewWorkspaceError(
+                f"{environment_variable} must map repository IDs to paths"
+            )
         return {str(key): Path(str(path)) for key, path in value.items()}
 
     @staticmethod

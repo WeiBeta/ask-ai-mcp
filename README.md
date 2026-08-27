@@ -58,6 +58,10 @@ to DeepSeek V4 Pro, GLM-5.3, or Kimi K3. Both request the provider's highest
 `max` reasoning setting, share one UID-keyed OpenCode Go ledger, and never write
 the source repository. Direct DeepSeek routing is suspended by default.
 
+Version 0.9.1 fixes Coding repository discovery so the independent Coding MCP
+reads `ASK_AI_MCP_CODING_REPOSITORIES` rather than the Review allow-list. Both
+modules remain deny-by-default and may register multiple explicit Git roots.
+
 The first full billed lifecycle smoke passed on 2026-08-02 in one Flash call:
 the generated synthetic helper passed four isolated tests, was reviewed, and
 was registered under an exact hash with synthetic-input capability only.

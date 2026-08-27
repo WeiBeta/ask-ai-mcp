@@ -15,6 +15,7 @@ from ask_ai_mcp.code_review_workspace import (
 )
 from ask_ai_mcp.coding_models import CodingSubmitCommand
 
+CODING_REPOSITORIES_ENV = "ASK_AI_MCP_CODING_REPOSITORIES"
 MAX_FILE_BYTES = 160_000
 MAX_TOTAL_BYTES = 700_000
 _ALLOWED_SUFFIXES = frozenset(
@@ -57,7 +58,9 @@ class CodingSnapshot:
 
 class CodingSnapshotter:
     def __init__(self, catalog: CodeReviewRepositoryCatalog | None = None) -> None:
-        self.catalog = catalog or CodeReviewRepositoryCatalog()
+        self.catalog = catalog or CodeReviewRepositoryCatalog(
+            environment_variable=CODING_REPOSITORIES_ENV
+        )
 
     def capture(self, command: CodingSubmitCommand) -> CodingSnapshot:
         root = self.catalog.require(command.repository_id)

@@ -6,6 +6,8 @@ MCP profiles (Core 12, Perception 3, Subagent 15, H3 4, Full 19, independent
 Review 3, and independent Coding 3), conversation budget sessions, compact/full review,
 verified execution, and the OpenCode Go dual-layer usage ledger. Cross-client
 Phase 3 acceptance and explicit real-input-root configuration remain pending.
+Version 0.9.1 separates the Coding and Review repository environment catalogs
+while preserving explicit deny-by-default Git-root allow-lists.
 
 ## Phase 0: policy and skeleton
 
