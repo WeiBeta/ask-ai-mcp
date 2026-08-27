@@ -5,6 +5,8 @@
 适用客户端：Codex Desktop、Claude Desktop
 仓库：`xujinglong8814-WeiBeta/ask-ai-mcp`（私有）
 
+补充说明：第 4.6 节 Coding/Review 仓库白名单配置适用于 Ask AI MCP 0.9.5。
+
 ## 1. 这套系统现在能做什么
 
 Ask AI MCP 已完成双端加载、跨客户端发现、独立完整审阅、双端批准、注册和 Docker 隔离运行验收。GPT/Codex 与 Claude 现在可以在规则允许时，把重复、机械、可测试的工具制造工作交给 DeepSeek。
@@ -151,6 +153,67 @@ Codex：
 ```
 
 不同 Claude 安装渠道的路径可能不同，应以 Claude Desktop 的“Edit Config”实际打开位置为准。
+
+### 4.6 Coding/Review 仓库白名单配置
+
+Coding 和 Review 默认不能访问任意仓库。管理员须在对应 MCP 进程的客户端配置中登记
+“稳定仓库 ID → 精确 Git 仓库根目录”的 JSON 映射。这里只保存路径映射，不保存 API key。
+
+Coding 与 Review 使用两套彼此独立的环境变量：
+
+- `ASK_AI_MCP_CODING_REPOSITORIES`：供 `ask-ai-mcp-coding.exe` 使用；
+- `ASK_AI_MCP_REVIEW_REPOSITORIES`：供 `ask-ai-mcp-review.exe` 使用。
+
+若一个仓库需要同时用于 Coding 和 Review，必须分别加入两套映射。只使用其中一个模块时，
+只配置对应变量即可。新增仓库不需要修改 MCP 代码、重新打包或重新安装。
+
+Codex `%USERPROFILE%\.codex\config.toml` 示例：
+
+```toml
+[mcp_servers.ask_ai_coding.env]
+ASK_AI_MCP_CODING_REPOSITORIES = '{"ask-ai-mcp":"C:\\Dev\\ask-ai-mcp","new-project":"C:\\Dev\\new-project"}'
+
+[mcp_servers.ask_ai_review.env]
+ASK_AI_MCP_REVIEW_REPOSITORIES = '{"ask-ai-mcp":"C:\\Dev\\ask-ai-mcp","new-project":"C:\\Dev\\new-project"}'
+```
+
+若对应 `[mcp_servers.<name>.env]` 已存在，应在原表内新增或更新这一项，不要创建重复表头，
+也不要删除该 MCP 已有的账户、状态目录或其他环境变量。
+
+Claude `claude_desktop_config.json` 在对应 MCP server 的 `env` 对象中采用相同映射；由于外层
+本身也是 JSON，路径中的反斜杠需要再次转义。以下代码只演示 `env` 内容，必须合并进已有
+server 配置，不得用这个不含 `command`、`args` 的示例覆盖完整 server 条目：
+
+```json
+{
+  "mcpServers": {
+    "ask_ai_coding": {
+      "env": {
+        "ASK_AI_MCP_CODING_REPOSITORIES": "{\"ask-ai-mcp\":\"C:\\\\Dev\\\\ask-ai-mcp\",\"new-project\":\"C:\\\\Dev\\\\new-project\"}"
+      }
+    },
+    "ask_ai_review": {
+      "env": {
+        "ASK_AI_MCP_REVIEW_REPOSITORIES": "{\"ask-ai-mcp\":\"C:\\\\Dev\\\\ask-ai-mcp\",\"new-project\":\"C:\\\\Dev\\\\new-project\"}"
+      }
+    }
+  }
+}
+```
+
+配置规则：
+
+1. 仓库 ID 使用稳定、小写、可读的名称，例如 `zhongdi-qunxing`；后续提交任务时使用该 ID，
+   不向模型发送宿主绝对路径。
+2. 路径必须指向精确的 Git 仓库根目录。盘符根、整个用户目录、非 Git 目录、路径穿越及逃逸
+   symlink/junction/reparse point 会被拒绝。
+3. 修改现有 JSON 映射时要保留原有仓库项；环境变量的新值会整体替换旧映射，不会自动合并。
+4. 保存配置后必须完全重启对应 GUI，使 MCP 进程重新读取环境变量。仅关闭设置页面不够。
+5. 重启后先调用 `coding_backend_status` 或 `code_review_backend_status`，确认 `repository_ids`
+   同时包含原仓库和新增仓库；状态查询不会提交模型任务。
+
+白名单只授权 MCP 按既有安全边界读取冻结 commit、指定目标文件或冻结 diff，不授权读取未提交
+工作树、整库发送、任意路径访问、自动应用补丁或直接修改业务仓库。
 
 ## 5. 标准业务交接流程
 

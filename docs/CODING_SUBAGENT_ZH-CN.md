@@ -18,6 +18,8 @@
 不可变 `base_ref`、1–12 个目标文件、可选上下文文件、任务种类、约束和验收测试。Controller
 从 commit 对象读取源码，不读取未提交工作树；拒绝越界路径、submodule、reparse point、密钥、
 二进制、vendor、生成物和超限上下文。
+Codex/Claude 的具体白名单配置片段、转义规则和重启验收见
+[简中使用与运维说明书](USER_MANUAL_ZH-CN.md#46-codingreview-仓库白名单配置)。
 
 模型只能返回指定目标文件的完整替换内容及原始 SHA-256。Controller 重新校验文件集合与哈希，
 在专用 job 目录生成统一 diff。候选永不写入源仓库；Sol 负责审查、应用、测试和最终交付。

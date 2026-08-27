@@ -25,6 +25,8 @@ reasoning 会吞尽 8K completion 总预算，因此 GLM 固定使用 `reasoning
 `ASK_AI_MCP_REVIEW_REPOSITORIES` 是仓库 ID 到精确 Git 根目录的 JSON 映射。解析后拒绝盘符
 根、整个用户目录、非 Git 根、路径穿越、逃逸 symlink/junction/reparse point 和 submodule
 内容。patch 模式还必须位于 `ASK_AI_MCP_REVIEW_PATCH_ROOTS` 的专用小目录并匹配 SHA-256。
+Codex/Claude 的具体白名单配置片段、转义规则和重启验收见
+[简中使用与运维说明书](USER_MANUAL_ZH-CN.md#46-codingreview-仓库白名单配置)。
 
 Controller 用固定的只读 Git 子命令解析两个 commit，生成不可变 diff，排除密钥、二进制、
 vendor、生成物、超大文件和过量上下文。模型只收到仓库 ID、相对路径、最小 hunk 邻域和遗漏
