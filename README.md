@@ -101,7 +101,9 @@ stays on 0.12.3 until the isolated branch passes full offline verification,
 external frozen-diff Review, physical gray testing, and a separate user-approved
 merge/deployment decision. See `docs/FOUNDATION_0.13_ZH-CN.md`.
 
-Version 0.13.1 adds provider-neutral transport diagnostics for Coding and Review.
+Version 0.13.2 adds Grok 4.6 as an explicit advanced Coding/Review candidate,
+local high-context pricing, and advisory-only Go route ordering. Version 0.13.1
+added provider-neutral transport diagnostics for Coding and Review.
 Normal audits retain only a call-attribution UID and content-free transport metadata;
 exact request and streamed response bodies are kept separately as AES-256-GCM frames
 under a Windows Credential Manager key. Authorization material is never captured, the

@@ -70,6 +70,19 @@ from ask_ai_mcp.opencode_pricing import (
     OpenCodeGoRateBand,
     calculate_opencode_go_cost_breakdown,
 )
+from ask_ai_mcp.opencode_protocol import (
+    OPENCODE_GO_CHAT_URL as OPENCODE_GO_CHAT_URL,
+)
+from ask_ai_mcp.opencode_protocol import (
+    endpoint_for,
+    normalize_provider_response,
+    provider_protocol,
+    request_body_for,
+)
+from ask_ai_mcp.opencode_routing import (
+    OPENCODE_ROUTING_POLICY_VERSION,
+    review_route_order,
+)
 from ask_ai_mcp.provider_timeout import (
     REMOTE_ASYNC_GENERATION_TIMEOUT,
     REMOTE_HEALTH_TIMEOUT,
@@ -86,7 +99,6 @@ from ask_ai_mcp.wire_capture import (
     wire_capture_max_bytes,
 )
 
-OPENCODE_GO_CHAT_URL = "https://opencode.ai/zen/go/v1/chat/completions"
 STATE_ROOT_ENV = "ASK_AI_MCP_REVIEW_STATE_ROOT"
 PARTITION_STRATEGY_VERSION = "review-context-v1"
 CONTEXT_SAFETY_RESERVE_TOKENS = 65_536
@@ -387,6 +399,8 @@ class CodeReviewManager:
                 )
                 for model in CodeReviewModel
             ],
+            routing_policy_version=OPENCODE_ROUTING_POLICY_VERSION,
+            route_order=review_route_order(available=available, ledger=account_ledger),
             account_ledger=account_ledger,
             monthly_report=self.store.monthly_report(),
             catalog_version=OPENCODE_GO_PRICING_VERSION,
@@ -834,7 +848,7 @@ class CodeReviewManager:
                     model=model.value,
                     provider=ModelProvider.OPENCODE,
                     provider_model_id=model.value,
-                    provider_runtime="chat_completions",
+                    provider_runtime=provider_protocol(model).value,
                     provider_account=str(row["account_uid"] or row["account_alias"]),
                     provider_subscription_id=str(row["subscription_id"]),
                     thinking_enabled=True,
@@ -846,6 +860,8 @@ class CodeReviewManager:
                         if calculated.band is OpenCodeGoRateBand.PEAK
                         else PricingBand.OFF_PEAK
                         if calculated.band is OpenCodeGoRateBand.OFF_PEAK
+                        else PricingBand.HIGH_CONTEXT
+                        if calculated.band is OpenCodeGoRateBand.HIGH_CONTEXT
                         else PricingBand.STANDARD
                     ),
                     pricing_schedule_version=OPENCODE_GO_PRICING_VERSION,
@@ -1111,7 +1127,7 @@ class CodeReviewManager:
                 model=command.model.value,
                 provider=ModelProvider.OPENCODE,
                 provider_model_id=command.model.value,
-                provider_runtime="chat_completions",
+                provider_runtime=provider_protocol(OpenCodeGoModel(command.model.value)).value,
                 provider_account=self.account_uid,
                 provider_subscription_id=self.subscription_id,
                 thinking_enabled=True,
@@ -1250,6 +1266,13 @@ class CodeReviewManager:
             "max_tokens": max_output_tokens,
             "response_format": {"type": "json_object"},
         }
+        model = OpenCodeGoModel(command.model.value)
+        body = request_body_for(
+            model,
+            body,
+            schema=CodeReviewPayload.model_json_schema(),
+            schema_name="code_review_findings",
+        )
         request_bytes = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         capture = (
             EncryptedWireCapture(
@@ -1270,7 +1293,7 @@ class CodeReviewManager:
                 self._client() as client,
                 client.stream(
                     "POST",
-                    OPENCODE_GO_CHAT_URL,
+                    endpoint_for(model),
                     headers=self._headers(),
                     content=request_bytes,
                 ) as response,
@@ -1297,7 +1320,7 @@ class CodeReviewManager:
         latency_ms = max(0, round((perf_counter() - started) * 1_000))
         if not isinstance(data, dict):
             raise ValueError("OpenCode Go returned a non-object review response")
-        return data, priced_at, latency_ms
+        return normalize_provider_response(model, data), priced_at, latency_ms
 
     @staticmethod
     def _prompt(profile: CodeReviewProfile, snapshot: CodeReviewSnapshot) -> str:
@@ -1555,6 +1578,8 @@ class CodeReviewManager:
                 if cost.band is OpenCodeGoRateBand.PEAK
                 else PricingBand.OFF_PEAK.value
                 if cost.band is OpenCodeGoRateBand.OFF_PEAK
+                else PricingBand.HIGH_CONTEXT.value
+                if cost.band is OpenCodeGoRateBand.HIGH_CONTEXT
                 else PricingBand.STANDARD.value
             ),
         }

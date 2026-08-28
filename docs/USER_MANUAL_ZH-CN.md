@@ -140,9 +140,16 @@ Authorization、Cookie、API key 不会写入。每个模块默认按完整调�
 `ASK_AI_MCP_WIRE_CAPTURE_MAX_BYTES` 下调字节上限。该目录不得同步到云盘，也不得作为普通附件
 外发；项目没有提供 MCP 解密工具。
 
+0.13.2 起，Coding/Review 可显式选择 `grok-4.6`，backend status 会本地返回建议路由顺序，
+账本会按 200K 输入 token 阈值选择 Grok 价格档。作者已在账户层接受 OpenCode Go 对同类模型的
+数据留存或模型改进条款，不设置逐仓库二次留存开关；原有仓库白名单、冻结输入、密钥排除、
+最小范围和禁止自动重试门禁保持不变。
+
 ### 4.4 凭据位置
 
-DeepSeek API 密钥保存在 Windows Credential Manager，不在仓库、配置文件或交接目录中。迁移到另一台物理机时应在目标机重新录入，不要导出到普通文本文件。
+OpenCode Go 密钥按 API 可见账户 UID 保存在 Windows Credential Manager；历史 DeepSeek 凭据
+也不进入仓库、配置文件或交接目录。迁移到另一台物理机时应在目标机重新录入，不要导出到
+普通文本文件。
 
 ### 4.5 双端配置位置
 

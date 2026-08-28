@@ -562,6 +562,7 @@ def test_backend_reports_model_specific_review_policies(tmp_path: Path) -> None:
     assert policies[CodeReviewModel.GLM_5_3] == ("max", 131_072)
     assert policies[CodeReviewModel.KIMI_K3] == ("max", 131_072)
     assert policies[CodeReviewModel.DEEPSEEK_V4_PRO] == ("max", 131_072)
+    assert policies[CodeReviewModel.GROK_4_6] == ("max", 131_072)
     assert status.provider_timeout.policy_name == "remote_async_generation_v1"
     assert status.provider_timeout.read_seconds == 7_200
     assert status.patch_roots_configured is False
@@ -1050,7 +1051,7 @@ def test_review_preflight_uses_context_boundary_not_old_reasoning_caps() -> None
         plan = CodeReviewManager._preflight_partition_plan(command, oversized)
         assert plan is not None
         assert plan.max_output_tokens == 131_072
-        assert plan.context_tokens == 1_000_000
+        assert plan.context_tokens == (500_000 if model is CodeReviewModel.GROK_4_6 else 1_000_000)
         assert plan.advisory_only is True
         assert plan.shards[0].oversized_single_file is True
 

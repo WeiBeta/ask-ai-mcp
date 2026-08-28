@@ -44,6 +44,19 @@ from ask_ai_mcp.opencode_pricing import (
     OpenCodeGoRateBand,
     calculate_opencode_go_cost_breakdown,
 )
+from ask_ai_mcp.opencode_protocol import (
+    OPENCODE_GO_CHAT_URL as OPENCODE_GO_CHAT_URL,
+)
+from ask_ai_mcp.opencode_protocol import (
+    endpoint_for,
+    normalize_provider_response,
+    provider_protocol,
+    request_body_for,
+)
+from ask_ai_mcp.opencode_routing import (
+    OPENCODE_ROUTING_POLICY_VERSION,
+    coding_route_orders,
+)
 from ask_ai_mcp.provider_timeout import (
     REMOTE_ASYNC_GENERATION_TIMEOUT,
     REMOTE_HEALTH_TIMEOUT,
@@ -60,7 +73,6 @@ from ask_ai_mcp.wire_capture import (
     wire_capture_max_bytes,
 )
 
-OPENCODE_GO_CHAT_URL = "https://opencode.ai/zen/go/v1/chat/completions"
 STATE_ROOT_ENV = "ASK_AI_MCP_CODING_STATE_ROOT"
 REASONING_EFFORT = "max"
 _HOST_PATH = re.compile(r"(?i)(?:[A-Z]:[\\/]+(?:Users|Dev|AI)[\\/])")
@@ -217,6 +229,9 @@ class CodingManager:
                 None,
             )
         configured = bool(self.account and credentials_ready and repository_ids)
+        standard_route_order, advanced_route_order = coding_route_orders(
+            available=available, ledger=ledger
+        )
         return CodingBackendStatus(
             configured=configured,
             detail="; ".join(details) if details else "bounded coding backend is ready",
@@ -237,6 +252,9 @@ class CodingManager:
                 )
                 for model in CodingModel
             ],
+            routing_policy_version=OPENCODE_ROUTING_POLICY_VERSION,
+            standard_route_order=standard_route_order,
+            advanced_route_order=advanced_route_order,
             account_ledger=ledger,
             catalog_version=OPENCODE_GO_PRICING_VERSION,
             catalog_source_url=OPENCODE_GO_PRICING_SOURCE_URL,
@@ -469,7 +487,7 @@ class CodingManager:
                 model=command.model.value,
                 provider=ModelProvider.OPENCODE,
                 provider_model_id=command.model.value,
-                provider_runtime="chat_completions",
+                provider_runtime=provider_protocol(OpenCodeGoModel(command.model.value)).value,
                 provider_account=self.account.uid if self.account else None,
                 provider_subscription_id=self.account.subscription_id if self.account else None,
                 thinking_enabled=True,
@@ -568,6 +586,13 @@ class CodingManager:
             ).max_output_tokens,
             "response_format": {"type": "json_object"},
         }
+        model = OpenCodeGoModel(command.model.value)
+        body = request_body_for(
+            model,
+            body,
+            schema=CodingCandidatePayload.model_json_schema(),
+            schema_name="coding_candidate",
+        )
         request_bytes = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         capture = (
             EncryptedWireCapture(
@@ -586,7 +611,7 @@ class CodingManager:
                 self._client() as client,
                 client.stream(
                     "POST",
-                    OPENCODE_GO_CHAT_URL,
+                    endpoint_for(model),
                     headers=self._headers(),
                     content=request_bytes,
                 ) as response,
@@ -612,7 +637,7 @@ class CodingManager:
             raise
         if not isinstance(data, dict):
             raise ValueError("OpenCode Go returned a non-object coding response")
-        return data
+        return normalize_provider_response(model, data)
 
     @staticmethod
     def _prompt(command: CodingSubmitCommand, snapshot: CodingSnapshot) -> str:
@@ -750,6 +775,8 @@ class CodingManager:
                 if cost.band is OpenCodeGoRateBand.PEAK
                 else PricingBand.OFF_PEAK
                 if cost.band is OpenCodeGoRateBand.OFF_PEAK
+                else PricingBand.HIGH_CONTEXT
+                if cost.band is OpenCodeGoRateBand.HIGH_CONTEXT
                 else PricingBand.STANDARD
             ),
         }

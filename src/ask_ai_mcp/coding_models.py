@@ -25,6 +25,7 @@ class CodingModel(StrEnum):
     DEEPSEEK_V4_PRO = "deepseek-v4-pro"
     GLM_5_3 = "glm-5.3"
     KIMI_K3 = "kimi-k3"
+    GROK_4_6 = "grok-4.6"
 
 
 DEFAULT_CODING_MODELS = (
@@ -35,6 +36,7 @@ ADVANCED_CODING_MODELS = (
     CodingModel.DEEPSEEK_V4_PRO,
     CodingModel.GLM_5_3,
     CodingModel.KIMI_K3,
+    CodingModel.GROK_4_6,
 )
 
 
@@ -206,7 +208,10 @@ class CodingBackendStatus(StrictModel):
     account_uid: str | None = Field(default=None, max_length=64)
     account_alias: str | None = Field(default=None, max_length=64)
     remote_models_checked: bool
-    models: list[CodingModelAvailability] = Field(default_factory=list, max_length=5)
+    models: list[CodingModelAvailability] = Field(default_factory=list, max_length=6)
+    routing_policy_version: str = Field(min_length=1, max_length=64)
+    standard_route_order: list[CodingModel] = Field(default_factory=list, max_length=6)
+    advanced_route_order: list[CodingModel] = Field(default_factory=list, max_length=6)
     account_ledger: OpenCodeGoAccountUsage | None = None
     catalog_version: str
     catalog_source_url: str

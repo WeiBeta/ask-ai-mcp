@@ -9,11 +9,16 @@
 - `coding_status`：读取任务状态和分页候选 diff。
 
 默认候选模型为 `deepseek-v4-flash` 与 `glm-5.3-flash`。复杂 Coding 任务可由 Controller
-显式选择 `deepseek-v4-pro`、`glm-5.3` 或 `kimi-k3` 作为高级候选。五条固定路由均请求
+显式选择 `deepseek-v4-pro`、`glm-5.3`、`kimi-k3` 或 `grok-4.6` 作为高级候选。六条固定路由均请求
 `reasoning_effort=max` 与 131,072 token 总生成上限。高级候选不是自动 fallback；任一路由失败
 都不会触发重试或切换模型。实际策略由 backend status、job manifest 和共享 usage 账本共同记录，
 后续按模型日志收敛。服务端不接受 generic prompt、任意模型、任意 URL、Shell、测试命令、
 工作树写入、应用补丁、commit、push、重试次数或切换账户参数。
+
+backend status 同时返回本地 `opencode-go-routing-v1` 建议顺序：DeepSeek 谷价时普通/高级任务
+分别优先 Flash/Pro，峰价时分别优先 GLM Flash/GLM；Kimi K3 与 Grok 4.6 位于高级后备序列。
+建议会过滤远端不可用或本地账本有效余额为零的模型，但只供 Controller 选择，不会自动提交、
+重试、分片或换模型。
 
 0.12.2 起，Coding 与 Review、远程 Perception 共用异步推理超时策略：连接/连接池 30 秒、
 写入 10 分钟、读取 2 小时。`coding_status` 的 `running` 只确认本地 worker 未结束；OpenCode

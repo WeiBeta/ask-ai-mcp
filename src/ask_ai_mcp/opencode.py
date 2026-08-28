@@ -17,6 +17,7 @@ from ask_ai_mcp.models import DeepSeekModel, ModelProvider, ToolBuildSpec, Usage
 from ask_ai_mcp.opencode_account import OpenCodeAccount, load_opencode_account
 from ask_ai_mcp.opencode_generation import opencode_generation_policy
 from ask_ai_mcp.opencode_pricing import (
+    OPENCODE_GO_PRICES,
     OPENCODE_GO_PRICING_VERSION,
     OpenCodeGoModel,
     OpenCodeGoProtocol,
@@ -131,8 +132,11 @@ class OpenCodeGoClient(DeepSeekClient):
         return self._initial_model(spec).value
 
     def _provider_runtime(self, request_body: dict[str, Any] | None = None) -> str:
-        if request_body and request_body.get("model") == OpenCodeGoModel.GPT_5_6_LUNA.value:
-            return OpenCodeGoProtocol.RESPONSES.value
+        if request_body and isinstance(request_body.get("model"), str):
+            try:
+                return OPENCODE_GO_PRICES[OpenCodeGoModel(request_body["model"])].protocol.value
+            except ValueError:
+                pass
         return OpenCodeGoProtocol.CHAT_COMPLETIONS.value
 
     def _request(self, request_body: dict[str, Any]) -> dict[str, Any]:
@@ -146,7 +150,8 @@ class OpenCodeGoClient(DeepSeekClient):
         )
         if reason:
             raise ValueError(reason)
-        if model_id == OpenCodeGoModel.GPT_5_6_LUNA.value:
+        model = OpenCodeGoModel(model_id)
+        if OPENCODE_GO_PRICES[model].protocol is OpenCodeGoProtocol.RESPONSES:
             endpoint = OPENCODE_GO_RESPONSES_URL
             body = self._responses_body(body, schema)
         else:
@@ -200,7 +205,7 @@ class OpenCodeGoClient(DeepSeekClient):
     def _responses_body(body: dict[str, Any], schema: object) -> dict[str, Any]:
         if not isinstance(schema, dict):
             raise ValueError("Responses request is missing its bounded JSON schema")
-        effort = "high" if body.get("reasoning_effort") == "high" else "none"
+        effort = str(body.get("reasoning_effort", "none"))
         return {
             "model": body["model"],
             "input": body["messages"],
@@ -296,11 +301,7 @@ class OpenCodeGoClient(DeepSeekClient):
                 model=spec.model,
                 provider=self.provider,
                 provider_model_id=model.value,
-                provider_runtime=(
-                    OpenCodeGoProtocol.RESPONSES.value
-                    if model is OpenCodeGoModel.GPT_5_6_LUNA
-                    else OpenCodeGoProtocol.CHAT_COMPLETIONS.value
-                ),
+                provider_runtime=OPENCODE_GO_PRICES[model].protocol.value,
                 provider_account=self.account,
                 provider_subscription_id=self.subscription_id,
                 thinking_enabled=thinking_enabled,
@@ -320,6 +321,8 @@ class OpenCodeGoClient(DeepSeekClient):
                     if cost.band is OpenCodeGoRateBand.PEAK
                     else "off_peak"
                     if cost.band is OpenCodeGoRateBand.OFF_PEAK
+                    else "high_context"
+                    if cost.band is OpenCodeGoRateBand.HIGH_CONTEXT
                     else "standard"
                 ),
                 pricing_schedule_version=OPENCODE_GO_PRICING_VERSION,

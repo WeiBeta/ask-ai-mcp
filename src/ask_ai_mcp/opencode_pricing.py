@@ -15,6 +15,7 @@ class OpenCodeGoModel(StrEnum):
     DSV4_PRO = "deepseek-v4-pro"
     GPT_5_6_LUNA = "gpt-5.6-luna"
     QWEN_3_8_MAX = "qwen3.8-max"
+    GROK_4_6 = "grok-4.6"
 
 
 class OpenCodeGoProtocol(StrEnum):
@@ -27,6 +28,7 @@ class OpenCodeGoRateBand(StrEnum):
     STANDARD = "standard"
     OFF_PEAK = "off_peak"
     PEAK = "peak"
+    HIGH_CONTEXT = "high_context"
 
 
 @dataclass(frozen=True)
@@ -43,6 +45,8 @@ class OpenCodeGoPrice:
     standard_or_off_peak: OpenCodeGoTokenRates
     included_limit_usd: float
     peak: OpenCodeGoTokenRates | None = None
+    high_context: OpenCodeGoTokenRates | None = None
+    high_context_threshold_tokens: int | None = None
 
 
 @dataclass(frozen=True)
@@ -66,8 +70,8 @@ class OpenCodeGoCostBreakdown:
     estimated: bool = True
 
 
-OPENCODE_GO_PRICING_VERSION = "opencode-go-2026-08-27"
-OPENCODE_GO_PRICING_EFFECTIVE_AT = datetime(2026, 8, 27, tzinfo=UTC)
+OPENCODE_GO_PRICING_VERSION = "opencode-go-2026-08-28"
+OPENCODE_GO_PRICING_EFFECTIVE_AT = datetime(2026, 8, 28, tzinfo=UTC)
 OPENCODE_GO_PRICING_SOURCE_URL = "https://opencode.ai/docs/go/"
 OPENCODE_GO_MODELS_URL = "https://opencode.ai/zen/go/v1/models"
 OPENCODE_GO_LIMITS_USD = {"rolling_5h": 12.0, "rolling_7d": 30.0, "rolling_30d": 60.0}
@@ -125,6 +129,13 @@ OPENCODE_GO_PRICES = {
         _rates(2.0, 6.0, 0.25, 2.5),
         included_limit_usd=15.0,
     ),
+    OpenCodeGoModel.GROK_4_6: OpenCodeGoPrice(
+        OpenCodeGoProtocol.RESPONSES,
+        _rates(2.0, 6.0, 0.5),
+        included_limit_usd=15.0,
+        high_context=_rates(4.0, 12.0, 1.0),
+        high_context_threshold_tokens=200_000,
+    ),
 }
 
 
@@ -139,9 +150,15 @@ def is_deepseek_peak(at: datetime) -> bool:
 
 
 def rates_for(
-    model: OpenCodeGoModel, *, priced_at: datetime
+    model: OpenCodeGoModel, *, priced_at: datetime, input_tokens: int = 0
 ) -> tuple[OpenCodeGoRateBand, OpenCodeGoTokenRates]:
     price = OPENCODE_GO_PRICES[model]
+    if (
+        price.high_context is not None
+        and price.high_context_threshold_tokens is not None
+        and input_tokens > price.high_context_threshold_tokens
+    ):
+        return OpenCodeGoRateBand.HIGH_CONTEXT, price.high_context
     if price.peak is not None:
         if is_deepseek_peak(priced_at):
             return OpenCodeGoRateBand.PEAK, price.peak
@@ -164,7 +181,7 @@ def calculate_opencode_go_cost_breakdown(
     if any(value < 0 for value in values):
         raise ValueError("token counts cannot be negative")
     instant = priced_at or datetime.now(UTC)
-    band, rates = rates_for(model, priced_at=instant)
+    band, rates = rates_for(model, priced_at=instant, input_tokens=input_tokens)
     uncached_input = max(0, input_tokens - cache_read_tokens - cache_write_tokens)
     input_cost = uncached_input * rates.input_usd_per_million / 1_000_000
     output_cost = output_tokens * rates.output_usd_per_million / 1_000_000

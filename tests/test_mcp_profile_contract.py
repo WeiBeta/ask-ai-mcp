@@ -80,11 +80,11 @@ EXPECTED_PROFILE_CONTRACTS = {
             "code_review_submit",
             "code_review_status",
         ],
-        "489cb3674598886c0c0e98c36f2e0d4f03ea97b00a69dca57199ce2ec2f150ab",
+        "3498e855eeace39488d659b6a8c88ca0d8144938e1611d4185f62964c9c9e8cc",
     ),
     "coding": (
         ["coding_backend_status", "coding_submit", "coding_status"],
-        "e076116d18ae02f831073a3c9f42329671ea7de2c68ff7c9c3dac28385d7846a",
+        "a8320efe820c24147d3570273891cf773ea318c1eef22d564fb1482697a04e5f",
     ),
 }
 
@@ -98,7 +98,7 @@ def _surface(server_instance):
     return [tool.name for tool in tools], digest
 
 
-def test_profile_tool_names_and_parameter_schemas_match_0123() -> None:
+def test_profile_tool_names_and_parameter_schemas_match_0132() -> None:
     servers = {
         "full": server.mcp,
         "core": server.core_mcp,

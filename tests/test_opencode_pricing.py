@@ -22,9 +22,9 @@ from ask_ai_mcp.opencode_pricing import (
 from ask_ai_mcp.usage import UsageStore
 
 
-def test_catalog_matches_2026_08_27_official_fixed_values() -> None:
-    assert OPENCODE_GO_PRICING_VERSION == "opencode-go-2026-08-27"
-    assert datetime(2026, 8, 27, tzinfo=UTC) == OPENCODE_GO_PRICING_EFFECTIVE_AT
+def test_catalog_matches_2026_08_28_official_fixed_values() -> None:
+    assert OPENCODE_GO_PRICING_VERSION == "opencode-go-2026-08-28"
+    assert datetime(2026, 8, 28, tzinfo=UTC) == OPENCODE_GO_PRICING_EFFECTIVE_AT
     assert OPENCODE_GO_PRICING_SOURCE_URL == "https://opencode.ai/docs/go/"
     expected = {
         OpenCodeGoModel.GLM_5_3_FLASH: (0.15, 0.50, 0.03, 15.0),
@@ -32,6 +32,7 @@ def test_catalog_matches_2026_08_27_official_fixed_values() -> None:
         OpenCodeGoModel.KIMI_K3: (3.00, 15.00, 0.30, 15.0),
         OpenCodeGoModel.DSV4_PRO: (0.66, 1.98, 0.022, 15.0),
         OpenCodeGoModel.DSV4_FLASH: (0.22, 0.66, 0.007, 30.0),
+        OpenCodeGoModel.GROK_4_6: (2.00, 6.00, 0.50, 15.0),
     }
     for model, values in expected.items():
         price = OPENCODE_GO_PRICES[model]
@@ -43,6 +44,19 @@ def test_catalog_matches_2026_08_27_official_fixed_values() -> None:
             price.included_limit_usd,
         ) == values
         assert rates.cache_write_usd_per_million is None
+
+
+def test_grok_uses_high_context_prices_only_above_200k_input_tokens() -> None:
+    instant = datetime(2026, 8, 28, tzinfo=UTC)
+    standard_band, standard = rates_for(
+        OpenCodeGoModel.GROK_4_6, priced_at=instant, input_tokens=200_000
+    )
+    high_band, high = rates_for(OpenCodeGoModel.GROK_4_6, priced_at=instant, input_tokens=200_001)
+    assert standard_band is OpenCodeGoRateBand.STANDARD
+    assert high_band is OpenCodeGoRateBand.HIGH_CONTEXT
+    assert standard.input_usd_per_million == 2.0
+    assert high.input_usd_per_million == 4.0
+    assert high.output_usd_per_million == 12.0
 
 
 @pytest.mark.parametrize(

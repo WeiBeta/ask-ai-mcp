@@ -38,6 +38,9 @@ OPENCODE_GENERATION_POLICIES = {
     OpenCodeGoModel.QWEN_3_8_MAX: OpenCodeGenerationPolicy(
         reasoning_effort="none", max_output_tokens=32_768
     ),
+    OpenCodeGoModel.GROK_4_6: OpenCodeGenerationPolicy(
+        reasoning_effort="max", max_output_tokens=WIDE_MAX_OUTPUT_TOKENS, context_tokens=500_000
+    ),
 }
 
 

@@ -27,6 +27,7 @@ from ask_ai_mcp.coding_models import (
 )
 from ask_ai_mcp.coding_workspace import CodingSnapshotter
 from ask_ai_mcp.opencode_account import OpenCodeAccount
+from ask_ai_mcp.opencode_protocol import OPENCODE_GO_RESPONSES_URL
 from ask_ai_mcp.usage import UsageStore
 
 
@@ -76,7 +77,7 @@ def test_coding_mcp_is_three_tools_and_not_part_of_full() -> None:
     assert coding.isdisjoint(full)
 
 
-def test_coding_schema_has_two_default_and_three_advanced_fixed_models() -> None:
+def test_coding_schema_has_two_default_and_four_advanced_fixed_models() -> None:
     assert DEFAULT_CODING_MODELS == (
         CodingModel.DEEPSEEK_V4_FLASH,
         CodingModel.GLM_5_3_FLASH,
@@ -85,6 +86,7 @@ def test_coding_schema_has_two_default_and_three_advanced_fixed_models() -> None
         CodingModel.DEEPSEEK_V4_PRO,
         CodingModel.GLM_5_3,
         CodingModel.KIMI_K3,
+        CodingModel.GROK_4_6,
     )
     schema = CodingSubmitCommand.model_json_schema()
     assert schema["$defs"]["CodingModel"]["enum"] == [model.value for model in CodingModel]
@@ -128,13 +130,9 @@ def test_candidate_uses_fixed_model_max_reasoning_and_returns_external_diff(
     seen: list[dict[str, object]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        assert str(request.url) == OPENCODE_GO_CHAT_URL
         body = json.loads(request.content)
         seen.append(body)
         assert body["model"] == model.value
-        assert body["reasoning_effort"] == "max"
-        assert body["max_tokens"] == 131_072
-        assert str(root) not in body["messages"][1]["content"]
         payload = {
             "summary": "Increment by two.",
             "changes": [
@@ -148,6 +146,29 @@ def test_candidate_uses_fixed_model_max_reasoning_and_returns_external_diff(
             "risks": ["No overflow behavior change."],
             "truncated": False,
         }
+        if model is CodingModel.GROK_4_6:
+            assert str(request.url) == OPENCODE_GO_RESPONSES_URL
+            assert body["reasoning"] == {"effort": "max"}
+            assert body["max_output_tokens"] == 131_072
+            assert str(root) not in body["input"][1]["content"]
+            assert body["text"]["format"]["strict"] is True
+            return httpx.Response(
+                200,
+                json={
+                    "status": "completed",
+                    "output_text": json.dumps(payload),
+                    "usage": {
+                        "input_tokens": 1_000,
+                        "input_tokens_details": {"cached_tokens": 500},
+                        "output_tokens": 200,
+                        "output_tokens_details": {"reasoning_tokens": 80},
+                    },
+                },
+            )
+        assert str(request.url) == OPENCODE_GO_CHAT_URL
+        assert body["reasoning_effort"] == "max"
+        assert body["max_tokens"] == 131_072
+        assert str(root) not in body["messages"][1]["content"]
         return httpx.Response(
             200,
             json={
@@ -211,7 +232,7 @@ def test_candidate_uses_fixed_model_max_reasoning_and_returns_external_diff(
     assert summary.reasoning_tokens == 80
 
 
-def test_coding_backend_reports_live_availability_for_all_five_models(tmp_path: Path) -> None:
+def test_coding_backend_reports_live_availability_for_all_six_models(tmp_path: Path) -> None:
     root, _commit = _repository(tmp_path)
     calls = 0
 

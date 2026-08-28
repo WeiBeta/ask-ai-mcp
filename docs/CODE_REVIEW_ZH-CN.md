@@ -5,12 +5,12 @@
 `ask-ai-mcp-review.exe` 是可选的只读 reviewer，不是 coding agent。它不属于 Core、
 Subagent、Perception、H3 或 Full，普通开发保持关闭。固定工具只有：
 
-- `code_review_backend_status`：本地配置、三个固定模型的远端可用性、双层账本与月报；
+- `code_review_backend_status`：本地配置、四个固定模型的远端可用性、双层账本与月报；
 - `code_review_stage_patch`：免费校验并原子封存 bounded patch 与内容无关 receipt；
 - `code_review_submit`：提交冻结 refs 或同时固定 patch/receipt 哈希的 staged patch；
 - `code_review_status`：分页读结果，并记录盲审裁决或延迟 outcome。
 
-固定模型为 `glm-5.3`、`kimi-k3`、`deepseek-v4-pro`。三条 Review 路由统一请求
+固定模型为 `glm-5.3`、`kimi-k3`、`deepseek-v4-pro`、`grok-4.6`。四条 Review 路由统一请求
 `reasoning_effort=max` 与 131,072 token 总生成上限。该上限同时容纳 reasoning 和可见 JSON，
 不是上下文窗口；宽松基线用于预付额度测试期，后续根据分模型日志中的 reasoning、可见输出、
 finish reason 与成本分布再收敛。固定 profile 为 `general`、`security`、
@@ -70,12 +70,18 @@ Authorization 与 Cookie 即使在密文仓也不保存。
 
 ## OpenCode Go 双层账本
 
-价格目录固定为 `opencode-go-2026-08-27`，带 `effective_at` 和官方 source URL；远端
+价格目录固定为 `opencode-go-2026-08-28`，带 `effective_at` 和官方 source URL；远端
 `/zen/go/v1/models` 只用于健康/可用性检查，不能静默改价或扩张 reviewer 模型枚举。
 
 官方 Go 是双层限制：订阅共享滚动 5 小时 `$12`、每周 `$30`、每月 `$60`；模型月度 included
 usage 上限分别为 GLM `$15`、Kimi `$15`、DeepSeek Pro `$15`。Coding 模块另用 GLM Flash
-`$15` 与 DeepSeek Flash `$30`，但五个模型仍共享同一订阅的 `$60` 月窗口。
+`$15` 与 DeepSeek Flash `$30`；Grok 4.6 的 included usage 上限为 `$15`。所有模型仍共享同一
+订阅的 `$60` 月窗口。Grok 在不超过 200K 输入时按 `$2/M` input、`$6/M` output、`$0.5/M`
+cache-read 估算，超过 200K 后三项价格加倍；档位判断和账本归因由 MCP 本地完成。
+
+作者已明确接受 OpenCode Go 上可能要求供应商留存调用数据或用于模型改进的模型条款，因此不设
+逐仓库二次留存授权。该授权不放宽仓库白名单、冻结 refs/patch、最小范围、密钥排除或禁止自动
+重试等门禁；调用前仍由 Controller 根据任务敏感度与当前官方数据政策决定是否选用该模型。
 
 DeepSeek 仅在周一至周五 UTC `01:00–04:00`、`06:00–10:00` 使用 peak 费率；周末全天
 off-peak，边界采用左闭右开。

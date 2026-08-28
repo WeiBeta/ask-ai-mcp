@@ -55,6 +55,7 @@ class PricingBand(StrEnum):
     STANDARD = "standard"
     OFF_PEAK = "off_peak"
     PEAK = "peak"
+    HIGH_CONTEXT = "high_context"
 
 
 class UsageCostSource(StrEnum):
