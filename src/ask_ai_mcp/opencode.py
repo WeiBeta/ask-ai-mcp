@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 
 from ask_ai_mcp import __version__
+from ask_ai_mcp.accounting import AccountingServices
 from ask_ai_mcp.credentials import OpenCodeCredentialStore
 from ask_ai_mcp.deepseek import STATIC_REPAIR_MAX_OUTPUT_TOKENS, DeepSeekClient
 from ask_ai_mcp.models import DeepSeekModel, ModelProvider, ToolBuildSpec, UsageEvent
@@ -43,6 +44,7 @@ class OpenCodeGoClient(DeepSeekClient):
         account: OpenCodeAccount | None = None,
         api_key_provider=None,
         usage_store: UsageStore | None = None,
+        accounting: AccountingServices | None = None,
         transport: httpx.BaseTransport | None = None,
         timeout_seconds: float | None = None,
         timeout_policy: ProviderTimeoutPolicy | None = None,
@@ -59,6 +61,7 @@ class OpenCodeGoClient(DeepSeekClient):
         super().__init__(
             api_key_provider=api_key_provider or credential_store.get_api_key,
             usage_store=usage_store,
+            accounting=accounting,
             transport=transport,
             timeout_seconds=timeout_seconds,
             timeout_policy=timeout_policy,
@@ -136,8 +139,10 @@ class OpenCodeGoClient(DeepSeekClient):
         body = dict(request_body)
         schema = body.pop("_json_schema", None)
         model_id = str(body["model"])
-        reason = self.usage_store.opencode_limit_reason(
-            self.account, model_id, self.subscription_id
+        reason = self.accounting.entitlements.denial_reason(
+            account=self.account,
+            model_id=model_id,
+            subscription_id=self.subscription_id,
         )
         if reason:
             raise ValueError(reason)
@@ -284,7 +289,7 @@ class OpenCodeGoClient(DeepSeekClient):
         )
         if cost.total_cost_usd is None:
             raise ValueError("OpenCode Go usage included an unsupported priced component")
-        self.usage_store.record(
+        self.accounting.ledger.append(
             UsageEvent(
                 client_name=client_name,
                 task_kind=task_kind,

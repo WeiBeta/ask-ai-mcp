@@ -211,7 +211,9 @@ def get_review_repository() -> CandidateReviewRepository:
 @lru_cache(maxsize=1)
 def get_lifecycle() -> CandidateLifecycle:
     return CandidateLifecycle(
-        client=create_toolsmith_worker(get_toolsmith_provider()),
+        client=create_toolsmith_worker(
+            get_toolsmith_provider(), accounting=get_accounting_services()
+        ),
         workspace=get_workspace(),
         review_repository=get_review_repository(),
         audit_store=get_usage_store(),

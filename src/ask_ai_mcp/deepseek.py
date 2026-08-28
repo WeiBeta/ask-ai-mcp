@@ -12,6 +12,7 @@ import httpx
 from pydantic import ValidationError
 
 from ask_ai_mcp import __version__
+from ask_ai_mcp.accounting import AccountingServices
 from ask_ai_mcp.candidate_patch import CandidatePatchError, apply_candidate_patch
 from ask_ai_mcp.credentials import CredentialStore
 from ask_ai_mcp.hashing import candidate_payload_sha256, sha256_text
@@ -172,6 +173,7 @@ class DeepSeekClient:
         *,
         api_key_provider: Callable[[], str] | None = None,
         usage_store: UsageStore | None = None,
+        accounting: AccountingServices | None = None,
         transport: httpx.BaseTransport | None = None,
         timeout_seconds: float | None = None,
         timeout_policy: ProviderTimeoutPolicy | None = None,
@@ -179,7 +181,8 @@ class DeepSeekClient:
         peak_pricing_effective_at: datetime | None = None,
     ) -> None:
         self.api_key_provider = api_key_provider or CredentialStore().get_api_key
-        self.usage_store = usage_store or UsageStore()
+        self.accounting = accounting or AccountingServices.from_store(usage_store)
+        self.usage_store = self.accounting.store
         self.transport = transport
         self.timeout_policy = timeout_policy or (
             timeout_policy_with_read_seconds(REMOTE_SYNC_GENERATION_TIMEOUT, timeout_seconds)
@@ -683,7 +686,7 @@ class DeepSeekClient:
             priced_at=priced_at,
             peak_pricing_effective_at=self.peak_pricing_effective_at,
         )
-        self.usage_store.record(
+        self.accounting.ledger.append(
             UsageEvent(
                 client_name=client_name,
                 task_kind=task_kind,

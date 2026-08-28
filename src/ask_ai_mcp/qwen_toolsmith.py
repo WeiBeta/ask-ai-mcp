@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from time import perf_counter
 from typing import Any
 
+from ask_ai_mcp.accounting import AccountingServices
 from ask_ai_mcp.deepseek import (
     BUILD_INSTRUCTION,
     REGENERATION_INSTRUCTION,
@@ -50,11 +51,13 @@ class LocalQwenToolsmithClient(DeepSeekClient):
         *,
         qwen_client: QwenOpenAIClient | None = None,
         usage_store: UsageStore | None = None,
+        accounting: AccountingServices | None = None,
     ) -> None:
         self.qwen = qwen_client or QwenOpenAIClient()
         super().__init__(
             api_key_provider=lambda: "local",
             usage_store=usage_store,
+            accounting=accounting,
             timeout_seconds=self.qwen.config.text_timeout_seconds,
         )
 
@@ -252,7 +255,7 @@ class LocalQwenToolsmithClient(DeepSeekClient):
         request_chars: int = 0,
         response_chars: int = 0,
     ) -> None:
-        self.usage_store.record(
+        self.accounting.ledger.append(
             UsageEvent(
                 client_name=client_name,
                 task_kind=task_kind,

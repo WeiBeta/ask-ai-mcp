@@ -6,6 +6,7 @@ import os
 from enum import StrEnum
 from typing import Protocol
 
+from ask_ai_mcp.accounting import AccountingServices
 from ask_ai_mcp.deepseek import DeepSeekClient
 from ask_ai_mcp.models import ModelProvider, StrictModel
 from ask_ai_mcp.opencode import OpenCodeGoClient
@@ -67,14 +68,16 @@ def load_worker_route() -> WorkerRouteConfiguration:
 
 def create_toolsmith_worker(
     configuration: WorkerRouteConfiguration | None = None,
+    *,
+    accounting: AccountingServices | None = None,
 ):
     selected = configuration or load_worker_route()
     if selected.provider is ModelProvider.DEEPSEEK:
-        return DeepSeekClient()
+        return DeepSeekClient(accounting=accounting)
     if selected.provider is ModelProvider.LOCAL_QWEN:
-        return LocalQwenToolsmithClient()
+        return LocalQwenToolsmithClient(accounting=accounting)
     if selected.provider is ModelProvider.OPENCODE:
-        return OpenCodeGoClient()
+        return OpenCodeGoClient(accounting=accounting)
     raise ToolsmithProviderError(
         f"{selected.provider.value} toolsmith adapter awaits validated runtime configuration"
     )
