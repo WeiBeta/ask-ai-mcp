@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import httpx
+import pytest
 
 from ask_ai_mcp.opencode import OpenCodeGoClient
 from ask_ai_mcp.opencode_source import OpenCodeQwenMessagesClient
 from ask_ai_mcp.provider_timeout import (
+    MAX_PROVIDER_READ_TIMEOUT_SECONDS,
     REMOTE_ASYNC_GENERATION_TIMEOUT,
     REMOTE_HEALTH_TIMEOUT,
     REMOTE_SYNC_GENERATION_TIMEOUT,
     prompt_free_transport_audit,
     timeout_phase,
+    timeout_policy_with_read_seconds,
 )
 
 
@@ -34,6 +37,21 @@ def test_remote_inference_timeout_policies_are_long_but_bounded() -> None:
     assert timeout.write == 600.0
     assert timeout.pool == 30.0
     assert REMOTE_HEALTH_TIMEOUT.read_seconds == 30.0
+
+
+def test_timeout_override_rejects_values_outside_status_contract() -> None:
+    assert (
+        timeout_policy_with_read_seconds(
+            REMOTE_ASYNC_GENERATION_TIMEOUT,
+            MAX_PROVIDER_READ_TIMEOUT_SECONDS,
+        ).read_seconds
+        == MAX_PROVIDER_READ_TIMEOUT_SECONDS
+    )
+    with pytest.raises(ValueError, match="no greater than 14400"):
+        timeout_policy_with_read_seconds(
+            REMOTE_ASYNC_GENERATION_TIMEOUT,
+            MAX_PROVIDER_READ_TIMEOUT_SECONDS + 1,
+        )
 
 
 def test_timeout_diagnostics_are_phase_specific_and_prompt_free() -> None:

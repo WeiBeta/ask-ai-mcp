@@ -890,6 +890,16 @@ def test_review_explicit_empty_findings_succeeds_without_retry(tmp_path: Path) -
     assert status.state is CodeReviewJobState.SUCCEEDED
     assert status.validation_stage is None
     assert status.total_findings == 0
+    assert status.progress_source == "provider_response"
+    assert status.upstream_progress_confirmed is True
+    assert status.usage_observed is True
+    assert status.provider_timeout is not None
+    assert status.provider_timeout.policy_name == "remote_async_generation_v1"
+    assert status.provider_timeout.read_seconds == 7_200
+    assert status.started_at is not None
+    assert status.completed_at is not None
+    assert status.latency_ms is not None
+    assert status.latency_ms >= 0
     assert audit["findings_present"] is True
     assert audit["findings_type"] == "array"
     assert audit["finding_count"] == 0

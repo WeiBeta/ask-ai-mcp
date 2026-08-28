@@ -7,6 +7,8 @@ from typing import Any
 
 import httpx
 
+MAX_PROVIDER_READ_TIMEOUT_SECONDS = 14_400.0
+
 
 @dataclass(frozen=True, slots=True)
 class ProviderTimeoutPolicy:
@@ -66,8 +68,8 @@ def timeout_policy_with_read_seconds(
 ) -> ProviderTimeoutPolicy:
     """Retain narrow constructor overrides used by offline transports/tests."""
 
-    if read_seconds <= 0:
-        raise ValueError("provider read timeout must be positive")
+    if not 0 < read_seconds <= MAX_PROVIDER_READ_TIMEOUT_SECONDS:
+        raise ValueError("provider read timeout must be positive and no greater than 14400 seconds")
     return ProviderTimeoutPolicy(
         name=f"{base.name}_override",
         connect_seconds=base.connect_seconds,

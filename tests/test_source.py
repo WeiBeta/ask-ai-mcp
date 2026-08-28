@@ -18,6 +18,7 @@ from ask_ai_mcp.models import (
     SourceJobState,
     VisualExtractionScope,
 )
+from ask_ai_mcp.qwen import QwenRequestStillProcessing
 from ask_ai_mcp.source import (
     SourceBackendResult,
     SourceJobManager,
@@ -220,6 +221,49 @@ def test_backend_failure_returns_kind_without_sensitive_message(tmp_path: Path) 
     assert report.state is SourceJobState.FAILED
     assert report.failure_kind == "RuntimeError"
     assert "sensitive" not in report.detail
+
+
+def test_still_processing_failure_reports_slots_without_resubmit_signal(tmp_path: Path) -> None:
+    class StillProcessingBackend(FakeQwenBackend):
+        def extract(self, command, staged_sources, output_directory) -> SourceBackendResult:
+            self.completed.set()
+            error = QwenRequestStillProcessing("do not resubmit private source")
+            error.latency_ms = 3_600_123
+            error.timeout_phase = "read"
+            error.provider_timeout = {
+                "policy_name": "local_qwen_vision_v1",
+                "connect_seconds": 30,
+                "read_seconds": 5_400,
+                "write_seconds": 3_600,
+                "pool_seconds": 30,
+            }
+            raise error
+
+    source_root = tmp_path / "sources"
+    source_root.mkdir()
+    source = source_root / "diagram.png"
+    source.write_bytes(b"synthetic-image")
+    backend = StillProcessingBackend()
+    manager = SourceJobManager(
+        backend=backend,
+        jobs_root=tmp_path / "jobs",
+        allowed_input_roots=[source_root],
+    )
+
+    submission = manager.submit(command(source, profile=SourceExtractionProfile.VISUAL_STRUCTURE))
+    assert backend.completed.wait(timeout=2)
+    report = wait_for_terminal(manager, submission.job_id)
+
+    assert report.state is SourceJobState.FAILED
+    assert report.failure_kind == "QwenRequestStillProcessing"
+    assert report.latency_ms == 3_600_123
+    assert report.timeout_phase == "read"
+    assert report.progress_source == "llama_slots"
+    assert report.upstream_progress_confirmed is True
+    assert report.usage_observed is False
+    assert report.provider_timeout is not None
+    assert report.provider_timeout.read_seconds == 5_400
+    assert "private source" not in report.detail
 
 
 def test_canonical_evidence_ids_are_case_insensitively_unique() -> None:

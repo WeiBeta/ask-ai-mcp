@@ -30,6 +30,11 @@ Status and prompt-free audit metadata distinguish local worker activity from
 confirmed upstream progress. Local Qwen slot polling, ComfyUI job polling, and
 sandbox execution deadlines remain separate mechanisms. Streaming progress is a
 future opt-in experiment, not an implicit retry or protocol relaxation.
+
+Version 0.12.3 aligns injected timeout overrides with the public status contract
+and adds direct regression coverage for successful Review metadata and local
+Qwen requests that remain active after a client timeout.
+
 ## Phase 0: policy and skeleton
 
 - Establish Windows-only package layout and locked dependencies.
