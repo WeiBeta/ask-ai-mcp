@@ -67,7 +67,7 @@ from ask_ai_mcp.models import (
 )
 from ask_ai_mcp.promotion import VerifiedToolRegistry
 from ask_ai_mcp.protocol_audit import ProtocolAuditMiddleware
-from ask_ai_mcp.provider import create_toolsmith_client, load_toolsmith_provider
+from ask_ai_mcp.provider import create_toolsmith_worker, load_worker_route
 from ask_ai_mcp.qwen_source import load_source_backend
 from ask_ai_mcp.review import CandidateReviewRepository
 from ask_ai_mcp.review_attestation import ReviewAttestationStore
@@ -195,7 +195,7 @@ for _profile_mcp in _PROFILE_SERVERS.values():
 
 @lru_cache(maxsize=1)
 def get_toolsmith_provider():
-    return load_toolsmith_provider()
+    return load_worker_route()
 
 
 @lru_cache(maxsize=1)
@@ -211,7 +211,7 @@ def get_review_repository() -> CandidateReviewRepository:
 @lru_cache(maxsize=1)
 def get_lifecycle() -> CandidateLifecycle:
     return CandidateLifecycle(
-        client=create_toolsmith_client(get_toolsmith_provider()),
+        client=create_toolsmith_worker(get_toolsmith_provider()),
         workspace=get_workspace(),
         review_repository=get_review_repository(),
         audit_store=get_usage_store(),

@@ -11,8 +11,11 @@ from ask_ai_mcp.models import ModelProvider
 from ask_ai_mcp.opencode import OpenCodeGoClient
 from ask_ai_mcp.provider import (
     ToolsmithProviderError,
+    WorkerRole,
     create_toolsmith_client,
+    create_toolsmith_worker,
     load_toolsmith_provider,
+    load_worker_route,
 )
 from ask_ai_mcp.qwen_toolsmith import LocalQwenToolsmithClient
 
@@ -23,6 +26,7 @@ def test_opencode_is_default_after_direct_deepseek_suspension(monkeypatch) -> No
     configuration = load_toolsmith_provider()
 
     assert configuration.provider is ModelProvider.OPENCODE
+    assert configuration.role is WorkerRole.TOOLSMITH
     assert configuration.requires_budget_gate is False
     assert configuration.local_runtime is False
 
@@ -71,3 +75,10 @@ def test_direct_deepseek_is_suspended_unless_explicitly_reactivated(monkeypatch)
 
     monkeypatch.setenv("ASK_AI_MCP_DEEPSEEK_STATE", "active")
     assert load_toolsmith_provider().provider is ModelProvider.DEEPSEEK
+
+
+def test_provider_compatibility_names_share_the_role_based_implementation(monkeypatch) -> None:
+    monkeypatch.delenv("ASK_AI_MCP_TOOLSMITH_PROVIDER", raising=False)
+
+    assert load_toolsmith_provider is load_worker_route
+    assert create_toolsmith_client is create_toolsmith_worker
