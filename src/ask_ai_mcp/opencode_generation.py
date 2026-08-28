@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from ask_ai_mcp.opencode_pricing import OpenCodeGoModel
 
 WIDE_MAX_OUTPUT_TOKENS = 131_072
+GROK_STANDARD_PRICE_MAX_INPUT_TOKENS = 199_999
 
 
 @dataclass(frozen=True, slots=True)
@@ -14,6 +15,7 @@ class OpenCodeGenerationPolicy:
     reasoning_effort: str
     max_output_tokens: int
     context_tokens: int = 1_000_000
+    standard_price_max_input_tokens: int | None = None
 
 
 OPENCODE_GENERATION_POLICIES = {
@@ -39,7 +41,10 @@ OPENCODE_GENERATION_POLICIES = {
         reasoning_effort="none", max_output_tokens=32_768
     ),
     OpenCodeGoModel.GROK_4_6: OpenCodeGenerationPolicy(
-        reasoning_effort="max", max_output_tokens=WIDE_MAX_OUTPUT_TOKENS, context_tokens=500_000
+        reasoning_effort="xhigh",
+        max_output_tokens=WIDE_MAX_OUTPUT_TOKENS,
+        context_tokens=500_000,
+        standard_price_max_input_tokens=GROK_STANDARD_PRICE_MAX_INPUT_TOKENS,
     ),
 }
 

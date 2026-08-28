@@ -104,6 +104,8 @@ merge/deployment decision. See `docs/FOUNDATION_0.13_ZH-CN.md`.
 Version 0.13.2 adds Grok 4.6 as an explicit advanced Coding/Review candidate,
 local high-context pricing, and advisory-only Go route ordering. Version 0.13.1
 added provider-neutral transport diagnostics for Coding and Review.
+Version 0.13.3 uses Grok's provider-native `xhigh` reasoning value and rejects
+estimated input at or above the 200K high-price band before provider submission.
 Normal audits retain only a call-attribution UID and content-free transport metadata;
 exact request and streamed response bodies are kept separately as AES-256-GCM frames
 under a Windows Credential Manager key. Authorization material is never captured, the

@@ -41,8 +41,10 @@ or both staged hashes, one fixed profile, and one of four fixed
 OpenCode Go models. It has no generic prompt, shell, arbitrary path, Git-write,
 patch-generation, commit, push, or retry option.
 
-Review models are fixed to `deepseek-v4-pro`, `glm-5.3`, `kimi-k3`, and `grok-4.6`, each
-with requested reasoning effort `max` and a 131,072-token total generation cap.
+Review models are fixed to `deepseek-v4-pro`, `glm-5.3`, `kimi-k3`, and `grok-4.6`.
+Grok uses its provider-native `xhigh` effort; the other routes use `max`, and all use a
+131,072-token total generation cap. Grok requests are rejected before provider submission
+when the deterministic prompt estimate reaches its 200K high-price input band.
 Before a paid request, a context-boundary preflight either permits the single
 call or returns `REVIEW_PARTITION_REQUIRED` plus an advisory deterministic plan;
 it never automatically partitions, submits, or retries.
@@ -55,9 +57,9 @@ per-job artifacts; the SQLite review ledger stores hashes, metrics, adjudication
 and outcomes but not full source, diff, prompt, credential, or ordinary model output.
 Status keeps model names hidden while a person or Sol records adjudication.
 
-In the 0.13.2 test foundation, Coding/Review backend status also reports compact,
+In the 0.13.3 test foundation, Coding/Review backend status also reports compact,
 advisory-only route orders derived locally from the pricing window, remote availability,
-and effective ledger allowance. The selected model remains explicit and failures never
+effective ledger allowance, and any model-specific standard-price input ceiling. The selected model remains explicit and failures never
 cause an automatic retry or model switch. Coding/Review backend and job status also report
 whether encrypted wire capture is active, its bounded retention, and a content-free
 `wire_capture_uid`. Exact request/streamed-response bodies are held only in the

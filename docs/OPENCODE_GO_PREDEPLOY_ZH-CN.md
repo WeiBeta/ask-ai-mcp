@@ -89,7 +89,8 @@ ASK_AI_MCP_SOURCE_INPUT_ROOTS=<分号分隔的窄目录>
 月度额度。模型有效余额取共享月余额与模型余额较小值，跨模型共享消费不会重复扣除。
 DeepSeek 仅在工作日按官方 UTC 两段 peak 窗口计价；周末 off-peak。缓存写等缺失价格明确为
 unsupported，不默认为 0。
-Grok 4.6 使用 Responses 协议，并按 200K 输入 token 阈值切换两档价格；作者已在账户层明确
+Grok 4.6 使用 Responses 协议与官方 `xhigh` 推理档，并按 200K 输入 token 阈值切换两档价格；
+Coding/Review 将估算输入限制为 199,999 token，达到高价档前 fail closed。作者已在账户层明确
 接受 OpenCode Go 对同类模型的数据留存/改进条款，因此不再增加逐仓库留存授权开关。
 滚动窗口是本地保护性近似，不冒充 OpenCode 服务端的精确订阅
 结算周期；服务端 429 始终是最终权威。由于密钥约定只供本 MCP 使用，本地账本通常能覆盖

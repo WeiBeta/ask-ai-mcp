@@ -120,7 +120,7 @@ def test_coding_catalog_reads_only_its_own_repository_environment(
 
 
 @pytest.mark.parametrize("model", list(CodingModel))
-def test_candidate_uses_fixed_model_max_reasoning_and_returns_external_diff(
+def test_candidate_uses_fixed_model_policy_and_returns_external_diff(
     tmp_path: Path,
     model: CodingModel,
 ) -> None:
@@ -148,7 +148,7 @@ def test_candidate_uses_fixed_model_max_reasoning_and_returns_external_diff(
         }
         if model is CodingModel.GROK_4_6:
             assert str(request.url) == OPENCODE_GO_RESPONSES_URL
-            assert body["reasoning"] == {"effort": "max"}
+            assert body["reasoning"] == {"effort": "xhigh"}
             assert body["max_output_tokens"] == 131_072
             assert str(root) not in body["input"][1]["content"]
             assert body["text"]["format"]["strict"] is True
@@ -192,7 +192,8 @@ def test_candidate_uses_fixed_model_max_reasoning_and_returns_external_diff(
         state_root=tmp_path / "coding-state",
     )
     submission = manager.submit(_command(commit, model))
-    assert submission.reasoning_effort == "max"
+    expected_effort = "xhigh" if model is CodingModel.GROK_4_6 else "max"
+    assert submission.reasoning_effort == expected_effort
     assert submission.max_output_tokens == 131_072
     deadline = time.monotonic() + 5
     status = manager.status(CodingStatusCommand(job_id=submission.job_id, limit=1_000))
@@ -205,7 +206,7 @@ def test_candidate_uses_fixed_model_max_reasoning_and_returns_external_diff(
     assert status.state is CodingJobState.SUCCEEDED
     assert submission.model is model
     assert status.model is model
-    assert status.reasoning_effort == "max"
+    assert status.reasoning_effort == expected_effort
     assert status.max_output_tokens == 131_072
     assert status.provider_timeout.policy_name == "remote_async_generation_v1"
     assert status.provider_timeout.read_seconds == 7_200
@@ -222,7 +223,7 @@ def test_candidate_uses_fixed_model_max_reasoning_and_returns_external_diff(
         )
     )
     assert job["command"]["model"] == model.value
-    assert job["reasoning_effort"] == "max"
+    assert job["reasoning_effort"] == expected_effort
     assert job["max_output_tokens"] == 131_072
     summary = usage.summarize(days=30)
     assert summary.opencode_go_accounts[0].account == "go-user-01"
@@ -258,10 +259,47 @@ def test_coding_backend_reports_live_availability_for_all_six_models(tmp_path: P
     assert status.remote_models_checked is True
     assert [item.model_id for item in status.models] == list(CodingModel)
     assert all(item.available for item in status.models)
-    assert all(item.requested_reasoning_effort == "max" for item in status.models)
+    efforts = {item.model_id: item.requested_reasoning_effort for item in status.models}
+    assert efforts[CodingModel.GROK_4_6] == "xhigh"
+    assert all(
+        effort == "max" for model, effort in efforts.items() if model is not CodingModel.GROK_4_6
+    )
     assert all(item.max_output_tokens == 131_072 for item in status.models)
+    input_limits = {item.model_id: item.standard_price_max_input_tokens for item in status.models}
+    assert input_limits[CodingModel.GROK_4_6] == 199_999
+    assert all(
+        value is None for model, value in input_limits.items() if model is not CodingModel.GROK_4_6
+    )
     assert status.provider_timeout.policy_name == "remote_async_generation_v1"
     assert status.provider_timeout.read_seconds == 7_200
+
+
+def test_grok_coding_rejects_high_price_input_before_provider_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, commit = _repository(tmp_path)
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        raise AssertionError("provider must not be called for high-price Grok input")
+
+    monkeypatch.setattr("ask_ai_mcp.coding._estimated_tokens", lambda _value: 200_000)
+    manager = CodingManager(
+        usage_store=UsageStore(tmp_path / "usage.db"),
+        snapshotter=CodingSnapshotter(CodeReviewRepositoryCatalog({"unity": root})),
+        account=OpenCodeAccount(uid="go-user-01", alias="Go User"),
+        api_key_provider=lambda: "opaque-test-key-1234567890",
+        transport=httpx.MockTransport(handler),
+        state_root=tmp_path / "coding-state",
+    )
+
+    with pytest.raises(RuntimeError, match="standard-price token limit"):
+        manager.submit(_command(commit, CodingModel.GROK_4_6))
+
+    assert calls == 0
+    assert list((tmp_path / "coding-state" / "jobs").iterdir()) == []
 
 
 @pytest.mark.parametrize("model", ADVANCED_CODING_MODELS)

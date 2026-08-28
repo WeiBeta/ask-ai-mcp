@@ -332,6 +332,7 @@ class CodeReviewModelAvailability(StrictModel):
     available: bool
     requested_reasoning_effort: str = "max"
     max_output_tokens: int = Field(default=8_000, ge=1, le=131_072)
+    standard_price_max_input_tokens: int | None = Field(default=None, ge=1)
 
 
 class CodeReviewMetricSlice(StrictModel):

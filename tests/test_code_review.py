@@ -556,14 +556,18 @@ def test_backend_reports_model_specific_review_policies(tmp_path: Path) -> None:
 
     status = manager.backend_status(check_remote=False)
     policies = {
-        item.model_id: (item.requested_reasoning_effort, item.max_output_tokens)
+        item.model_id: (
+            item.requested_reasoning_effort,
+            item.max_output_tokens,
+            item.standard_price_max_input_tokens,
+        )
         for item in status.models
     }
 
-    assert policies[CodeReviewModel.GLM_5_3] == ("max", 131_072)
-    assert policies[CodeReviewModel.KIMI_K3] == ("max", 131_072)
-    assert policies[CodeReviewModel.DEEPSEEK_V4_PRO] == ("max", 131_072)
-    assert policies[CodeReviewModel.GROK_4_6] == ("max", 131_072)
+    assert policies[CodeReviewModel.GLM_5_3] == ("max", 131_072, None)
+    assert policies[CodeReviewModel.KIMI_K3] == ("max", 131_072, None)
+    assert policies[CodeReviewModel.DEEPSEEK_V4_PRO] == ("max", 131_072, None)
+    assert policies[CodeReviewModel.GROK_4_6] == ("xhigh", 131_072, 199_999)
     assert status.provider_timeout.policy_name == "remote_async_generation_v1"
     assert status.provider_timeout.read_seconds == 7_200
     assert status.patch_roots_configured is False
@@ -577,7 +581,7 @@ def test_grok_review_uses_responses_protocol_and_normalizes_usage(tmp_path: Path
         assert str(request.url) == OPENCODE_GO_RESPONSES_URL
         body = json.loads(request.content)
         assert body["model"] == CodeReviewModel.GROK_4_6.value
-        assert body["reasoning"] == {"effort": "max"}
+        assert body["reasoning"] == {"effort": "xhigh"}
         assert body["max_output_tokens"] == 131_072
         assert body["text"]["format"]["strict"] is True
         assert "input" in body and "messages" not in body
@@ -1123,10 +1127,37 @@ def test_review_preflight_uses_context_boundary_not_old_reasoning_caps() -> None
         assert plan.shards[0].oversized_single_file is True
 
 
+def test_grok_review_preflight_stays_below_high_price_input_band() -> None:
+    snapshot = _synthetic_review_snapshot(600_000)
+    grok = CodeReviewSubmitCommand(
+        repository_id="sample",
+        base_ref="2" * 40,
+        head_ref="3" * 40,
+        review_profile=CodeReviewProfile.DATA_INTEGRITY,
+        model=CodeReviewModel.GROK_4_6,
+    )
+    kimi = grok.model_copy(update={"model": CodeReviewModel.KIMI_K3})
+
+    grok_plan = CodeReviewManager._preflight_partition_plan(grok, snapshot)
+
+    assert grok_plan is not None
+    assert grok_plan.estimated_prompt_tokens >= 200_000
+    assert CodeReviewManager._preflight_partition_plan(kimi, snapshot) is None
+
+
+@pytest.mark.parametrize(
+    ("model", "snapshot_size"),
+    [
+        (CodeReviewModel.DEEPSEEK_V4_PRO, 2_600_000),
+        (CodeReviewModel.GROK_4_6, 600_000),
+    ],
+)
 def test_review_partition_preflight_creates_failed_job_without_provider_call(
     tmp_path: Path,
+    model: CodeReviewModel,
+    snapshot_size: int,
 ) -> None:
-    snapshot = _synthetic_review_snapshot(2_600_000)
+    snapshot = _synthetic_review_snapshot(snapshot_size)
     calls = 0
 
     class FixedSnapshotter:
@@ -1152,7 +1183,7 @@ def test_review_partition_preflight_creates_failed_job_without_provider_call(
             base_ref="2" * 40,
             head_ref="3" * 40,
             review_profile=CodeReviewProfile.DATA_INTEGRITY,
-            model=CodeReviewModel.DEEPSEEK_V4_PRO,
+            model=model,
         )
     )
     status = manager.status(CodeReviewStatusCommand(job_id=submission.job_id))

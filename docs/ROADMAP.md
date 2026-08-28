@@ -47,6 +47,9 @@ decision.
 
 Version 0.13.2 adds Grok 4.6, tiered local pricing, and non-executing route
 recommendations while preserving explicit model selection and no paid retry.
+Version 0.13.3 maps Grok's provider-native maximum reasoning effort to `xhigh`
+and rejects estimated input at or above its 200K high-price band before any
+Coding or Review provider call.
 Version 0.13.1 adds UID-correlated encrypted wire evidence for Coding/Review,
 stream-boundary transport diagnostics, and a local operator-only idempotent
 reconciliation receipt for dashboard-confirmed billed transport failures. It

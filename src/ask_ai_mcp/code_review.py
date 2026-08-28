@@ -397,6 +397,9 @@ class CodeReviewManager:
                     available=available[model.value],
                     requested_reasoning_effort=_model_policy(model)[0],
                     max_output_tokens=_model_policy(model)[1],
+                    standard_price_max_input_tokens=opencode_generation_policy(
+                        OpenCodeGoModel(model.value)
+                    ).standard_price_max_input_tokens,
                 )
                 for model in CodeReviewModel
             ],
@@ -426,6 +429,11 @@ class CodeReviewManager:
             1,
             policy.context_tokens - policy.max_output_tokens - CONTEXT_SAFETY_RESERVE_TOKENS,
         )
+        if policy.standard_price_max_input_tokens is not None:
+            safe_input_tokens = min(
+                safe_input_tokens,
+                policy.standard_price_max_input_tokens,
+            )
         if prompt_tokens <= safe_input_tokens:
             return None
 
@@ -562,6 +570,7 @@ class CodeReviewManager:
             "max_output_tokens": max_output_tokens,
             "estimated_prompt_tokens": estimated_prompt_tokens,
             "context_tokens": generation_policy.context_tokens,
+            "standard_price_max_input_tokens": (generation_policy.standard_price_max_input_tokens),
             "context_safety_reserve_tokens": CONTEXT_SAFETY_RESERVE_TOKENS,
             "temperature": TEMPERATURE,
             "provider_timeout": self.timeout_policy.audit_metadata(),
@@ -620,6 +629,9 @@ class CodeReviewManager:
                 "strategy_version": PARTITION_STRATEGY_VERSION,
                 "estimated_prompt_tokens": estimated_prompt_tokens,
                 "context_tokens": generation_policy.context_tokens,
+                "standard_price_max_input_tokens": (
+                    generation_policy.standard_price_max_input_tokens
+                ),
                 "max_output_tokens": max_output_tokens,
                 "visible_output_reserve_tokens": CONTEXT_SAFETY_RESERVE_TOKENS,
                 "partition_required": partition_plan is not None,

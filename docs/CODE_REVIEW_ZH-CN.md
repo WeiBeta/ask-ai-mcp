@@ -10,8 +10,8 @@ Subagent、Perception、H3 或 Full，普通开发保持关闭。固定工具只
 - `code_review_submit`：提交冻结 refs 或同时固定 patch/receipt 哈希的 staged patch；
 - `code_review_status`：分页读结果，并记录盲审裁决或延迟 outcome。
 
-固定模型为 `glm-5.3`、`kimi-k3`、`deepseek-v4-pro`、`grok-4.6`。四条 Review 路由统一请求
-`reasoning_effort=max` 与 131,072 token 总生成上限。该上限同时容纳 reasoning 和可见 JSON，
+固定模型为 `glm-5.3`、`kimi-k3`、`deepseek-v4-pro`、`grok-4.6`。前三条 Review 路由请求
+`reasoning_effort=max`；Grok 按其官方枚举请求 `xhigh`。四条路由均使用 131,072 token 总生成上限。该上限同时容纳 reasoning 和可见 JSON，
 不是上下文窗口；宽松基线用于预付额度测试期，后续根据分模型日志中的 reasoning、可见输出、
 finish reason 与成本分布再收敛。固定 profile 为 `general`、`security`、
 `concurrency`、`data_integrity`。没有 generic prompt、任意模型、
@@ -32,9 +32,10 @@ upstream、transport 与 unknown。
 usage 是否已取得以及上游进度是否得到确认。0.13.1 使用流式读取 HTTP 正文但仍请求单个非流式
 JSON 结果；它不能抽检模型实时 token 增长，却能精确保存断线前已收到的加密响应分块。
 
-付费前的 prompt 预检只针对模型上下文硬边界：以固定 UTF-8 估算、1M context、128K 总生成
-预算和额外安全余量判断。普通 2–3 万 token 大审查不会因为旧 8K/16K 经验而被提前拒绝；只有
-逼近上下文边界时才以 `REVIEW_PARTITION_REQUIRED` 零 provider call 失败，并返回确定性、
+付费前的 prompt 预检以固定 UTF-8 估算、模型上下文、128K 总生成预算和额外安全余量判断。
+Grok 另将估算输入严格限制在 199,999 token，避免触发从 200K 开始的高价档。普通 2–3 万 token
+大审查不会因为旧 8K/16K 经验而被提前拒绝；只有逼近上下文或 Grok 标准价边界时才以
+`REVIEW_PARTITION_REQUIRED` 零 provider call 失败，并返回确定性、
 advisory-only 的按文件分片计划。Controller 必须显式生成并重新封存每个 bounded patch；服务端
 不会自动分片、自动提交或自动重试。
 
@@ -76,8 +77,9 @@ Authorization 与 Cookie 即使在密文仓也不保存。
 官方 Go 是双层限制：订阅共享滚动 5 小时 `$12`、每周 `$30`、每月 `$60`；模型月度 included
 usage 上限分别为 GLM `$15`、Kimi `$15`、DeepSeek Pro `$15`。Coding 模块另用 GLM Flash
 `$15` 与 DeepSeek Flash `$30`；Grok 4.6 的 included usage 上限为 `$15`。所有模型仍共享同一
-订阅的 `$60` 月窗口。Grok 在不超过 200K 输入时按 `$2/M` input、`$6/M` output、`$0.5/M`
-cache-read 估算，超过 200K 后三项价格加倍；档位判断和账本归因由 MCP 本地完成。
+订阅的 `$60` 月窗口。Grok 在低于 200K 输入时按 `$2/M` input、`$6/M` output、`$0.5/M`
+cache-read 估算，从 200K 开始三项价格加倍；Coding/Review 在付费前拒绝该高价档，档位判断和
+账本归因仍由 MCP 本地完成。
 
 作者已明确接受 OpenCode Go 上可能要求供应商留存调用数据或用于模型改进的模型条款，因此不设
 逐仓库二次留存授权。该授权不放宽仓库白名单、冻结 refs/patch、最小范围、密钥排除或禁止自动
