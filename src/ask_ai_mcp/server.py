@@ -6,7 +6,6 @@ import os
 from functools import lru_cache
 from typing import Annotated
 
-from fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
@@ -33,6 +32,8 @@ from ask_ai_mcp.collaboration import ReviewCollaborationService
 from ask_ai_mcp.guidance import workflow_guidance_for
 from ask_ai_mcp.h3 import H3ComfyClient
 from ask_ai_mcp.lifecycle import CandidateLifecycle
+from ask_ai_mcp.mcp_composition import capability_tool, create_profile_servers
+from ask_ai_mcp.mcp_profiles import Capability, ProfileName
 from ask_ai_mcp.models import (
     CandidateApprovalCommand,
     CandidateApprovalRequest,
@@ -113,96 +114,63 @@ paths, choose arbitrary models, or apply its patch. Sol must review, test, and
 apply any accepted candidate.
 """.strip()
 
-mcp = FastMCP(
-    "Ask AI MCP",
-    instructions=SERVER_INSTRUCTIONS,
+_PROFILE_SERVERS = create_profile_servers(
     version=__version__,
+    instructions={
+        ProfileName.FULL: SERVER_INSTRUCTIONS,
+        ProfileName.CORE: SERVER_INSTRUCTIONS,
+        ProfileName.SUBAGENT: SERVER_INSTRUCTIONS,
+        ProfileName.PERCEPTION: SOURCE_SERVER_INSTRUCTIONS,
+        ProfileName.H3: H3_SERVER_INSTRUCTIONS,
+        ProfileName.REVIEW: CODE_REVIEW_SERVER_INSTRUCTIONS,
+        ProfileName.CODING: CODING_SERVER_INSTRUCTIONS,
+    },
 )
-core_mcp = FastMCP(
-    "Ask AI MCP Core",
-    instructions=SERVER_INSTRUCTIONS,
-    version=__version__,
-)
-subagent_mcp = FastMCP(
-    "Ask AI MCP Subagent",
-    instructions=SERVER_INSTRUCTIONS,
-    version=__version__,
-)
-source_mcp = FastMCP(
-    "Ask AI MCP Perception",
-    instructions=SOURCE_SERVER_INSTRUCTIONS,
-    version=__version__,
-)
-h3_mcp = FastMCP(
-    "Ask AI MCP H3",
-    instructions=H3_SERVER_INSTRUCTIONS,
-    version=__version__,
-)
-review_mcp = FastMCP(
-    "Ask AI MCP Code Review",
-    instructions=CODE_REVIEW_SERVER_INSTRUCTIONS,
-    version=__version__,
-)
-coding_mcp = FastMCP(
-    "Ask AI MCP Coding",
-    instructions=CODING_SERVER_INSTRUCTIONS,
-    version=__version__,
-)
+
+# Compatibility exports remain stable while entrypoints migrate to profile lookup.
+mcp = _PROFILE_SERVERS[ProfileName.FULL]
+core_mcp = _PROFILE_SERVERS[ProfileName.CORE]
+subagent_mcp = _PROFILE_SERVERS[ProfileName.SUBAGENT]
+source_mcp = _PROFILE_SERVERS[ProfileName.PERCEPTION]
+h3_mcp = _PROFILE_SERVERS[ProfileName.H3]
+review_mcp = _PROFILE_SERVERS[ProfileName.REVIEW]
+coding_mcp = _PROFILE_SERVERS[ProfileName.CODING]
+
+
+def profile_server(profile: ProfileName):
+    """Return one explicit composition root without inferring capabilities."""
+
+    return _PROFILE_SERVERS[profile]
 
 
 def core_tool(**kwargs):
     """Register one shared tool on both the Core and Full servers."""
 
-    def decorator(function):
-        mcp.tool(**kwargs)(function)
-        core_mcp.tool(**kwargs)(function)
-        subagent_mcp.tool(**kwargs)(function)
-        return function
-
-    return decorator
+    return capability_tool(_PROFILE_SERVERS, Capability.TOOLSMITH, **kwargs)
 
 
 def source_tool(**kwargs):
     """Register source-intelligence tools on Subagent and compatibility Full."""
 
-    def decorator(function):
-        mcp.tool(**kwargs)(function)
-        subagent_mcp.tool(**kwargs)(function)
-        source_mcp.tool(**kwargs)(function)
-        return function
-
-    return decorator
+    return capability_tool(_PROFILE_SERVERS, Capability.PERCEPTION, **kwargs)
 
 
 def h3_tool(**kwargs):
     """Register local video tools on H3-only and compatibility Full."""
 
-    def decorator(function):
-        mcp.tool(**kwargs)(function)
-        h3_mcp.tool(**kwargs)(function)
-        return function
-
-    return decorator
+    return capability_tool(_PROFILE_SERVERS, Capability.H3, **kwargs)
 
 
 def code_review_tool(**kwargs):
     """Register a tool only on the optional code-review server."""
 
-    def decorator(function):
-        review_mcp.tool(**kwargs)(function)
-        return function
-
-    return decorator
+    return capability_tool(_PROFILE_SERVERS, Capability.CODE_REVIEW, **kwargs)
 
 
 def coding_tool(**kwargs):
     """Register a tool only on the optional coding-candidate server."""
 
-    def decorator(function):
-        coding_mcp.tool(**kwargs)(function)
-        return function
-
-    return decorator
+    return capability_tool(_PROFILE_SERVERS, Capability.CODING, **kwargs)
 
 
 _DESKTOP_CLIENT_NAMES = frozenset({"claude_desktop", "codex_desktop"})
@@ -214,13 +182,8 @@ def get_usage_store() -> UsageStore:
     return UsageStore()
 
 
-mcp.add_middleware(ProtocolAuditMiddleware(lambda: get_usage_store()))
-core_mcp.add_middleware(ProtocolAuditMiddleware(lambda: get_usage_store()))
-subagent_mcp.add_middleware(ProtocolAuditMiddleware(lambda: get_usage_store()))
-source_mcp.add_middleware(ProtocolAuditMiddleware(lambda: get_usage_store()))
-h3_mcp.add_middleware(ProtocolAuditMiddleware(lambda: get_usage_store()))
-review_mcp.add_middleware(ProtocolAuditMiddleware(lambda: get_usage_store()))
-coding_mcp.add_middleware(ProtocolAuditMiddleware(lambda: get_usage_store()))
+for _profile_mcp in _PROFILE_SERVERS.values():
+    _profile_mcp.add_middleware(ProtocolAuditMiddleware(lambda: get_usage_store()))
 
 
 @lru_cache(maxsize=1)
