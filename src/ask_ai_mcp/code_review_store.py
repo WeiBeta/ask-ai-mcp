@@ -155,6 +155,21 @@ class CodeReviewStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_code_review_outcomes_run
                     ON code_review_outcomes(run_id);
+
+                CREATE TABLE IF NOT EXISTS code_review_usage_reconciliations (
+                    run_id TEXT PRIMARY KEY,
+                    attribution_uid TEXT NOT NULL UNIQUE,
+                    observation_sha256 TEXT NOT NULL,
+                    observed_at TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    input_tokens INTEGER NOT NULL,
+                    output_tokens INTEGER NOT NULL,
+                    provider_reported_cost_usd REAL NOT NULL,
+                    token_breakdown_observed INTEGER NOT NULL,
+                    api_usage_id INTEGER NOT NULL UNIQUE,
+                    reconciled_at TEXT NOT NULL,
+                    FOREIGN KEY(run_id) REFERENCES code_review_runs(run_id)
+                );
                 """
             )
             columns = {
@@ -316,6 +331,86 @@ class CodeReviewStore:
         if row is None:
             raise RuntimeError("code review job was not found")
         return row
+
+    def get_usage_reconciliation(self, run_id: str) -> sqlite3.Row | None:
+        with self._connection() as connection:
+            return connection.execute(
+                "SELECT * FROM code_review_usage_reconciliations WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+
+    def attach_external_usage(
+        self,
+        run_id: str,
+        *,
+        observation_sha256: str,
+        observed_at: datetime,
+        source: str,
+        input_tokens: int,
+        output_tokens: int,
+        provider_reported_cost_usd: float,
+        api_usage_id: int,
+    ) -> None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM code_review_runs WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("code review job was not found")
+            if row["status"] != "failed" or not str(row["failure_kind"] or "").startswith(
+                "PROVIDER_REQUEST_FAILED:"
+            ):
+                raise RuntimeError("external usage may only reconcile a failed provider request")
+            if row["api_usage_id"] is not None:
+                raise RuntimeError("code review job already has provider usage")
+            existing = connection.execute(
+                "SELECT * FROM code_review_usage_reconciliations WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            if existing is not None:
+                if (
+                    existing["observation_sha256"] == observation_sha256
+                    and int(existing["api_usage_id"]) == api_usage_id
+                ):
+                    return
+                raise RuntimeError("external usage observation conflicts with the existing receipt")
+            connection.execute(
+                """
+                INSERT INTO code_review_usage_reconciliations (
+                    run_id, attribution_uid, observation_sha256, observed_at, source,
+                    input_tokens, output_tokens, provider_reported_cost_usd,
+                    token_breakdown_observed, api_usage_id, reconciled_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+                """,
+                (
+                    run_id,
+                    run_id,
+                    observation_sha256,
+                    observed_at.astimezone(UTC).isoformat(),
+                    source,
+                    input_tokens,
+                    output_tokens,
+                    provider_reported_cost_usd,
+                    api_usage_id,
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+            connection.execute(
+                """
+                UPDATE code_review_runs SET
+                    input_tokens = ?, output_tokens = ?, reasoning_tokens = NULL,
+                    cache_read_tokens = NULL, cache_write_tokens = NULL,
+                    provider_reported_cost_usd = ?, usage_source = 'provider_reported',
+                    api_usage_id = ?
+                WHERE run_id = ?
+                """,
+                (
+                    input_tokens,
+                    output_tokens,
+                    provider_reported_cost_usd,
+                    api_usage_id,
+                    run_id,
+                ),
+            )
 
     def adjudicate(self, run_id: str, command: CodeReviewAdjudicationCommand) -> None:
         with self._connection() as connection:

@@ -165,8 +165,11 @@ lifecycle character and UTF-8 byte sizes, test outcome, candidate hash, and
 final promotion decision. Actual API token counts and structural sizes remain
 separate measurements.
 
-It does not record API keys, full prompts, full source contents, or ordinary
-model responses by default.
+Normal SQLite, protocol, and audit records do not store API keys, full prompts,
+full source contents, or ordinary model responses. Version 0.13.1 keeps Coding
+and Review wire evidence in a separate, UID-linked AES-256-GCM frame store. Its
+key is held by Windows Credential Manager, authorization material is never
+captured, and retention evicts whole UID bundles rather than mixing calls.
 
 Explicit shadow testing uses a separate immutable replay store. It may retain
 sanitized tool specifications and parsed candidate code because those contents

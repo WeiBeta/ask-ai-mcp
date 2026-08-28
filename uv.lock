@@ -37,9 +37,10 @@ wheels = [
 
 [[package]]
 name = "ask-ai-mcp"
-version = "0.13.0"
+version = "0.13.1"
 source = { editable = "." }
 dependencies = [
+    { name = "cryptography" },
     { name = "fastmcp" },
     { name = "httpx" },
     { name = "keyring" },
@@ -57,6 +58,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = ">=45,<51" },
     { name = "fastmcp", specifier = ">=3.4.5,<3.5" },
     { name = "httpx", specifier = ">=0.28.1,<0.29" },
     { name = "keyring", specifier = ">=25.7,<26" },

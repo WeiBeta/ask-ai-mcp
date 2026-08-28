@@ -549,6 +549,10 @@ class UsageEvent(StrictModel):
     lifecycle_id: str | None = Field(default=None, min_length=36, max_length=36)
     request_chars: int = Field(default=0, ge=0)
     response_chars: int = Field(default=0, ge=0)
+    attribution_uid: str | None = Field(default=None, min_length=36, max_length=36)
+    usage_observation_scope: str = Field(
+        default="provider_response", pattern=r"^(provider_response|provider_dashboard_totals)$"
+    )
 
 
 class LifecycleAuditEvent(StrictModel):
@@ -1004,6 +1008,10 @@ class SourceJobReport(StrictModel):
     failure_kind: str | None = Field(default=None, min_length=1, max_length=120)
     latency_ms: int | None = Field(default=None, ge=0)
     timeout_phase: str | None = Field(default=None, pattern=r"^(connect|read|write|pool|unknown)$")
+    transport_failure_kind: str | None = Field(
+        default=None,
+        pattern=r"^(REMOTE_PROTOCOL|LOCAL_PROTOCOL|PROXY|CONNECT|READ_IO|WRITE_IO|CLOSE_IO|OTHER)$",
+    )
     progress_source: str = Field(
         default="unavailable", pattern=r"^(local_worker|provider_response|llama_slots|unavailable)$"
     )

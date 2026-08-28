@@ -45,6 +45,11 @@ until 0.13 passes full offline verification, external frozen-diff Review and
 explicit physical gray testing; merge and deployment require a separate user
 decision.
 
+Version 0.13.1 adds UID-correlated encrypted wire evidence for Coding/Review,
+stream-boundary transport diagnostics, and a local operator-only idempotent
+reconciliation receipt for dashboard-confirmed billed transport failures. It
+does not add a prompt-forwarding, decrypt, retry, or generic ledger-edit MCP tool.
+
 ## Phase 0: policy and skeleton
 
 - Establish Windows-only package layout and locked dependencies.

@@ -50,8 +50,15 @@ from ask_ai_mcp.provider_timeout import (
     ProviderTimeoutPolicy,
     prompt_free_transport_audit,
     timeout_policy_with_read_seconds,
+    transport_failure_kind_from_audit,
 )
 from ask_ai_mcp.usage import UsageStore
+from ask_ai_mcp.wire_capture import (
+    EncryptedWireCapture,
+    load_or_create_wire_key,
+    wire_capture_enabled,
+    wire_capture_max_bytes,
+)
 
 OPENCODE_GO_CHAT_URL = "https://opencode.ai/zen/go/v1/chat/completions"
 STATE_ROOT_ENV = "ASK_AI_MCP_CODING_STATE_ROOT"
@@ -113,11 +120,14 @@ class CodingManager:
         timeout_policy: ProviderTimeoutPolicy | None = None,
         executor: ThreadPoolExecutor | None = None,
         state_root: Path | None = None,
+        encrypted_wire_capture: bool | None = None,
+        wire_capture_key_provider=None,
+        wire_capture_max_bytes_override: int | None = None,
     ) -> None:
         self.account = account if account is not None else load_opencode_account(required=False)
         if self.account is None and api_key_provider is not None:
             self.account = OpenCodeAccount(uid="injected-test", alias="injected-test")
-        self.accounting = accounting or AccountingServices.from_store(usage_store)
+        self.accounting = AccountingServices.resolve(accounting=accounting, store=usage_store)
         self.usage_store = self.accounting.store
         self.snapshotter = snapshotter or CodingSnapshotter()
         self.root = state_root or _safe_state_root()
@@ -135,6 +145,17 @@ class CodingManager:
         if api_key_provider is not None:
             self._credential_configured = lambda: True
         self.transport = transport
+        self.encrypted_wire_capture = (
+            encrypted_wire_capture
+            if encrypted_wire_capture is not None
+            else wire_capture_enabled() and transport is None
+        )
+        self.wire_capture_key_provider = wire_capture_key_provider or load_or_create_wire_key
+        self.wire_capture_max_bytes = (
+            wire_capture_max_bytes_override
+            if wire_capture_max_bytes_override is not None
+            else wire_capture_max_bytes()
+        )
         self.timeout_policy = timeout_policy or (
             timeout_policy_with_read_seconds(REMOTE_ASYNC_GENERATION_TIMEOUT, timeout_seconds)
             if timeout_seconds is not None
@@ -220,6 +241,8 @@ class CodingManager:
             catalog_version=OPENCODE_GO_PRICING_VERSION,
             catalog_source_url=OPENCODE_GO_PRICING_SOURCE_URL,
             provider_timeout=self.timeout_policy.status_metadata(),
+            encrypted_wire_capture_enabled=self.encrypted_wire_capture,
+            wire_capture_max_bytes=self.wire_capture_max_bytes,
         )
 
     def submit(self, command: CodingSubmitCommand) -> CodingSubmission:
@@ -329,6 +352,10 @@ class CodingManager:
             completed_at=record.get("completed_at"),
             latency_ms=latency_ms,
             timeout_phase=provider_error.get("timeout_phase"),
+            transport_failure_kind=transport_failure_kind_from_audit(provider_error),
+            wire_capture_uid=(
+                command.job_id if (job_root / "audit" / "wire-capture.json").is_file() else None
+            ),
             progress_source=(
                 "provider_response"
                 if record.get("usage_observed")
@@ -362,7 +389,7 @@ class CodingManager:
         started = perf_counter()
         priced_at = datetime.now(UTC)
         try:
-            response = self._request(command, snapshot)
+            response = self._request(job_id, command, snapshot)
             record["usage_observed"] = True
             output = job_root / "output"
             output.mkdir(parents=True, exist_ok=True)
@@ -375,6 +402,7 @@ class CodingManager:
                 payload, raw_content = self._validated_payload(response, snapshot)
             except Exception:
                 self._record_usage(
+                    job_id,
                     command,
                     snapshot,
                     usage,
@@ -390,6 +418,7 @@ class CodingManager:
             (output / "candidate.diff").write_text(patch, encoding="utf-8")
             _atomic_json(output / "candidate.json", payload.model_dump(mode="json"))
             self._record_usage(
+                job_id,
                 command,
                 snapshot,
                 usage,
@@ -422,6 +451,7 @@ class CodingManager:
 
     def _record_usage(
         self,
+        attribution_uid: str,
         command: CodingSubmitCommand,
         snapshot: CodingSnapshot,
         usage: dict[str, Any],
@@ -465,6 +495,7 @@ class CodingManager:
                 candidate_hash=candidate_hash,
                 request_chars=sum(len(item.content) for item in snapshot.files),
                 response_chars=response_chars,
+                attribution_uid=attribution_uid,
             )
         )
 
@@ -492,11 +523,18 @@ class CodingManager:
     ) -> None:
         _atomic_json(
             job_root / "audit" / "provider-error.json",
-            prompt_free_transport_audit(
-                error,
-                policy=self.timeout_policy,
-                elapsed_ms=elapsed_ms,
-            ),
+            {
+                **prompt_free_transport_audit(
+                    error,
+                    policy=self.timeout_policy,
+                    elapsed_ms=elapsed_ms,
+                ),
+                **(
+                    {"wire_capture_uid": job_root.name}
+                    if (job_root / "audit" / "wire-capture.json").is_file()
+                    else {}
+                ),
+            },
         )
 
     @staticmethod
@@ -505,7 +543,9 @@ class CodingManager:
             return f"HTTP_{error.response.status_code}"
         return type(error).__name__
 
-    def _request(self, command: CodingSubmitCommand, snapshot: CodingSnapshot) -> dict[str, Any]:
+    def _request(
+        self, job_id: str, command: CodingSubmitCommand, snapshot: CodingSnapshot
+    ) -> dict[str, Any]:
         body = {
             "model": command.model.value,
             "messages": [
@@ -528,10 +568,48 @@ class CodingManager:
             ).max_output_tokens,
             "response_format": {"type": "json_object"},
         }
-        with self._client() as client:
-            response = client.post(OPENCODE_GO_CHAT_URL, headers=self._headers(), json=body)
-            response.raise_for_status()
-            data = response.json()
+        request_bytes = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        capture = (
+            EncryptedWireCapture(
+                job_root=self.jobs_root / job_id,
+                job_id=job_id,
+                key_provider=self.wire_capture_key_provider,
+                max_bytes=self.wire_capture_max_bytes,
+            )
+            if self.encrypted_wire_capture
+            else None
+        )
+        if capture is not None:
+            capture.capture_request(request_bytes)
+        try:
+            with (
+                self._client() as client,
+                client.stream(
+                    "POST",
+                    OPENCODE_GO_CHAT_URL,
+                    headers=self._headers(),
+                    content=request_bytes,
+                ) as response,
+            ):
+                if capture is not None:
+                    capture.response_headers(
+                        status_code=response.status_code,
+                        http_version=response.http_version,
+                        header_names=list(response.headers.keys()),
+                    )
+                response_body = bytearray()
+                for chunk in response.iter_bytes():
+                    response_body.extend(chunk)
+                    if capture is not None:
+                        capture.capture_response(chunk)
+                if capture is not None:
+                    capture.complete_response()
+                response.raise_for_status()
+            data = json.loads(response_body)
+        except Exception as error:
+            if capture is not None:
+                capture.fail(error)
+            raise
         if not isinstance(data, dict):
             raise ValueError("OpenCode Go returned a non-object coding response")
         return data

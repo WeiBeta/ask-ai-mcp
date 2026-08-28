@@ -4,11 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ask-ai-mcp"
-version = "0.13.0"
+version = "0.13.1"
 description = "Windows-only MCP toolsmith and source-preprocessing assistant"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
 dependencies = [
+  "cryptography>=45,<51",
   "fastmcp>=3.4.5,<3.5",
   "httpx>=0.28.1,<0.29",
   "keyring>=25.7,<26",
@@ -32,6 +33,7 @@ ask-ai-mcp-runner = "ask_ai_mcp.runner_cli:main"
 ask-ai-mcp-smoke = "ask_ai_mcp.smoke_cli:main"
 ask-ai-mcp-lifecycle-smoke = "ask_ai_mcp.lifecycle_cli:main"
 ask-ai-mcp-replay = "ask_ai_mcp.replay_cli:main"
+ask-ai-mcp-review-reconcile = "ask_ai_mcp.review_reconcile_cli:main"
 
 [dependency-groups]
 dev = [

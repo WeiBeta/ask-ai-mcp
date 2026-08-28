@@ -4,8 +4,16 @@ import asyncio
 import hashlib
 import json
 
+import pytest
+
 from ask_ai_mcp import server
-from ask_ai_mcp.mcp_profiles import Capability, ProfileName, profiles_for_capability
+from ask_ai_mcp.mcp_profiles import (
+    PROFILE_ALIASES,
+    PROFILE_DEFINITIONS,
+    Capability,
+    ProfileName,
+    profiles_for_capability,
+)
 
 EXPECTED_PROFILE_CONTRACTS = {
     "full": (
@@ -119,3 +127,10 @@ def test_capability_memberships_are_explicit_and_disjoint_where_required() -> No
     assert profiles_for_capability(Capability.H3) == (ProfileName.FULL, ProfileName.H3)
     assert profiles_for_capability(Capability.CODE_REVIEW) == (ProfileName.REVIEW,)
     assert profiles_for_capability(Capability.CODING) == (ProfileName.CODING,)
+
+
+def test_profile_and_alias_catalogs_are_immutable() -> None:
+    with pytest.raises(TypeError):
+        PROFILE_DEFINITIONS[ProfileName.CORE] = PROFILE_DEFINITIONS[ProfileName.FULL]  # type: ignore[index]
+    with pytest.raises(TypeError):
+        PROFILE_ALIASES["core"] = ProfileName.FULL  # type: ignore[index]

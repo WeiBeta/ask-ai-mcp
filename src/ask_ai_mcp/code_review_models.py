@@ -256,6 +256,27 @@ class CodeReviewStatusCommand(StrictModel):
     outcome: CodeReviewOutcomeCommand | None = None
 
 
+class CodeReviewExternalUsageCommand(StrictModel):
+    job_id: str = Field(pattern=r"^[a-f0-9-]{36}$")
+    observed_at: datetime
+    input_tokens: int = Field(ge=1, le=10_000_000)
+    output_tokens: int = Field(ge=0, le=10_000_000)
+    provider_reported_cost_usd: float = Field(gt=0, le=1_000)
+    source: str = Field(default="opencode_go_dashboard", pattern=r"^opencode_go_dashboard$")
+
+
+class CodeReviewExternalUsageReceipt(StrictModel):
+    job_id: str = Field(pattern=r"^[a-f0-9-]{36}$")
+    attribution_uid: str = Field(pattern=r"^[a-f0-9-]{36}$")
+    observation_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    api_usage_id: int = Field(ge=1)
+    idempotent_replay: bool
+    input_tokens: int = Field(ge=1)
+    output_tokens: int = Field(ge=0)
+    provider_reported_cost_usd: float = Field(gt=0)
+    token_breakdown_observed: bool = False
+
+
 class CodeReviewArtifact(StrictModel):
     relative_path: str = Field(min_length=1, max_length=512)
     sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
@@ -276,9 +297,22 @@ class CodeReviewStatus(StrictModel):
     completed_at: datetime | None = None
     latency_ms: int | None = Field(default=None, ge=0)
     timeout_phase: str | None = Field(default=None, pattern=r"^(connect|read|write|pool|unknown)$")
-    progress_source: str = Field(pattern=r"^(local_worker|provider_response|unavailable)$")
+    transport_failure_kind: str | None = Field(
+        default=None,
+        pattern=r"^(REMOTE_PROTOCOL|LOCAL_PROTOCOL|PROXY|CONNECT|READ_IO|WRITE_IO|CLOSE_IO|OTHER)$",
+    )
+    wire_capture_uid: str | None = Field(default=None, pattern=r"^[a-f0-9-]{36}$")
+    progress_source: str = Field(
+        pattern=r"^(local_worker|provider_response|provider_dashboard|unavailable)$"
+    )
     upstream_progress_confirmed: bool = False
     usage_observed: bool = False
+    usage_observation_scope: str | None = Field(
+        default=None, pattern=r"^(provider_response|provider_dashboard_totals)$"
+    )
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    provider_reported_cost_usd: float | None = Field(default=None, ge=0)
     provider_timeout: ProviderTimeoutStatus | None = None
     model_identity_hidden: bool = True
     total_findings: int = Field(ge=0)
@@ -341,3 +375,5 @@ class CodeReviewBackendStatus(StrictModel):
     catalog_effective_at: datetime
     catalog_source_url: str = Field(min_length=1, max_length=512)
     provider_timeout: ProviderTimeoutStatus
+    encrypted_wire_capture_enabled: bool = False
+    wire_capture_max_bytes: int = Field(default=104_857_600, ge=1, le=104_857_600)

@@ -101,6 +101,15 @@ stays on 0.12.3 until the isolated branch passes full offline verification,
 external frozen-diff Review, physical gray testing, and a separate user-approved
 merge/deployment decision. See `docs/FOUNDATION_0.13_ZH-CN.md`.
 
+Version 0.13.1 adds provider-neutral transport diagnostics for Coding and Review.
+Normal audits retain only a call-attribution UID and content-free transport metadata;
+exact request and streamed response bodies are kept separately as AES-256-GCM frames
+under a Windows Credential Manager key. Authorization material is never captured, the
+default rolling retention is bounded to 100 MiB per specialist job pool, and failed
+streams retain only the encrypted bytes received before disconnect. A local operator-only,
+job-bound reconciliation command can attach dashboard totals to one billed transport
+failure without exposing a generic ledger-edit MCP tool.
+
 The first full billed lifecycle smoke passed on 2026-08-02 in one Flash call:
 the generated synthetic helper passed four isolated tests, was reviewed, and
 was registered under an exact hash with synthetic-input capability only.

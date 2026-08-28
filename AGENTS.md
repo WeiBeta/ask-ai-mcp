@@ -18,7 +18,7 @@
 - 原始源文件只读。工具只处理副本，并写入专用输出目录。
 - 文件访问必须在路径解析后落入明确白名单根；拒绝路径穿越、逃逸根目录的 symlink/junction/reparse point、盘符根和宽泛用户目录。
 - 保留来源证据：文件哈希、页/幻灯片/工作表/单元格位置、提取方式、工具版本和警告。
-- 不得记录 API key、完整 prompt、完整源文本或常规模型完整输出；不得把整个知识库发送给 Worker。
+- 常规 audit/usage/protocol 日志不得记录 API key、完整 prompt、完整源文本或常规模型完整输出；不得把整个知识库发送给 Worker。Coding/Review 的专用加密线缆证据仓是唯一例外：只允许用 Windows Credential Manager 中独立密钥进行分块认证加密，以调用归因 UID 关联，并按完整 UID 原子滚动淘汰；Authorization、Cookie、API key 永不入仓，解密能力不得暴露为 MCP 工具。
 
 ## Core toolsmith 生命周期
 

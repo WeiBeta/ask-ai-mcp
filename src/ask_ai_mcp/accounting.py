@@ -66,6 +66,11 @@ class UserApprovalPolicy:
     )
 
     def evaluate(self, action: ApprovalAction) -> ApprovalDecision:
+        if not isinstance(action, ApprovalAction):
+            return ApprovalDecision(
+                requires_explicit_authorization=True,
+                reason="unknown approval action requires explicit user authorization",
+            )
         required = action in self._REQUIRES_APPROVAL
         return ApprovalDecision(
             requires_explicit_authorization=required,
@@ -88,10 +93,25 @@ class AccountingServices:
 
     @classmethod
     def from_store(cls, store: UsageStore | None = None) -> AccountingServices:
-        selected = store or UsageStore()
+        selected = store if store is not None else UsageStore()
         return cls(
             store=selected,
             entitlements=SubscriptionEntitlements(selected),
             ledger=ImmutableUsageLedger(selected),
             approvals=UserApprovalPolicy(),
         )
+
+    @classmethod
+    def resolve(
+        cls,
+        *,
+        accounting: AccountingServices | None,
+        store: UsageStore | None,
+    ) -> AccountingServices:
+        """Resolve compatibility injection without silently selecting a second store."""
+
+        if accounting is None:
+            return cls.from_store(store)
+        if store is not None and accounting.store is not store:
+            raise ValueError("accounting and usage_store must reference the same store")
+        return accounting

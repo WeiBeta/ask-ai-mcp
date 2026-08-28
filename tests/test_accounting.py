@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
+
 from ask_ai_mcp.accounting import AccountingServices, ApprovalAction, UserApprovalPolicy
 from ask_ai_mcp.models import ModelProvider, PricingBand, UsageCostSource, UsageEvent
 from ask_ai_mcp.usage import UsageStore
@@ -78,3 +80,17 @@ def test_user_approval_policy_is_independent_from_subscription_entitlement() -> 
         ApprovalAction.RETRY_PAID_REQUEST,
     ):
         assert selected.evaluate(action).requires_explicit_authorization is True
+
+    unknown = selected.evaluate("unregistered_action")  # type: ignore[arg-type]
+    assert unknown.requires_explicit_authorization is True
+    assert unknown.reason == "unknown approval action requires explicit user authorization"
+
+
+def test_accounting_resolution_rejects_conflicting_compatible_store(tmp_path) -> None:
+    first = UsageStore(tmp_path / "first.db")
+    second = UsageStore(tmp_path / "second.db")
+    accounting = AccountingServices.from_store(first)
+
+    assert AccountingServices.resolve(accounting=accounting, store=first) is accounting
+    with pytest.raises(ValueError, match="same store"):
+        AccountingServices.resolve(accounting=accounting, store=second)

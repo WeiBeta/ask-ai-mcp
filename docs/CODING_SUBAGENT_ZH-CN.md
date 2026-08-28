@@ -18,8 +18,10 @@
 0.12.2 起，Coding 与 Review、远程 Perception 共用异步推理超时策略：连接/连接池 30 秒、
 写入 10 分钟、读取 2 小时。`coding_status` 的 `running` 只确认本地 worker 未结束；OpenCode
 未提供本项目可用的逐请求状态查询，因此不会把本地等待伪装成上游心跳，也不会通过 `/models`
-猜测任务仍在生成。超时 audit 只保存阶段、耗时、策略和 usage 可见性，不保存响应正文；失败
-不会自动重试、切模型或重复计费。
+猜测任务仍在生成。常规 audit 只保存阶段、耗时、策略、usage 可见性与归因 UID；0.13.1 起
+完整请求/响应正文只写入 Windows Credential Manager 独立密钥保护的 AES-256-GCM 分块证据仓，
+断线时保留已收到的密文分块。API key/Authorization/Cookie 永不入仓，默认按完整 UID 在
+100 MiB 上限内滚动淘汰。失败不会自动重试、切模型或重复计费。
 
 ## 快照和候选
 

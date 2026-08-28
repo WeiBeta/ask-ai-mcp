@@ -8,6 +8,16 @@ from typing import Any
 import httpx
 
 MAX_PROVIDER_READ_TIMEOUT_SECONDS = 14_400.0
+_TRANSPORT_FAILURE_BY_EXCEPTION = {
+    "RemoteProtocolError": "REMOTE_PROTOCOL",
+    "LocalProtocolError": "LOCAL_PROTOCOL",
+    "ProxyError": "PROXY",
+    "ConnectError": "CONNECT",
+    "ReadError": "READ_IO",
+    "WriteError": "WRITE_IO",
+    "CloseError": "CLOSE_IO",
+    "NetworkError": "OTHER",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +103,34 @@ def timeout_phase(error: BaseException) -> str | None:
     return None
 
 
+def transport_failure_kind(error: BaseException) -> str | None:
+    """Classify content-free transport failures without logging exception messages."""
+
+    if isinstance(error, (httpx.TimeoutException, httpx.HTTPStatusError)):
+        return None
+    for error_type in type(error).__mro__:
+        selected = _TRANSPORT_FAILURE_BY_EXCEPTION.get(error_type.__name__)
+        if selected is not None:
+            return selected
+    return "OTHER" if isinstance(error, httpx.RequestError) else None
+
+
+def transport_failure_kind_from_audit(value: object) -> str | None:
+    """Read the new field or safely backfill older prompt-free audit artifacts."""
+
+    if not isinstance(value, dict):
+        return None
+    selected = value.get("transport_failure_kind")
+    if isinstance(selected, str) and selected in set(_TRANSPORT_FAILURE_BY_EXCEPTION.values()):
+        return selected
+    exception_type = value.get("exception_type")
+    return (
+        _TRANSPORT_FAILURE_BY_EXCEPTION.get(exception_type)
+        if isinstance(exception_type, str)
+        else None
+    )
+
+
 def prompt_free_transport_audit(
     error: httpx.HTTPStatusError | httpx.RequestError,
     *,
@@ -106,6 +144,7 @@ def prompt_free_transport_audit(
         "status_code": status_code,
         "exception_type": type(error).__name__,
         "timeout_phase": timeout_phase(error),
+        "transport_failure_kind": transport_failure_kind(error),
         "elapsed_ms": max(0, elapsed_ms),
         "timeout_policy": policy.audit_metadata(),
         "usage_observed": False,

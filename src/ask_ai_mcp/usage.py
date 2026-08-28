@@ -97,7 +97,9 @@ class UsageStore:
                     budget_session_id TEXT,
                     lifecycle_id TEXT,
                     request_chars INTEGER NOT NULL DEFAULT 0,
-                    response_chars INTEGER NOT NULL DEFAULT 0
+                    response_chars INTEGER NOT NULL DEFAULT 0,
+                    attribution_uid TEXT,
+                    usage_observation_scope TEXT NOT NULL DEFAULT 'provider_response'
                 )
                 """
             )
@@ -128,6 +130,8 @@ class UsageStore:
                 "estimated_cost_usd": "REAL NOT NULL DEFAULT 0.0",
                 "provider_reported_cost_usd": "REAL",
                 "cost_source": "TEXT NOT NULL DEFAULT 'local_estimate'",
+                "attribution_uid": "TEXT",
+                "usage_observation_scope": "TEXT NOT NULL DEFAULT 'provider_response'",
             }
             for column_name, definition in migrations.items():
                 if column_name not in existing_columns:
@@ -153,6 +157,10 @@ class UsageStore:
             )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_api_usage_provider ON api_usage(provider)"
+            )
+            connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_api_usage_attribution_uid "
+                "ON api_usage(attribution_uid) WHERE attribution_uid IS NOT NULL"
             )
             connection.execute(
                 """
@@ -278,10 +286,11 @@ class UsageStore:
                     cache_read_tokens, cache_write_tokens, estimated_cost_usd,
                     provider_reported_cost_usd, cost_source,
                     latency_ms, retries, status, candidate_hash,
-                    budget_session_id, lifecycle_id, request_chars, response_chars
+                    budget_session_id, lifecycle_id, request_chars, response_chars,
+                    attribution_uid, usage_observation_scope
                 ) VALUES (
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -322,9 +331,19 @@ class UsageStore:
                     event.lifecycle_id,
                     event.request_chars,
                     event.response_chars,
+                    event.attribution_uid,
+                    event.usage_observation_scope,
                 ),
             )
             return int(cursor.lastrowid)
+
+    def usage_id_for_attribution(self, attribution_uid: str) -> int | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT id FROM api_usage WHERE attribution_uid = ?",
+                (attribution_uid,),
+            ).fetchone()
+        return int(row[0]) if row is not None else None
 
     def record_lifecycle(self, event: LifecycleAuditEvent) -> None:
         with self._connection() as connection:

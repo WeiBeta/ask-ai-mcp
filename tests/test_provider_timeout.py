@@ -13,6 +13,8 @@ from ask_ai_mcp.provider_timeout import (
     prompt_free_transport_audit,
     timeout_phase,
     timeout_policy_with_read_seconds,
+    transport_failure_kind,
+    transport_failure_kind_from_audit,
 )
 
 
@@ -66,10 +68,31 @@ def test_timeout_diagnostics_are_phase_specific_and_prompt_free() -> None:
 
     assert timeout_phase(error) == "read"
     assert audit["timeout_phase"] == "read"
+    assert audit["transport_failure_kind"] is None
     assert audit["elapsed_ms"] == 7_200_123
     assert audit["usage_observed"] is False
     assert audit["upstream_progress_confirmed"] is False
     assert "PRIVATE_PROVIDER_OUTPUT" not in str(audit)
+
+
+def test_remote_protocol_failure_is_content_free_and_legacy_backfillable() -> None:
+    request = httpx.Request("POST", "https://provider.invalid/v1/chat/completions")
+    error = httpx.RemoteProtocolError("PRIVATE_DISCONNECT_DETAIL", request=request)
+
+    audit = prompt_free_transport_audit(
+        error,
+        policy=REMOTE_ASYNC_GENERATION_TIMEOUT,
+        elapsed_ms=334_282,
+    )
+
+    assert transport_failure_kind(error) == "REMOTE_PROTOCOL"
+    assert audit["transport_failure_kind"] == "REMOTE_PROTOCOL"
+    assert transport_failure_kind_from_audit(audit) == "REMOTE_PROTOCOL"
+    assert (
+        transport_failure_kind_from_audit({"exception_type": "RemoteProtocolError"})
+        == "REMOTE_PROTOCOL"
+    )
+    assert "PRIVATE_DISCONNECT_DETAIL" not in str(audit)
 
 
 def test_core_and_remote_perception_use_the_intended_policy() -> None:

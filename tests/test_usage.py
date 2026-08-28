@@ -131,6 +131,8 @@ def test_existing_usage_database_is_migrated_without_losing_history(tmp_path: Pa
         "cost_source",
         "reasoning_effort",
         "max_output_tokens",
+        "attribution_uid",
+        "usage_observation_scope",
     }.issubset(columns)
     assert migrated == (None, None, "local_estimate", "legacy_base", None, None)
 

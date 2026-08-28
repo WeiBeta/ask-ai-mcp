@@ -181,7 +181,7 @@ class DeepSeekClient:
         peak_pricing_effective_at: datetime | None = None,
     ) -> None:
         self.api_key_provider = api_key_provider or CredentialStore().get_api_key
-        self.accounting = accounting or AccountingServices.from_store(usage_store)
+        self.accounting = AccountingServices.resolve(accounting=accounting, store=usage_store)
         self.usage_store = self.accounting.store
         self.transport = transport
         self.timeout_policy = timeout_policy or (

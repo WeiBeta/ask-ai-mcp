@@ -8,6 +8,7 @@ import json
 import stat
 import subprocess
 import time
+from datetime import datetime
 from pathlib import Path
 
 import httpx
@@ -18,6 +19,7 @@ from ask_ai_mcp.code_review import OPENCODE_GO_CHAT_URL, CodeReviewManager
 from ask_ai_mcp.code_review_models import (
     CodeReviewAdjudicationCommand,
     CodeReviewAdjudicationDecision,
+    CodeReviewExternalUsageCommand,
     CodeReviewFailureCode,
     CodeReviewJobState,
     CodeReviewModel,
@@ -37,6 +39,7 @@ from ask_ai_mcp.code_review_workspace import (
 )
 from ask_ai_mcp.opencode_account import OpenCodeAccount
 from ask_ai_mcp.usage import UsageStore
+from ask_ai_mcp.wire_capture import decrypt_wire_file
 
 
 def _git(root: Path, *arguments: str) -> str:
@@ -1169,6 +1172,108 @@ def test_review_provider_failures_are_safely_classified_without_retry(
         assert audit["timeout_phase"] == "read"
         assert audit["timeout_policy"]["read_seconds"] == 7_200
         assert audit["usage_observed"] is False
+
+
+def test_review_remote_protocol_failure_retains_encrypted_partial_wire_by_job_uid(
+    tmp_path: Path,
+) -> None:
+    root, base, head = _repository(tmp_path)
+    calls = 0
+    key = b"w" * 32
+
+    class FailingStream(httpx.SyncByteStream):
+        def __iter__(self):
+            yield b'{"choices":[{"message":{"content":"partial'
+            raise httpx.RemoteProtocolError("PRIVATE_STREAM_FAILURE")
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, stream=FailingStream())
+
+    store = CodeReviewStore(tmp_path / "review-state")
+    manager = CodeReviewManager(
+        store=store,
+        usage_store=UsageStore(tmp_path / "usage.db"),
+        snapshotter=CodeReviewSnapshotter(CodeReviewRepositoryCatalog({"sample": root})),
+        account=OpenCodeAccount(uid="go-test-uid", alias="go-test"),
+        api_key_provider=lambda: "opaque-test-key-1234567890",
+        transport=httpx.MockTransport(handler),
+        encrypted_wire_capture=True,
+        wire_capture_key_provider=lambda: key,
+        wire_capture_max_bytes_override=1024 * 1024,
+    )
+    submission = manager.submit(
+        CodeReviewSubmitCommand(
+            repository_id="sample",
+            base_ref=base,
+            head_ref=head,
+            review_profile=CodeReviewProfile.GENERAL,
+            model=CodeReviewModel.KIMI_K3,
+        )
+    )
+    deadline = time.monotonic() + 5
+    status = manager.status(CodeReviewStatusCommand(job_id=submission.job_id))
+    while status.state in {CodeReviewJobState.QUEUED, CodeReviewJobState.RUNNING}:
+        if time.monotonic() >= deadline:
+            raise AssertionError("review job did not complete")
+        time.sleep(0.02)
+        status = manager.status(CodeReviewStatusCommand(job_id=submission.job_id))
+
+    job_root = store.jobs_root / submission.job_id
+    wire_audit_text = (job_root / "audit" / "wire-capture.json").read_text("utf-8")
+    provider_audit_text = (job_root / "audit" / "provider-error.json").read_text("utf-8")
+    request_plaintext = decrypt_wire_file(
+        job_root / "wire" / "request.wire",
+        job_id=submission.job_id,
+        direction="request",
+        key=key,
+    )
+    response_plaintext = decrypt_wire_file(
+        job_root / "wire" / "response.wire.partial",
+        job_id=submission.job_id,
+        direction="response",
+        key=key,
+    )
+    assert calls == 1
+    assert status.transport_failure_kind == "REMOTE_PROTOCOL"
+    assert status.wire_capture_uid == submission.job_id
+    assert response_plaintext.endswith(b'"partial')
+    assert b"opaque-test-key" not in request_plaintext
+    assert submission.job_id in wire_audit_text
+    assert submission.job_id in provider_audit_text
+    assert "PRIVATE_STREAM_FAILURE" not in wire_audit_text
+    assert "PRIVATE_STREAM_FAILURE" not in provider_audit_text
+
+    observed = CodeReviewExternalUsageCommand(
+        job_id=submission.job_id,
+        observed_at=datetime.fromisoformat("2026-08-28T15:20:00+08:00"),
+        input_tokens=50_110,
+        output_tokens=12_141,
+        provider_reported_cost_usd=0.3324,
+    )
+    receipt = manager.reconcile_external_usage(observed)
+    replay = manager.reconcile_external_usage(observed)
+    assert receipt.attribution_uid == submission.job_id
+    assert receipt.idempotent_replay is False
+    assert replay.api_usage_id == receipt.api_usage_id
+    assert replay.idempotent_replay is True
+    with pytest.raises(RuntimeError, match="conflicts"):
+        manager.reconcile_external_usage(
+            observed.model_copy(update={"provider_reported_cost_usd": 0.3325})
+        )
+    reconciled = store.get_usage_reconciliation(submission.job_id)
+    assert reconciled is not None
+    assert reconciled["input_tokens"] == 50_110
+    assert reconciled["output_tokens"] == 12_141
+    assert reconciled["provider_reported_cost_usd"] == pytest.approx(0.3324)
+    reconciled_status = manager.status(CodeReviewStatusCommand(job_id=submission.job_id))
+    assert reconciled_status.progress_source == "provider_dashboard"
+    assert reconciled_status.usage_observed is True
+    assert reconciled_status.usage_observation_scope == "provider_dashboard_totals"
+    assert reconciled_status.input_tokens == 50_110
+    assert reconciled_status.output_tokens == 12_141
+    assert reconciled_status.provider_reported_cost_usd == pytest.approx(0.3324)
 
 
 def test_review_two_noncanonical_categories_fail_without_value_leak_or_retry(

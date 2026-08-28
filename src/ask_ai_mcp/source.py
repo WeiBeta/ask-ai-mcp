@@ -235,6 +235,7 @@ class SourceJobManager:
                     failure_kind=type(error).__name__,
                     latency_ms=getattr(error, "latency_ms", None),
                     timeout_phase=getattr(error, "timeout_phase", None),
+                    transport_failure_kind=getattr(error, "transport_failure_kind", None),
                     progress_source=(
                         "llama_slots" if local_qwen_still_processing else "unavailable"
                     ),

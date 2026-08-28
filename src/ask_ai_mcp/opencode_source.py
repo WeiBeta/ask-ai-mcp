@@ -54,6 +54,7 @@ class OpenCodeSourceRequestError(QwenClientError):
         self.timeout_phase = timeout_phase(error)
         self.provider_timeout = policy.status_metadata()
         self.audit = prompt_free_transport_audit(error, policy=policy, elapsed_ms=elapsed_ms)
+        self.transport_failure_kind = self.audit.get("transport_failure_kind")
 
 
 class OpenCodeQwenMessagesClient:

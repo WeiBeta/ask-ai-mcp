@@ -29,7 +29,8 @@ upstream、transport 与 unknown。
 请求体写入 10 分钟、响应读取 2 小时。读取上限保持有限，避免断网、半开连接或上游停滞
 永久占用 worker；超时后仍禁止自动重试和切换模型。`running` 只表示本地 worker 正在等待，
 不声称 OpenCode 上游仍在生成。状态和 prompt-free audit 会给出策略、elapsed、timeout phase、
-usage 是否已取得以及上游进度是否得到确认；当前非流式 Go 端点无法抽检实时 token 增长。
+usage 是否已取得以及上游进度是否得到确认。0.13.1 使用流式读取 HTTP 正文但仍请求单个非流式
+JSON 结果；它不能抽检模型实时 token 增长，却能精确保存断线前已收到的加密响应分块。
 
 付费前的 prompt 预检只针对模型上下文硬边界：以固定 UTF-8 估算、1M context、128K 总生成
 预算和额外安全余量判断。普通 2–3 万 token 大审查不会因为旧 8K/16K 经验而被提前拒绝；只有
@@ -62,8 +63,10 @@ prompt v3 另把本次不可变快照的合法文件路径作为独立 JSON 数�
 Windows 反斜杠到仓库标准 `/` 的确定性规范化保持不变，但 prompt 要求直接输出标准 `/`。
 
 本地状态默认在 `%LOCALAPPDATA%\AskAIMCP\code-review`。每个 job 的 `input`、`output`、
-`audit` 分离。`review.db` 只保存快照/diff/结构化输出哈希、token/成本/延迟、finding 指纹、
-裁决与 outcome，不保存完整源码、完整 diff、完整 prompt、密钥或常规模型完整输出。
+`audit`、`wire` 分离。`review.db` 和常规 audit 只保存快照/diff/结构化输出哈希、token/成本/延迟、
+finding 指纹和归因 UID；不保存完整源码、完整 diff、完整 prompt、密钥或常规模型完整输出。
+`wire` 是独立 AES-256-GCM 分块密文证据仓，默认 100 MiB 按完整 UID 滚动淘汰；API key、
+Authorization 与 Cookie 即使在密文仓也不保存。
 
 ## OpenCode Go 双层账本
 
@@ -82,8 +85,10 @@ off-peak，边界采用左闭右开。
 不会把同一笔跨模型消费重复扣除。多个合法订阅必须显式配置不同 ID、凭据和路由；模块不会
 自动轮转账户或绕过限额。
 
-远端成功但本地结构校验失败也会计入失败调用和估算成本。审计仅保留响应 SHA-256、字节数、
-finish reason 与 usage，完整常规模型响应不进入日志；通过校验的 findings 才进入独立输出。
+远端成功但本地结构校验失败也会计入失败调用和估算成本。常规审计仅保留响应 SHA-256、字节数、
+finish reason、usage 与归因 UID；完整传输正文只进入独立加密线缆证据仓，通过校验的 findings
+才进入独立输出。控制台证明“已计费但本地未观察 usage”时，只能经 job 绑定、一次性、幂等的
+本机 reconciliation receipt 回补实际总 token/成本，不能通过 MCP 任意改账。
 
 官方目录：<https://opencode.ai/docs/go/>。
 

@@ -173,6 +173,11 @@ class CodingStatus(StrictModel):
     completed_at: datetime | None = None
     latency_ms: int | None = Field(default=None, ge=0)
     timeout_phase: str | None = Field(default=None, pattern=r"^(connect|read|write|pool|unknown)$")
+    transport_failure_kind: str | None = Field(
+        default=None,
+        pattern=r"^(REMOTE_PROTOCOL|LOCAL_PROTOCOL|PROXY|CONNECT|READ_IO|WRITE_IO|CLOSE_IO|OTHER)$",
+    )
+    wire_capture_uid: str | None = Field(default=None, pattern=r"^[a-f0-9-]{36}$")
     progress_source: str = Field(pattern=r"^(local_worker|provider_response|unavailable)$")
     upstream_progress_confirmed: bool = False
     usage_observed: bool = False
@@ -206,3 +211,5 @@ class CodingBackendStatus(StrictModel):
     catalog_version: str
     catalog_source_url: str
     provider_timeout: ProviderTimeoutStatus
+    encrypted_wire_capture_enabled: bool = False
+    wire_capture_max_bytes: int = Field(default=104_857_600, ge=1, le=104_857_600)

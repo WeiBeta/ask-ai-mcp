@@ -24,6 +24,8 @@ from ask_ai_mcp.accounting import AccountingServices
 from ask_ai_mcp.code_review_models import (
     CodeReviewArtifact,
     CodeReviewBackendStatus,
+    CodeReviewExternalUsageCommand,
+    CodeReviewExternalUsageReceipt,
     CodeReviewFailureCode,
     CodeReviewFindingCategory,
     CodeReviewJobState,
@@ -74,8 +76,15 @@ from ask_ai_mcp.provider_timeout import (
     ProviderTimeoutPolicy,
     prompt_free_transport_audit,
     timeout_policy_with_read_seconds,
+    transport_failure_kind_from_audit,
 )
 from ask_ai_mcp.usage import UsageStore
+from ask_ai_mcp.wire_capture import (
+    EncryptedWireCapture,
+    load_or_create_wire_key,
+    wire_capture_enabled,
+    wire_capture_max_bytes,
+)
 
 OPENCODE_GO_CHAT_URL = "https://opencode.ai/zen/go/v1/chat/completions"
 STATE_ROOT_ENV = "ASK_AI_MCP_REVIEW_STATE_ROOT"
@@ -247,6 +256,9 @@ class CodeReviewManager:
         timeout_seconds: float | None = None,
         timeout_policy: ProviderTimeoutPolicy | None = None,
         executor: ThreadPoolExecutor | None = None,
+        encrypted_wire_capture: bool | None = None,
+        wire_capture_key_provider=None,
+        wire_capture_max_bytes_override: int | None = None,
     ) -> None:
         self.account = account if account is not None else load_opencode_account(required=False)
         if self.account is None and api_key_provider is not None:
@@ -271,7 +283,7 @@ class CodeReviewManager:
         if state_root == Path(state_root.anchor) or state_root == Path.home().resolve(strict=True):
             raise RuntimeError("code review state root cannot be a broad host root")
         self.store = store or CodeReviewStore(state_root)
-        self.accounting = accounting or AccountingServices.from_store(usage_store)
+        self.accounting = AccountingServices.resolve(accounting=accounting, store=usage_store)
         self.usage_store = self.accounting.store
         self.snapshotter = snapshotter or CodeReviewSnapshotter()
         credentials = OpenCodeCredentialStore(self.account_uid) if self.account else None
@@ -284,6 +296,17 @@ class CodeReviewManager:
             else lambda: api_key_provider is not None
         )
         self.transport = transport
+        self.encrypted_wire_capture = (
+            encrypted_wire_capture
+            if encrypted_wire_capture is not None
+            else wire_capture_enabled() and transport is None
+        )
+        self.wire_capture_key_provider = wire_capture_key_provider or load_or_create_wire_key
+        self.wire_capture_max_bytes = (
+            wire_capture_max_bytes_override
+            if wire_capture_max_bytes_override is not None
+            else wire_capture_max_bytes()
+        )
         self.timeout_policy = timeout_policy or (
             timeout_policy_with_read_seconds(REMOTE_ASYNC_GENERATION_TIMEOUT, timeout_seconds)
             if timeout_seconds is not None
@@ -370,6 +393,8 @@ class CodeReviewManager:
             catalog_effective_at=OPENCODE_GO_PRICING_EFFECTIVE_AT,
             catalog_source_url=OPENCODE_GO_PRICING_SOURCE_URL,
             provider_timeout=self.timeout_policy.status_metadata(),
+            encrypted_wire_capture_enabled=self.encrypted_wire_capture,
+            wire_capture_max_bytes=self.wire_capture_max_bytes,
         )
 
     @classmethod
@@ -664,6 +689,8 @@ class CodeReviewManager:
         provider_response_observed = (
             self.store.jobs_root / command.job_id / "audit" / "provider-response.json"
         ).is_file()
+        external_usage = self.store.get_usage_reconciliation(command.job_id)
+        usage_observed = provider_response_observed or external_usage is not None
         latency_ms = row["latency_ms"]
         if latency_ms is None and state is CodeReviewJobState.RUNNING and row["started_at"]:
             latency_ms = max(
@@ -693,15 +720,37 @@ class CodeReviewManager:
             completed_at=row["completed_at"],
             latency_ms=latency_ms,
             timeout_phase=provider_error.get("timeout_phase"),
+            transport_failure_kind=transport_failure_kind_from_audit(provider_error),
+            wire_capture_uid=(
+                command.job_id
+                if (self.store.jobs_root / command.job_id / "audit" / "wire-capture.json").is_file()
+                else None
+            ),
             progress_source=(
                 "provider_response"
                 if provider_response_observed
+                else "provider_dashboard"
+                if external_usage is not None
                 else "local_worker"
                 if state in {CodeReviewJobState.QUEUED, CodeReviewJobState.RUNNING}
                 else "unavailable"
             ),
-            upstream_progress_confirmed=provider_response_observed,
-            usage_observed=provider_response_observed,
+            upstream_progress_confirmed=usage_observed,
+            usage_observed=usage_observed,
+            usage_observation_scope=(
+                "provider_dashboard_totals"
+                if external_usage is not None
+                else "provider_response"
+                if provider_response_observed
+                else None
+            ),
+            input_tokens=(int(row["input_tokens"]) if row["input_tokens"] is not None else None),
+            output_tokens=(int(row["output_tokens"]) if row["output_tokens"] is not None else None),
+            provider_reported_cost_usd=(
+                float(row["provider_reported_cost_usd"])
+                if row["provider_reported_cost_usd"] is not None
+                else None
+            ),
             provider_timeout=self._job_timeout_status(command.job_id),
             total_findings=total,
             offset=command.offset,
@@ -723,6 +772,115 @@ class CodeReviewManager:
             return value if isinstance(value, dict) else {}
         except (OSError, ValueError):
             return {}
+
+    def reconcile_external_usage(
+        self, command: CodeReviewExternalUsageCommand
+    ) -> CodeReviewExternalUsageReceipt:
+        """Attach one dashboard observation to one failed billed job, idempotently."""
+
+        if command.observed_at.tzinfo is None:
+            raise ValueError("external usage observed_at must include a timezone")
+        row = self.store.get_run(command.job_id)
+        if row["status"] != "failed" or not str(row["failure_kind"] or "").startswith(
+            f"{CodeReviewFailureCode.PROVIDER_REQUEST_FAILED.value}:"
+        ):
+            raise RuntimeError("external usage may only reconcile a failed provider request")
+        canonical = {
+            "job_id": command.job_id,
+            "model": str(row["model"]),
+            "account_uid": str(row["account_uid"] or ""),
+            "subscription_id": str(row["subscription_id"]),
+            "observed_at": command.observed_at.astimezone(UTC).isoformat(),
+            "input_tokens": command.input_tokens,
+            "output_tokens": command.output_tokens,
+            "provider_reported_cost_usd": command.provider_reported_cost_usd,
+            "source": command.source,
+        }
+        observation_sha256 = _sha256(
+            json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode()
+        )
+        existing = self.store.get_usage_reconciliation(command.job_id)
+        if existing is not None:
+            if existing["observation_sha256"] != observation_sha256:
+                raise RuntimeError("external usage observation conflicts with the existing receipt")
+            return CodeReviewExternalUsageReceipt(
+                job_id=command.job_id,
+                attribution_uid=command.job_id,
+                observation_sha256=observation_sha256,
+                api_usage_id=int(existing["api_usage_id"]),
+                idempotent_replay=True,
+                input_tokens=int(existing["input_tokens"]),
+                output_tokens=int(existing["output_tokens"]),
+                provider_reported_cost_usd=float(existing["provider_reported_cost_usd"]),
+            )
+        usage_id = self.usage_store.usage_id_for_attribution(command.job_id)
+        if usage_id is None:
+            model = OpenCodeGoModel(str(row["model"]))
+            calculated = calculate_opencode_go_cost_breakdown(
+                model,
+                input_tokens=command.input_tokens,
+                output_tokens=command.output_tokens,
+                cache_read_tokens=0,
+                cache_write_tokens=0,
+                priced_at=command.observed_at,
+            )
+            if calculated.total_cost_usd is None:
+                raise RuntimeError("external usage cannot be estimated from the current catalog")
+            usage_id = self.accounting.ledger.append(
+                UsageEvent(
+                    timestamp=command.observed_at,
+                    client_name="code_review_reconciliation",
+                    task_kind="code_review",
+                    model=model.value,
+                    provider=ModelProvider.OPENCODE,
+                    provider_model_id=model.value,
+                    provider_runtime="chat_completions",
+                    provider_account=str(row["account_uid"] or row["account_alias"]),
+                    provider_subscription_id=str(row["subscription_id"]),
+                    thinking_enabled=True,
+                    reasoning_effort=str(row["reasoning_effort"]),
+                    max_output_tokens=int(row["max_output_tokens"]),
+                    priced_at=command.observed_at,
+                    pricing_band=(
+                        PricingBand.PEAK
+                        if calculated.band is OpenCodeGoRateBand.PEAK
+                        else PricingBand.OFF_PEAK
+                        if calculated.band is OpenCodeGoRateBand.OFF_PEAK
+                        else PricingBand.STANDARD
+                    ),
+                    pricing_schedule_version=OPENCODE_GO_PRICING_VERSION,
+                    prompt_cache_miss_tokens=command.input_tokens,
+                    completion_tokens=command.output_tokens,
+                    estimated_cost_usd=calculated.total_cost_usd,
+                    provider_reported_cost_usd=command.provider_reported_cost_usd,
+                    cost_source=UsageCostSource.PROVIDER_REPORTED,
+                    latency_ms=int(row["latency_ms"] or 0),
+                    retries=0,
+                    status="failed_billed",
+                    attribution_uid=command.job_id,
+                    usage_observation_scope="provider_dashboard_totals",
+                )
+            )
+        self.store.attach_external_usage(
+            command.job_id,
+            observation_sha256=observation_sha256,
+            observed_at=command.observed_at,
+            source=command.source,
+            input_tokens=command.input_tokens,
+            output_tokens=command.output_tokens,
+            provider_reported_cost_usd=command.provider_reported_cost_usd,
+            api_usage_id=usage_id,
+        )
+        return CodeReviewExternalUsageReceipt(
+            job_id=command.job_id,
+            attribution_uid=command.job_id,
+            observation_sha256=observation_sha256,
+            api_usage_id=usage_id,
+            idempotent_replay=False,
+            input_tokens=command.input_tokens,
+            output_tokens=command.output_tokens,
+            provider_reported_cost_usd=command.provider_reported_cost_usd,
+        )
 
     def _job_timeout_status(self, job_id: str) -> dict[str, Any] | None:
         path = self.store.jobs_root / job_id / "input" / "manifest.json"
@@ -852,7 +1010,7 @@ class CodeReviewManager:
         started = perf_counter()
         self.store.mark_running(job_id)
         try:
-            response, priced_at, latency_ms = self._request(command, snapshot)
+            response, priced_at, latency_ms = self._request(job_id, command, snapshot)
             output_root = self.store.jobs_root / job_id / "output"
             output_root.mkdir(parents=True, exist_ok=True)
             response_audit = self._response_audit(response)
@@ -873,6 +1031,7 @@ class CodeReviewManager:
                         response_audit["validation_stage"] = error.validation_stage.value
                     _atomic_json(response_audit_path, response_audit)
                 self._record_usage(
+                    job_id,
                     command,
                     snapshot,
                     usage,
@@ -887,6 +1046,7 @@ class CodeReviewManager:
             findings_hash = _sha256(findings_json.encode("utf-8"))
             (output_root / "findings.json").write_text(findings_json, encoding="utf-8")
             usage_id = self._record_usage(
+                job_id,
                 command,
                 snapshot,
                 usage,
@@ -932,6 +1092,7 @@ class CodeReviewManager:
 
     def _record_usage(
         self,
+        attribution_uid: str,
         command: CodeReviewSubmitCommand,
         snapshot: CodeReviewSnapshot,
         usage: dict[str, object],
@@ -980,6 +1141,7 @@ class CodeReviewManager:
                 request_chars=len(snapshot.diff_text)
                 + len(json.dumps(snapshot.context, ensure_ascii=False)),
                 response_chars=response_chars,
+                attribution_uid=attribution_uid,
             )
         )
 
@@ -1032,6 +1194,8 @@ class CodeReviewManager:
             elapsed_ms=elapsed_ms,
         )
         audit["provider_failure_class"] = failure_class.value
+        if (self.store.jobs_root / job_id / "audit" / "wire-capture.json").is_file():
+            audit["wire_capture_uid"] = job_id
         _atomic_json(
             self.store.jobs_root / job_id / "audit" / "provider-error.json",
             audit,
@@ -1068,7 +1232,7 @@ class CodeReviewManager:
         return CodeReviewFailureCode.INTERNAL_ERROR.value
 
     def _request(
-        self, command: CodeReviewSubmitCommand, snapshot: CodeReviewSnapshot
+        self, job_id: str, command: CodeReviewSubmitCommand, snapshot: CodeReviewSnapshot
     ) -> tuple[dict[str, Any], datetime, int]:
         prompt = self._prompt(command.review_profile, snapshot)
         reasoning_effort, max_output_tokens = _model_policy(command.model)
@@ -1086,16 +1250,50 @@ class CodeReviewManager:
             "max_tokens": max_output_tokens,
             "response_format": {"type": "json_object"},
         }
+        request_bytes = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        capture = (
+            EncryptedWireCapture(
+                job_root=self.store.jobs_root / job_id,
+                job_id=job_id,
+                key_provider=self.wire_capture_key_provider,
+                max_bytes=self.wire_capture_max_bytes,
+            )
+            if self.encrypted_wire_capture
+            else None
+        )
+        if capture is not None:
+            capture.capture_request(request_bytes)
         priced_at = datetime.now(UTC)
         started = perf_counter()
-        with self._client() as client:
-            response = client.post(
-                OPENCODE_GO_CHAT_URL,
-                headers=self._headers(),
-                json=body,
-            )
-            response.raise_for_status()
-            data = response.json()
+        try:
+            with (
+                self._client() as client,
+                client.stream(
+                    "POST",
+                    OPENCODE_GO_CHAT_URL,
+                    headers=self._headers(),
+                    content=request_bytes,
+                ) as response,
+            ):
+                if capture is not None:
+                    capture.response_headers(
+                        status_code=response.status_code,
+                        http_version=response.http_version,
+                        header_names=list(response.headers.keys()),
+                    )
+                response_body = bytearray()
+                for chunk in response.iter_bytes():
+                    response_body.extend(chunk)
+                    if capture is not None:
+                        capture.capture_response(chunk)
+                if capture is not None:
+                    capture.complete_response()
+                response.raise_for_status()
+            data = json.loads(response_body)
+        except Exception as error:
+            if capture is not None:
+                capture.fail(error)
+            raise
         latency_ms = max(0, round((perf_counter() - started) * 1_000))
         if not isinstance(data, dict):
             raise ValueError("OpenCode Go returned a non-object review response")

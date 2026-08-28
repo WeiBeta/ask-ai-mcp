@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from types import MappingProxyType
+from typing import Final
 
 
 class Capability(StrEnum):
@@ -30,32 +33,38 @@ class ProfileDefinition:
     capabilities: tuple[Capability, ...]
 
 
-PROFILE_DEFINITIONS: dict[ProfileName, ProfileDefinition] = {
-    ProfileName.FULL: ProfileDefinition(
-        "Ask AI MCP", (Capability.H3, Capability.PERCEPTION, Capability.TOOLSMITH)
-    ),
-    ProfileName.CORE: ProfileDefinition("Ask AI MCP Core", (Capability.TOOLSMITH,)),
-    ProfileName.SUBAGENT: ProfileDefinition(
-        "Ask AI MCP Subagent", (Capability.PERCEPTION, Capability.TOOLSMITH)
-    ),
-    ProfileName.PERCEPTION: ProfileDefinition("Ask AI MCP Perception", (Capability.PERCEPTION,)),
-    ProfileName.H3: ProfileDefinition("Ask AI MCP H3", (Capability.H3,)),
-    ProfileName.REVIEW: ProfileDefinition("Ask AI MCP Code Review", (Capability.CODE_REVIEW,)),
-    ProfileName.CODING: ProfileDefinition("Ask AI MCP Coding", (Capability.CODING,)),
-}
+PROFILE_DEFINITIONS: Final[Mapping[ProfileName, ProfileDefinition]] = MappingProxyType(
+    {
+        ProfileName.FULL: ProfileDefinition(
+            "Ask AI MCP", (Capability.H3, Capability.PERCEPTION, Capability.TOOLSMITH)
+        ),
+        ProfileName.CORE: ProfileDefinition("Ask AI MCP Core", (Capability.TOOLSMITH,)),
+        ProfileName.SUBAGENT: ProfileDefinition(
+            "Ask AI MCP Subagent", (Capability.PERCEPTION, Capability.TOOLSMITH)
+        ),
+        ProfileName.PERCEPTION: ProfileDefinition(
+            "Ask AI MCP Perception", (Capability.PERCEPTION,)
+        ),
+        ProfileName.H3: ProfileDefinition("Ask AI MCP H3", (Capability.H3,)),
+        ProfileName.REVIEW: ProfileDefinition("Ask AI MCP Code Review", (Capability.CODE_REVIEW,)),
+        ProfileName.CODING: ProfileDefinition("Ask AI MCP Coding", (Capability.CODING,)),
+    }
+)
 
-PROFILE_ALIASES: dict[str, ProfileName] = {
-    "full": ProfileName.FULL,
-    "core": ProfileName.CORE,
-    "subagent": ProfileName.SUBAGENT,
-    "perception": ProfileName.PERCEPTION,
-    "source": ProfileName.PERCEPTION,
-    "h3": ProfileName.H3,
-    "review": ProfileName.REVIEW,
-    "code-review": ProfileName.REVIEW,
-    "coding": ProfileName.CODING,
-    "code": ProfileName.CODING,
-}
+PROFILE_ALIASES: Final[Mapping[str, ProfileName]] = MappingProxyType(
+    {
+        "full": ProfileName.FULL,
+        "core": ProfileName.CORE,
+        "subagent": ProfileName.SUBAGENT,
+        "perception": ProfileName.PERCEPTION,
+        "source": ProfileName.PERCEPTION,
+        "h3": ProfileName.H3,
+        "review": ProfileName.REVIEW,
+        "code-review": ProfileName.REVIEW,
+        "coding": ProfileName.CODING,
+        "code": ProfileName.CODING,
+    }
+)
 
 
 def resolve_profile(value: str) -> ProfileName:

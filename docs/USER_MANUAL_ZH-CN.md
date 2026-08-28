@@ -133,6 +133,13 @@ AskAIMCP\
 
 这是**本机状态**，不是日常双机实时同步目录。不要在两个正在运行的客户端之间实时同步 `usage.db` 或整个状态目录。
 
+0.13.1 测试入口会在 Coding/Review job 内额外创建 `wire` 加密证据目录。常规日志只用
+`wire_capture_uid` 归因；完整请求/响应正文由 Windows Credential Manager 独立密钥保护，
+Authorization、Cookie、API key 不会写入。每个模块默认按完整调用 UID 在 100 MiB 内滚动
+淘汰旧密文，可用 `ASK_AI_MCP_WIRE_CAPTURE_ENABLED=false` 关闭，或通过
+`ASK_AI_MCP_WIRE_CAPTURE_MAX_BYTES` 下调字节上限。该目录不得同步到云盘，也不得作为普通附件
+外发；项目没有提供 MCP 解密工具。
+
 ### 4.4 凭据位置
 
 DeepSeek API 密钥保存在 Windows Credential Manager，不在仓库、配置文件或交接目录中。迁移到另一台物理机时应在目标机重新录入，不要导出到普通文本文件。
