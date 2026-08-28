@@ -83,6 +83,40 @@ def test_responses_sse_preserves_terminal_failure_status() -> None:
         normalize_provider_response(OpenCodeGoModel.GROK_4_6, decoded)
 
 
+def test_responses_json_fallback_remains_supported() -> None:
+    response = {"status": "completed", "output_text": "{}", "usage": {}}
+
+    assert decode_provider_response(OpenCodeGoModel.GROK_4_6, json.dumps(response).encode()) == (
+        response
+    )
+
+
+def test_responses_sse_ignores_standard_comment_id_and_retry_fields() -> None:
+    response = {"status": "completed", "output_text": "{}", "usage": {}}
+    body = (
+        ": keepalive\n"
+        "id: provider-event-1\n"
+        "retry: 5000\n"
+        "event: response.completed\n"
+        f"data: {json.dumps({'type': 'response.completed', 'response': response})}\n\n"
+    ).encode()
+
+    assert decode_provider_response(OpenCodeGoModel.GROK_4_6, body) == response
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"malformed framing\n",
+        b"data: not-json\n\n",
+        b'data: {"type":"response.completed"}\n\n',
+    ],
+)
+def test_responses_sse_malformed_or_incomplete_terminal_fails_closed(body: bytes) -> None:
+    with pytest.raises((ValueError, json.JSONDecodeError)):
+        decode_provider_response(OpenCodeGoModel.GROK_4_6, body)
+
+
 @pytest.mark.parametrize("status", ["failed", "cancelled", "in_progress", "queued"])
 def test_responses_terminal_or_nonfinal_status_is_not_misreported_as_length(status: str) -> None:
     with pytest.raises(OpenCodeProviderResponseError) as captured:

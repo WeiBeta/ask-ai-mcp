@@ -53,6 +53,9 @@ Coding or Review provider call.
 Version 0.13.4 gives only Grok's Responses route a strict SSE terminal-event
 adapter after a real non-streaming request disconnected before response headers;
 it preserves the one-call, no-retry and no-fallback boundary.
+Version 0.13.5 accepts a fully decoded terminal SSE event even if the transport
+fails while closing after that event, while partial and nonterminal streams remain
+fail-closed and are covered at both Review and Coding manager boundaries.
 Version 0.13.1 adds UID-correlated encrypted wire evidence for Coding/Review,
 stream-boundary transport diagnostics, and a local operator-only idempotent
 reconciliation receipt for dashboard-confirmed billed transport failures. It

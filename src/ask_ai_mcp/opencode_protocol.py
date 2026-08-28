@@ -88,7 +88,8 @@ def decode_provider_response(model: OpenCodeGoModel, response_body: bytes) -> di
     """Decode one JSON response or one complete Responses SSE transcript."""
 
     stripped = response_body.lstrip()
-    if not stripped.startswith((b"data:", b"event:")):
+    is_sse = any(line.startswith((b"data:", b"event:")) for line in stripped.splitlines())
+    if not is_sse:
         value = json.loads(response_body)
         if not isinstance(value, dict):
             raise ValueError("OpenCode Go returned a non-object response")
@@ -133,6 +134,8 @@ def decode_provider_response(model: OpenCodeGoModel, response_body: bytes) -> di
             event_name = line[6:].strip()
         elif line.startswith("data:"):
             data_lines.append(line[5:].lstrip())
+        elif line.startswith(("id:", "retry:")):
+            continue
         elif not line.startswith(":"):
             raise ValueError("OpenCode Go returned malformed SSE framing")
     consume_event()

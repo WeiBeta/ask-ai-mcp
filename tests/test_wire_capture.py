@@ -81,6 +81,35 @@ def test_failed_capture_preserves_decryptable_partial_response(tmp_path: Path) -
     assert "PRIVATE_ERROR_BODY" not in audit_text
 
 
+def test_terminal_response_after_read_error_is_sealed_with_content_free_audit(
+    tmp_path: Path,
+) -> None:
+    job_id = "23232323-2323-4232-8232-232323232323"
+    job_root = tmp_path / job_id
+    (job_root / "audit").mkdir(parents=True)
+    key = b"t" * 32
+    capture = EncryptedWireCapture(
+        job_root=job_root,
+        job_id=job_id,
+        key_provider=lambda: key,
+        max_bytes=1_024,
+    )
+    response = b"event: response.completed\ndata: {}\n\n"
+    capture.capture_request(b"request")
+    capture.response_headers(status_code=200, http_version="HTTP/1.1", header_names=[])
+    capture.capture_response(response)
+    capture.complete_response_after_error(RuntimeError("PRIVATE_TRAILER_ERROR"))
+
+    final = job_root / "wire" / "response.wire"
+    assert decrypt_wire_file(final, job_id=job_id, direction="response", key=key) == response
+    audit_text = (job_root / "audit" / "wire-capture.json").read_text("utf-8")
+    audit = json.loads(audit_text)
+    assert audit["state"] == "complete_after_transport_error"
+    assert audit["failure_type"] == "RuntimeError"
+    assert audit["directions"]["response"]["complete"] is True
+    assert "PRIVATE_TRAILER_ERROR" not in audit_text
+
+
 def test_capture_enforces_one_hundred_mib_absolute_limit(tmp_path: Path) -> None:
     job_root = tmp_path / "job"
     (job_root / "audit").mkdir(parents=True)

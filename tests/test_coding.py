@@ -384,6 +384,74 @@ def test_coding_read_timeout_is_prompt_free_and_never_retried(tmp_path: Path) ->
     assert "PRIVATE_" not in audit_text
 
 
+def test_grok_coding_accepts_complete_terminal_event_before_remote_protocol_error(
+    tmp_path: Path,
+) -> None:
+    root, commit = _repository(tmp_path)
+    original = (root / "Counter.cs").read_text(encoding="utf-8")
+    original_hash = hashlib.sha256(original.encode()).hexdigest()
+    calls = 0
+    payload = {
+        "summary": "Increment by two.",
+        "changes": [
+            {
+                "file": "Counter.cs",
+                "original_sha256": original_hash,
+                "content": original.replace("x + 1", "x + 2"),
+            }
+        ],
+        "suggested_tests": ["Run the deterministic counter test."],
+        "risks": [],
+        "truncated": False,
+    }
+    terminal = {
+        "type": "response.completed",
+        "response": {
+            "status": "completed",
+            "output_text": json.dumps(payload),
+            "usage": {"input_tokens": 60, "output_tokens": 25},
+        },
+    }
+
+    class TerminalThenError(httpx.SyncByteStream):
+        def __iter__(self):
+            yield (f"event: response.completed\ndata: {json.dumps(terminal)}\n\n").encode()
+            raise httpx.RemoteProtocolError("PRIVATE_TRAILER_FAILURE")
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=TerminalThenError(),
+        )
+
+    manager = CodingManager(
+        usage_store=UsageStore(tmp_path / "usage.db"),
+        snapshotter=CodingSnapshotter(CodeReviewRepositoryCatalog({"unity": root})),
+        account=OpenCodeAccount(uid="go-user-01", alias="Go User"),
+        api_key_provider=lambda: "opaque-test-key-1234567890",
+        transport=httpx.MockTransport(handler),
+        state_root=tmp_path / "coding-state",
+        encrypted_wire_capture=False,
+    )
+    submission = manager.submit(_command(commit, CodingModel.GROK_4_6))
+    deadline = time.monotonic() + 5
+    status = manager.status(CodingStatusCommand(job_id=submission.job_id))
+    while status.state in {CodingJobState.QUEUED, CodingJobState.RUNNING}:
+        if time.monotonic() >= deadline:
+            raise AssertionError("coding job did not complete")
+        time.sleep(0.02)
+        status = manager.status(CodingStatusCommand(job_id=submission.job_id))
+
+    assert calls == 1
+    assert status.state is CodingJobState.SUCCEEDED
+    assert status.usage_observed is True
+    assert "x + 2" in status.patch_chunk
+    assert (root / "Counter.cs").read_text(encoding="utf-8") == original
+
+
 def test_candidate_cannot_change_unlisted_file(tmp_path: Path) -> None:
     root, commit = _repository(tmp_path)
     snapshot = CodingSnapshotter(CodeReviewRepositoryCatalog({"unity": root})).capture(

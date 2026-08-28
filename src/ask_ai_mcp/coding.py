@@ -664,14 +664,28 @@ class CodingManager:
                         header_names=list(response.headers.keys()),
                     )
                 response_body = bytearray()
-                for chunk in response.iter_bytes():
-                    response_body.extend(chunk)
-                    if capture is not None:
-                        capture.capture_response(chunk)
-                if capture is not None:
-                    capture.complete_response()
+                read_error: httpx.RequestError | None = None
+                try:
+                    for chunk in response.iter_bytes():
+                        response_body.extend(chunk)
+                        if capture is not None:
+                            capture.capture_response(chunk)
+                except httpx.RequestError as error:
+                    read_error = error
                 response.raise_for_status()
-            data = decode_provider_response(model, bytes(response_body))
+            if read_error is not None and model is not OpenCodeGoModel.GROK_4_6:
+                raise read_error
+            try:
+                data = decode_provider_response(model, bytes(response_body))
+            except Exception as decode_error:
+                if read_error is not None:
+                    raise read_error from decode_error
+                raise
+            if capture is not None:
+                if read_error is None:
+                    capture.complete_response()
+                else:
+                    capture.complete_response_after_error(read_error)
         except Exception as error:
             if capture is not None:
                 capture.fail(error)

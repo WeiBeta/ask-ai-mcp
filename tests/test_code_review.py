@@ -1382,6 +1382,76 @@ def test_review_remote_protocol_failure_retains_encrypted_partial_wire_by_job_ui
     assert reconciled_status.provider_reported_cost_usd == pytest.approx(0.3324)
 
 
+def test_grok_review_accepts_complete_terminal_event_before_remote_protocol_error(
+    tmp_path: Path,
+) -> None:
+    root, base, head = _repository(tmp_path)
+    calls = 0
+    key = b"v" * 32
+    terminal = {
+        "type": "response.completed",
+        "response": {
+            "status": "completed",
+            "output_text": json.dumps({"findings": [], "omitted_context": [], "truncated": False}),
+            "usage": {"input_tokens": 50, "output_tokens": 20},
+        },
+    }
+
+    class TerminalThenError(httpx.SyncByteStream):
+        def __iter__(self):
+            yield (f"event: response.completed\ndata: {json.dumps(terminal)}\n\n").encode()
+            raise httpx.RemoteProtocolError("PRIVATE_TRAILER_FAILURE")
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=TerminalThenError(),
+        )
+
+    store = CodeReviewStore(tmp_path / "review-state")
+    manager = CodeReviewManager(
+        store=store,
+        usage_store=UsageStore(tmp_path / "usage.db"),
+        snapshotter=CodeReviewSnapshotter(CodeReviewRepositoryCatalog({"sample": root})),
+        account=OpenCodeAccount(uid="go-test-uid", alias="go-test"),
+        api_key_provider=lambda: "opaque-test-key-1234567890",
+        transport=httpx.MockTransport(handler),
+        encrypted_wire_capture=True,
+        wire_capture_key_provider=lambda: key,
+        wire_capture_max_bytes_override=1024 * 1024,
+    )
+    submission = manager.submit(
+        CodeReviewSubmitCommand(
+            repository_id="sample",
+            base_ref=base,
+            head_ref=head,
+            review_profile=CodeReviewProfile.GENERAL,
+            model=CodeReviewModel.GROK_4_6,
+        )
+    )
+    deadline = time.monotonic() + 5
+    status = manager.status(CodeReviewStatusCommand(job_id=submission.job_id))
+    while status.state in {CodeReviewJobState.QUEUED, CodeReviewJobState.RUNNING}:
+        if time.monotonic() >= deadline:
+            raise AssertionError("review job did not complete")
+        time.sleep(0.02)
+        status = manager.status(CodeReviewStatusCommand(job_id=submission.job_id))
+
+    job_root = store.jobs_root / submission.job_id
+    wire_audit_text = (job_root / "audit" / "wire-capture.json").read_text("utf-8")
+    assert calls == 1
+    assert status.state is CodeReviewJobState.SUCCEEDED
+    assert status.usage_observed is True
+    assert status.input_tokens == 50
+    assert status.output_tokens == 20
+    assert json.loads(wire_audit_text)["state"] == "complete_after_transport_error"
+    assert "PRIVATE_TRAILER_FAILURE" not in wire_audit_text
+    assert not (job_root / "audit" / "provider-error.json").exists()
+
+
 def test_review_two_noncanonical_categories_fail_without_value_leak_or_retry(
     tmp_path: Path,
 ) -> None:

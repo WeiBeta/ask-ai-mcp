@@ -2,7 +2,7 @@
 
 ## 定位
 
-0.13.4 是隔离开发和灰度验证用的测试大版本。当前生产基线继续保持
+0.13.5 是隔离开发和灰度验证用的测试大版本。当前生产基线继续保持
 0.12.3；未经完整离线验收、冻结差异外部 Review、物理机灰度和用户明确
 合并决定，不得替换生产入口。
 
@@ -102,3 +102,11 @@ cache/reasoning 明细时明确记录为 `provider_dashboard_totals`，不得伪
 - 只接受 `response.completed`、`response.failed` 或 `response.incomplete` 的完整终态对象；
 - 缺少终态、畸形 SSE 或中途断流继续 fail closed，不自动重试、换模型或追加调用；
 - GLM、Kimi 与 DeepSeek 的 Chat Completions 传输保持不变。
+
+## 0.13.5 SSE 尾部断流门禁
+
+- 真实 Grok Review 已连续运行 10 分 27 秒并成功，证明 SSE 消除了约 30 秒无响应头断连；
+- 若完整终态事件已收到并通过严格解码，随后发生尾部读错误时保留该终态；
+- 缺少终态、半截 JSON、畸形 SSE、非 Grok 路线继续按 transport failure 处理；
+- 加密 wire 以 `complete_after_transport_error` 记录内容无关的尾部异常类型；
+- Review/Coding 都有 manager-level 单调用测试，禁止借此重试或回退模型。

@@ -109,6 +109,9 @@ estimated input at or above the 200K high-price band before provider submission.
 Version 0.13.4 requests Grok Responses as SSE and accepts only a complete terminal
 response event, avoiding the observed upstream non-streaming header timeout without
 adding retries, fallback models, or extra provider calls.
+Version 0.13.5 preserves a fully received and strictly decoded terminal SSE event
+when only the trailing transport closes abnormally; partial/nonterminal streams still
+fail closed, and encrypted audit metadata records the trailing transport condition.
 Normal audits retain only a call-attribution UID and content-free transport metadata;
 exact request and streamed response bodies are kept separately as AES-256-GCM frames
 under a Windows Credential Manager key. Authorization material is never captured, the

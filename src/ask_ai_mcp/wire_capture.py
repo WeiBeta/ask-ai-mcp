@@ -161,6 +161,14 @@ class EncryptedWireCapture:
         self._write_audit("complete")
         self._prune_completed_sessions()
 
+    def complete_response_after_error(self, error: BaseException) -> None:
+        """Seal a response whose complete terminal event preceded a read error."""
+
+        self.failure_type = type(error).__name__[:128]
+        self._complete("response")
+        self._write_audit("complete_after_transport_error")
+        self._prune_completed_sessions()
+
     def fail(self, error: BaseException) -> None:
         self.failure_type = type(error).__name__[:128]
         for state in self._states.values():
