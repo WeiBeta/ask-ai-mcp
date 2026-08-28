@@ -19,6 +19,7 @@ import httpx
 from platformdirs import user_data_path
 
 from ask_ai_mcp import __version__
+from ask_ai_mcp.accounting import AccountingServices
 from ask_ai_mcp.coding_models import (
     CodingBackendStatus,
     CodingCandidatePayload,
@@ -103,6 +104,7 @@ class CodingManager:
         self,
         *,
         usage_store: UsageStore | None = None,
+        accounting: AccountingServices | None = None,
         snapshotter: CodingSnapshotter | None = None,
         account: OpenCodeAccount | None = None,
         api_key_provider=None,
@@ -115,7 +117,8 @@ class CodingManager:
         self.account = account if account is not None else load_opencode_account(required=False)
         if self.account is None and api_key_provider is not None:
             self.account = OpenCodeAccount(uid="injected-test", alias="injected-test")
-        self.usage_store = usage_store or UsageStore()
+        self.accounting = accounting or AccountingServices.from_store(usage_store)
+        self.usage_store = self.accounting.store
         self.snapshotter = snapshotter or CodingSnapshotter()
         self.root = state_root or _safe_state_root()
         self.jobs_root = self.root / "jobs"
@@ -186,7 +189,7 @@ class CodingManager:
             ledger = next(
                 (
                     item
-                    for item in self.usage_store.summarize(days=30).opencode_go_accounts
+                    for item in self.accounting.ledger.summarize(days=30).opencode_go_accounts
                     if item.account == self.account.uid
                     and item.subscription_id == self.account.subscription_id
                 ),
@@ -223,8 +226,10 @@ class CodingManager:
         if self.account is None:
             raise RuntimeError("OpenCode Go account UID must be selected before coding submission")
         model = OpenCodeGoModel(command.model.value)
-        reason = self.usage_store.opencode_limit_reason(
-            self.account.uid, model.value, self.account.subscription_id
+        reason = self.accounting.entitlements.denial_reason(
+            account=self.account.uid,
+            model_id=model.value,
+            subscription_id=self.account.subscription_id,
         )
         if reason:
             raise RuntimeError(reason)
@@ -427,7 +432,7 @@ class CodingManager:
         candidate_hash: str | None,
         response_chars: int,
     ) -> int:
-        return self.usage_store.record(
+        return self.accounting.ledger.append(
             UsageEvent(
                 client_name=os.environ.get("ASK_AI_MCP_CLIENT_NAME", "coding"),
                 task_kind="coding_candidate",

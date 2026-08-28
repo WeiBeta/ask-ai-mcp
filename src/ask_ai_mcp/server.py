@@ -10,6 +10,7 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from ask_ai_mcp import __version__
+from ask_ai_mcp.accounting import AccountingServices
 from ask_ai_mcp.code_review import CodeReviewManager
 from ask_ai_mcp.code_review_models import (
     CodeReviewBackendStatus,
@@ -182,6 +183,12 @@ def get_usage_store() -> UsageStore:
     return UsageStore()
 
 
+@lru_cache(maxsize=1)
+def get_accounting_services() -> AccountingServices:
+    """Expose provider-neutral accounting services over the compatible store."""
+    return AccountingServices.from_store(get_usage_store())
+
+
 for _profile_mcp in _PROFILE_SERVERS.values():
     _profile_mcp.add_middleware(ProtocolAuditMiddleware(lambda: get_usage_store()))
 
@@ -248,12 +255,12 @@ def get_source_manager() -> SourceJobManager:
 
 @lru_cache(maxsize=1)
 def get_code_review_manager() -> CodeReviewManager:
-    return CodeReviewManager(usage_store=get_usage_store())
+    return CodeReviewManager(accounting=get_accounting_services())
 
 
 @lru_cache(maxsize=1)
 def get_coding_manager() -> CodingManager:
-    return CodingManager(usage_store=get_usage_store())
+    return CodingManager(accounting=get_accounting_services())
 
 
 @coding_tool(

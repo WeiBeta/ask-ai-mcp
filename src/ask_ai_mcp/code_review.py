@@ -20,6 +20,7 @@ import httpx
 from pydantic import ValidationError
 
 from ask_ai_mcp import __version__
+from ask_ai_mcp.accounting import AccountingServices
 from ask_ai_mcp.code_review_models import (
     CodeReviewArtifact,
     CodeReviewBackendStatus,
@@ -238,6 +239,7 @@ class CodeReviewManager:
         *,
         store: CodeReviewStore | None = None,
         usage_store: UsageStore | None = None,
+        accounting: AccountingServices | None = None,
         snapshotter: CodeReviewSnapshotter | None = None,
         account: OpenCodeAccount | None = None,
         api_key_provider=None,
@@ -269,7 +271,8 @@ class CodeReviewManager:
         if state_root == Path(state_root.anchor) or state_root == Path.home().resolve(strict=True):
             raise RuntimeError("code review state root cannot be a broad host root")
         self.store = store or CodeReviewStore(state_root)
-        self.usage_store = usage_store or UsageStore()
+        self.accounting = accounting or AccountingServices.from_store(usage_store)
+        self.usage_store = self.accounting.store
         self.snapshotter = snapshotter or CodeReviewSnapshotter()
         credentials = OpenCodeCredentialStore(self.account_uid) if self.account else None
         self.api_key_provider = api_key_provider or (
@@ -336,7 +339,7 @@ class CodeReviewManager:
         account_ledger = next(
             (
                 item
-                for item in self.usage_store.summarize(days=30).opencode_go_accounts
+                for item in self.accounting.ledger.summarize(days=30).opencode_go_accounts
                 if item.account == self.account_uid and item.subscription_id == self.subscription_id
             ),
             None,
@@ -466,8 +469,10 @@ class CodeReviewManager:
         if self.account is None:
             raise RuntimeError("OpenCode Go account UID must be selected before review submission")
         model = OpenCodeGoModel(command.model.value)
-        reason = self.usage_store.opencode_limit_reason(
-            self.account_uid, model.value, self.subscription_id
+        reason = self.accounting.entitlements.denial_reason(
+            account=self.account_uid,
+            model_id=model.value,
+            subscription_id=self.subscription_id,
         )
         if reason:
             raise RuntimeError(reason)
@@ -937,7 +942,7 @@ class CodeReviewManager:
         candidate_hash: str | None,
         response_chars: int,
     ) -> int:
-        return self.usage_store.record(
+        return self.accounting.ledger.append(
             UsageEvent(
                 timestamp=priced_at,
                 client_name=os.environ.get("ASK_AI_MCP_CLIENT_NAME", "code_review"),
