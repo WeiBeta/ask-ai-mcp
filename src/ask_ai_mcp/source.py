@@ -201,6 +201,7 @@ class SourceJobManager:
                     profile=command.profile,
                     progress_percent=10,
                     detail="Staging immutable source copies.",
+                    progress_source="local_worker",
                 )
             )
             staged = self._stage_sources(resolved_sources, job_root / "input")
@@ -223,6 +224,7 @@ class SourceJobManager:
             )
         except Exception as error:
             _LOGGER.warning("source extraction failed: %s", type(error).__name__)
+            local_qwen_still_processing = type(error).__name__ == "QwenRequestStillProcessing"
             self._set_report(
                 SourceJobReport(
                     job_id=job_id,
@@ -231,6 +233,14 @@ class SourceJobManager:
                     progress_percent=100,
                     detail="Source extraction failed; inspect local application logs.",
                     failure_kind=type(error).__name__,
+                    latency_ms=getattr(error, "latency_ms", None),
+                    timeout_phase=getattr(error, "timeout_phase", None),
+                    progress_source=(
+                        "llama_slots" if local_qwen_still_processing else "unavailable"
+                    ),
+                    upstream_progress_confirmed=local_qwen_still_processing,
+                    usage_observed=False,
+                    provider_timeout=getattr(error, "provider_timeout", None),
                 )
             )
 

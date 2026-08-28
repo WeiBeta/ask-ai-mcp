@@ -84,6 +84,14 @@ candidate routes for complex Coding tasks. The advanced routes are never selecte
 as an automatic fallback and retain the same frozen-input, external-candidate,
 strict-hash, single-call boundary.
 
+Version 0.12.2 replaces the former 10/15/30-minute remote generation timeouts with
+one shared bounded policy: asynchronous Coding, Review, and remote Perception jobs
+allow a two-hour read window, while the synchronous Core toolsmith allows one hour.
+Connect, upload, and pool waits remain independently bounded. Job status distinguishes
+local worker activity from confirmed upstream progress, and prompt-free timeout audits
+record phase, elapsed time, configured policy, and whether provider usage was observed.
+No timeout failure is retried or rerouted automatically.
+
 The first full billed lifecycle smoke passed on 2026-08-02 in one Flash call:
 the generated synthetic helper passed four isolated tests, was reviewed, and
 was registered under an exact hash with synthetic-input capability only.

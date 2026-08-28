@@ -22,6 +22,7 @@ from ask_ai_mcp.opencode_pricing import (
     OpenCodeGoRateBand,
     calculate_opencode_go_cost_breakdown,
 )
+from ask_ai_mcp.provider_timeout import ProviderTimeoutPolicy
 from ask_ai_mcp.usage import UsageStore
 
 OPENCODE_GO_CHAT_URL = "https://opencode.ai/zen/go/v1/chat/completions"
@@ -43,7 +44,8 @@ class OpenCodeGoClient(DeepSeekClient):
         api_key_provider=None,
         usage_store: UsageStore | None = None,
         transport: httpx.BaseTransport | None = None,
-        timeout_seconds: float = 600.0,
+        timeout_seconds: float | None = None,
+        timeout_policy: ProviderTimeoutPolicy | None = None,
     ) -> None:
         selected = account or (
             OpenCodeAccount(uid="injected-test", alias="injected-test")
@@ -59,6 +61,7 @@ class OpenCodeGoClient(DeepSeekClient):
             usage_store=usage_store,
             transport=transport,
             timeout_seconds=timeout_seconds,
+            timeout_policy=timeout_policy,
         )
 
     def _request_body(

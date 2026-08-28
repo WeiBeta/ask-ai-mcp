@@ -9,7 +9,7 @@ from typing import Annotated, Self
 
 from pydantic import Field, StringConstraints, field_validator, model_validator
 
-from ask_ai_mcp.models import OpenCodeGoAccountUsage, StrictModel
+from ask_ai_mcp.models import OpenCodeGoAccountUsage, ProviderTimeoutStatus, StrictModel
 
 
 class CodeReviewModel(StrEnum):
@@ -271,6 +271,15 @@ class CodeReviewStatus(StrictModel):
     failure_code: CodeReviewFailureCode | None = None
     provider_failure_class: CodeReviewProviderFailureClass | None = None
     validation_stage: CodeReviewValidationStage | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    latency_ms: int | None = Field(default=None, ge=0)
+    timeout_phase: str | None = Field(default=None, pattern=r"^(connect|read|write|pool|unknown)$")
+    progress_source: str = Field(pattern=r"^(local_worker|provider_response|unavailable)$")
+    upstream_progress_confirmed: bool = False
+    usage_observed: bool = False
+    provider_timeout: ProviderTimeoutStatus | None = None
     model_identity_hidden: bool = True
     total_findings: int = Field(ge=0)
     offset: int = Field(ge=0)
@@ -331,3 +340,4 @@ class CodeReviewBackendStatus(StrictModel):
     catalog_version: str = Field(min_length=1, max_length=64)
     catalog_effective_at: datetime
     catalog_source_url: str = Field(min_length=1, max_length=512)
+    provider_timeout: ProviderTimeoutStatus

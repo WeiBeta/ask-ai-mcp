@@ -25,6 +25,12 @@ finish reason 与成本分布再收敛。固定 profile 为 `general`、`securit
 HTTP/传输失败另以不含响应正文的 `provider_failure_class` 区分 timeout、rate-limit、auth、
 upstream、transport 与 unknown。
 
+0.12.2 起，Review 使用统一的远程异步推理超时策略：连接 30 秒、连接池等待 30 秒、
+请求体写入 10 分钟、响应读取 2 小时。读取上限保持有限，避免断网、半开连接或上游停滞
+永久占用 worker；超时后仍禁止自动重试和切换模型。`running` 只表示本地 worker 正在等待，
+不声称 OpenCode 上游仍在生成。状态和 prompt-free audit 会给出策略、elapsed、timeout phase、
+usage 是否已取得以及上游进度是否得到确认；当前非流式 Go 端点无法抽检实时 token 增长。
+
 付费前的 prompt 预检只针对模型上下文硬边界：以固定 UTF-8 估算、1M context、128K 总生成
 预算和额外安全余量判断。普通 2–3 万 token 大审查不会因为旧 8K/16K 经验而被提前拒绝；只有
 逼近上下文边界时才以 `REVIEW_PARTITION_REQUIRED` 零 provider call 失败，并返回确定性、

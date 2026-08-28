@@ -7,6 +7,7 @@ import sqlite3
 from pathlib import Path
 
 import httpx
+import pytest
 
 from ask_ai_mcp.deepseek import DeepSeekClient
 from ask_ai_mcp.hashing import candidate_payload_sha256
@@ -28,6 +29,7 @@ from ask_ai_mcp.opencode_pricing import OpenCodeGoModel, calculate_opencode_go_c
 from ask_ai_mcp.opencode_source import (
     OPENCODE_GO_MESSAGES_URL,
     OpenCodeQwenMessagesClient,
+    OpenCodeSourceRequestError,
 )
 from ask_ai_mcp.usage import UsageStore
 
@@ -223,6 +225,35 @@ def test_qwen_multimodal_request_uses_messages_protocol_and_cache_accounting(
     assert summary.estimated_cost_usd_by_provider_model == {
         "qwen3.8-max": summary.estimated_cost_usd
     }
+
+
+def test_remote_qwen_timeout_is_phase_specific_and_prompt_free(tmp_path: Path) -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        raise httpx.ReadTimeout("PRIVATE_REMOTE_QWEN_OUTPUT", request=request)
+
+    client = OpenCodeQwenMessagesClient(
+        api_key_provider=lambda: "opaque-opencode-key-12345",
+        usage_store=UsageStore(tmp_path / "usage.db"),
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(OpenCodeSourceRequestError) as raised:
+        client.chat(
+            {
+                "model": OpenCodeGoModel.QWEN_3_8_MAX.value,
+                "messages": [{"role": "user", "content": [{"type": "text", "text": "x"}]}],
+                "max_tokens": 1,
+            },
+            vision=False,
+        )
+
+    assert calls == 1
+    assert raised.value.timeout_phase == "read"
+    assert raised.value.provider_timeout["read_seconds"] == 7_200
+    assert "PRIVATE_REMOTE_QWEN_OUTPUT" not in str(raised.value.audit)
 
 
 def test_local_ledger_blocks_an_exhausted_account_without_cross_account_rotation(

@@ -24,6 +24,14 @@ from ask_ai_mcp.opencode_pricing import (
     OpenCodeGoProtocol,
     calculate_opencode_go_cost,
 )
+from ask_ai_mcp.provider_timeout import (
+    REMOTE_ASYNC_GENERATION_TIMEOUT,
+    REMOTE_HEALTH_TIMEOUT,
+    ProviderTimeoutPolicy,
+    prompt_free_transport_audit,
+    timeout_phase,
+    timeout_policy_with_read_seconds,
+)
 from ask_ai_mcp.qwen import QwenClientError
 from ask_ai_mcp.qwen_source import LocalQwenSourceBackend
 from ask_ai_mcp.usage import UsageStore
@@ -37,6 +45,17 @@ class _RemoteQwenConfig:
     model_id: str = OpenCodeGoModel.QWEN_3_8_MAX.value
 
 
+class OpenCodeSourceRequestError(QwenClientError):
+    """Content-free transport failure details for the source job controller."""
+
+    def __init__(self, error: httpx.HTTPError, *, policy: ProviderTimeoutPolicy, elapsed_ms: int):
+        super().__init__("OpenCode Go Qwen request failed")
+        self.latency_ms = elapsed_ms
+        self.timeout_phase = timeout_phase(error)
+        self.provider_timeout = policy.status_metadata()
+        self.audit = prompt_free_transport_audit(error, policy=policy, elapsed_ms=elapsed_ms)
+
+
 class OpenCodeQwenMessagesClient:
     """Translate the existing bounded source request to Anthropic Messages."""
 
@@ -47,7 +66,8 @@ class OpenCodeQwenMessagesClient:
         api_key_provider=None,
         usage_store: UsageStore | None = None,
         transport: httpx.BaseTransport | None = None,
-        timeout_seconds: float = 600.0,
+        timeout_seconds: float | None = None,
+        timeout_policy: ProviderTimeoutPolicy | None = None,
     ) -> None:
         selected = account or (
             OpenCodeAccount(uid="injected-test", alias="injected-test")
@@ -61,7 +81,12 @@ class OpenCodeQwenMessagesClient:
         self.api_key_provider = api_key_provider or credentials.get_api_key
         self.usage_store = usage_store or UsageStore()
         self.transport = transport
-        self.timeout = httpx.Timeout(timeout_seconds, connect=10.0)
+        self.timeout_policy = timeout_policy or (
+            timeout_policy_with_read_seconds(REMOTE_ASYNC_GENERATION_TIMEOUT, timeout_seconds)
+            if timeout_seconds is not None
+            else REMOTE_ASYNC_GENERATION_TIMEOUT
+        )
+        self.timeout = self.timeout_policy.as_httpx()
         self.config = _RemoteQwenConfig()
 
     def _headers(self) -> dict[str, str]:
@@ -79,7 +104,7 @@ class OpenCodeQwenMessagesClient:
         try:
             with httpx.Client(
                 transport=self.transport,
-                timeout=self.timeout,
+                timeout=REMOTE_HEALTH_TIMEOUT.as_httpx(),
                 follow_redirects=False,
                 trust_env=False,
             ) as client:
@@ -131,10 +156,18 @@ class OpenCodeQwenMessagesClient:
             raise QwenClientError(
                 f"OpenCode Go returned HTTP {error.response.status_code}"
             ) from None
-        except (httpx.HTTPError, TypeError, ValueError):
+        except httpx.RequestError as error:
+            status = "timeout" if isinstance(error, httpx.TimeoutException) else "transport_error"
+            self._record({}, started, status)
+            raise OpenCodeSourceRequestError(
+                error,
+                policy=self.timeout_policy,
+                elapsed_ms=max(0, round((perf_counter() - started) * 1_000)),
+            ) from None
+        except (TypeError, ValueError):
             status = "invalid_response"
             self._record({}, started, status)
-            raise QwenClientError("OpenCode Go Qwen request failed") from None
+            raise QwenClientError("OpenCode Go Qwen response was invalid") from None
         self._record(data, started, status)
         return normalized
 
@@ -279,6 +312,7 @@ class OpenCodeQwenSourceBackend(LocalQwenSourceBackend):
             ready=ready,
             model_id=self.client.config.model_id,
             runtime=OpenCodeGoProtocol.ANTHROPIC_MESSAGES.value,
+            provider_timeout=self.client.timeout_policy.status_metadata(),
             supported_profiles=[
                 SourceExtractionProfile.DOCUMENT_EVIDENCE,
                 SourceExtractionProfile.VISUAL_STRUCTURE,

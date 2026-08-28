@@ -43,6 +43,13 @@ from ask_ai_mcp.opencode_pricing import (
     OpenCodeGoRateBand,
     calculate_opencode_go_cost_breakdown,
 )
+from ask_ai_mcp.provider_timeout import (
+    REMOTE_ASYNC_GENERATION_TIMEOUT,
+    REMOTE_HEALTH_TIMEOUT,
+    ProviderTimeoutPolicy,
+    prompt_free_transport_audit,
+    timeout_policy_with_read_seconds,
+)
 from ask_ai_mcp.usage import UsageStore
 
 OPENCODE_GO_CHAT_URL = "https://opencode.ai/zen/go/v1/chat/completions"
@@ -100,7 +107,8 @@ class CodingManager:
         account: OpenCodeAccount | None = None,
         api_key_provider=None,
         transport: httpx.BaseTransport | None = None,
-        timeout_seconds: float = 1_800.0,
+        timeout_seconds: float | None = None,
+        timeout_policy: ProviderTimeoutPolicy | None = None,
         executor: ThreadPoolExecutor | None = None,
         state_root: Path | None = None,
     ) -> None:
@@ -124,7 +132,12 @@ class CodingManager:
         if api_key_provider is not None:
             self._credential_configured = lambda: True
         self.transport = transport
-        self.timeout = httpx.Timeout(timeout_seconds, connect=15.0)
+        self.timeout_policy = timeout_policy or (
+            timeout_policy_with_read_seconds(REMOTE_ASYNC_GENERATION_TIMEOUT, timeout_seconds)
+            if timeout_seconds is not None
+            else REMOTE_ASYNC_GENERATION_TIMEOUT
+        )
+        self.timeout = self.timeout_policy.as_httpx()
         self.executor = executor or ThreadPoolExecutor(
             max_workers=2, thread_name_prefix="ask-ai-coding"
         )
@@ -154,7 +167,7 @@ class CodingManager:
             details.append("OpenCode Go credential is not configured")
         if check_remote and credentials_ready:
             try:
-                with self._client() as client:
+                with self._client(timeout=REMOTE_HEALTH_TIMEOUT.as_httpx()) as client:
                     response = client.get(OPENCODE_GO_MODELS_URL, headers=self._headers())
                     response.raise_for_status()
                     payload = response.json()
@@ -203,6 +216,7 @@ class CodingManager:
             account_ledger=ledger,
             catalog_version=OPENCODE_GO_PRICING_VERSION,
             catalog_source_url=OPENCODE_GO_PRICING_SOURCE_URL,
+            provider_timeout=self.timeout_policy.status_metadata(),
         )
 
     def submit(self, command: CodingSubmitCommand) -> CodingSubmission:
@@ -228,6 +242,7 @@ class CodingManager:
             "snapshot_sha256": snapshot.snapshot_sha256,
             "reasoning_effort": generation_policy.reasoning_effort,
             "max_output_tokens": generation_policy.max_output_tokens,
+            "provider_timeout": self.timeout_policy.status_metadata(),
             "detail": "coding candidate is queued",
         }
         _atomic_json(job_root / "job.json", record)
@@ -270,6 +285,27 @@ class CodingManager:
             patch = patch_path.read_text(encoding="utf-8")
         if candidate_path.is_file():
             candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+        provider_error_path = job_root / "audit" / "provider-error.json"
+        provider_error = (
+            json.loads(provider_error_path.read_text(encoding="utf-8"))
+            if provider_error_path.is_file()
+            else {}
+        )
+        latency_ms = record.get("latency_ms")
+        if (
+            latency_ms is None
+            and record["state"] == CodingJobState.RUNNING.value
+            and record.get("started_at")
+        ):
+            latency_ms = max(
+                0,
+                round(
+                    (
+                        datetime.now(UTC) - datetime.fromisoformat(record["started_at"])
+                    ).total_seconds()
+                    * 1_000
+                ),
+            )
         chunk = patch[command.offset : command.offset + command.limit]
         next_offset = (
             command.offset + len(chunk) if command.offset + len(chunk) < len(patch) else None
@@ -283,6 +319,21 @@ class CodingManager:
             model=submitted.model,
             reasoning_effort=str(record.get("reasoning_effort", "max")),
             max_output_tokens=int(record.get("max_output_tokens", 131_072)),
+            created_at=record["created_at"],
+            started_at=record.get("started_at"),
+            completed_at=record.get("completed_at"),
+            latency_ms=latency_ms,
+            timeout_phase=provider_error.get("timeout_phase"),
+            progress_source=(
+                "provider_response"
+                if record.get("usage_observed")
+                else "local_worker"
+                if record["state"] in {CodingJobState.QUEUED.value, CodingJobState.RUNNING.value}
+                else "unavailable"
+            ),
+            upstream_progress_confirmed=bool(record.get("usage_observed")),
+            usage_observed=bool(record.get("usage_observed")),
+            provider_timeout=record.get("provider_timeout"),
             candidate_sha256=record.get("candidate_sha256"),
             changed_files=list(record.get("changed_files", [])),
             summary=candidate.get("summary"),
@@ -297,12 +348,17 @@ class CodingManager:
         job_root = self.jobs_root / job_id
         record_path = job_root / "job.json"
         record = json.loads(record_path.read_text(encoding="utf-8"))
-        record.update(state=CodingJobState.RUNNING.value, detail="coding candidate is running")
+        record.update(
+            state=CodingJobState.RUNNING.value,
+            detail="coding candidate is running locally; upstream progress is not observable",
+            started_at=datetime.now(UTC).isoformat(),
+        )
         _atomic_json(record_path, record)
         started = perf_counter()
         priced_at = datetime.now(UTC)
         try:
             response = self._request(command, snapshot)
+            record["usage_observed"] = True
             output = job_root / "output"
             output.mkdir(parents=True, exist_ok=True)
             _atomic_json(
@@ -344,15 +400,18 @@ class CodingManager:
                 completed_at=datetime.now(UTC).isoformat(),
                 candidate_sha256=candidate_hash,
                 changed_files=[change.file for change in payload.changes],
+                latency_ms=max(0, round((perf_counter() - started) * 1_000)),
             )
         except Exception as error:
-            if isinstance(error, httpx.HTTPStatusError):
-                self._write_http_error(job_root, error.response)
+            elapsed_ms = max(0, round((perf_counter() - started) * 1_000))
+            if isinstance(error, (httpx.HTTPStatusError, httpx.RequestError)):
+                self._write_provider_error(job_root, error, elapsed_ms=elapsed_ms)
             record.update(
                 state=CodingJobState.FAILED.value,
                 detail="coding candidate failed; inspect prompt-free local error metadata",
                 completed_at=datetime.now(UTC).isoformat(),
                 error_kind=self._failure_kind(error),
+                latency_ms=elapsed_ms,
             )
         _atomic_json(record_path, record)
 
@@ -419,21 +478,20 @@ class CodingManager:
             "usage": response.get("usage") if isinstance(response.get("usage"), dict) else {},
         }
 
-    @staticmethod
-    def _write_http_error(job_root: Path, response: httpx.Response) -> None:
-        error_type = "HTTPError"
-        message = "provider request failed"
-        try:
-            payload = response.json()
-            error = payload.get("error", {}) if isinstance(payload, dict) else {}
-            if isinstance(error, dict):
-                error_type = str(error.get("type", error_type))[:80]
-                message = str(error.get("message", message))[:500]
-        except ValueError:
-            pass
+    def _write_provider_error(
+        self,
+        job_root: Path,
+        error: httpx.HTTPStatusError | httpx.RequestError,
+        *,
+        elapsed_ms: int,
+    ) -> None:
         _atomic_json(
             job_root / "audit" / "provider-error.json",
-            {"status_code": response.status_code, "error_type": error_type, "message": message},
+            prompt_free_transport_audit(
+                error,
+                policy=self.timeout_policy,
+                elapsed_ms=elapsed_ms,
+            ),
         )
 
     @staticmethod
@@ -613,10 +671,10 @@ class CodingManager:
             ),
         }
 
-    def _client(self) -> httpx.Client:
+    def _client(self, *, timeout: httpx.Timeout | None = None) -> httpx.Client:
         return httpx.Client(
             transport=self.transport,
-            timeout=self.timeout,
+            timeout=timeout or self.timeout,
             follow_redirects=False,
             trust_env=False,
         )

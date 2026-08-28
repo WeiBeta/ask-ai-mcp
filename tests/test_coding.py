@@ -186,6 +186,11 @@ def test_candidate_uses_fixed_model_max_reasoning_and_returns_external_diff(
     assert status.model is model
     assert status.reasoning_effort == "max"
     assert status.max_output_tokens == 131_072
+    assert status.provider_timeout.policy_name == "remote_async_generation_v1"
+    assert status.provider_timeout.read_seconds == 7_200
+    assert status.usage_observed is True
+    assert status.upstream_progress_confirmed is True
+    assert status.progress_source == "provider_response"
     assert "x + 2" in status.patch_chunk
     assert status.changed_files == ["Counter.cs"]
     assert (root / "Counter.cs").read_text(encoding="utf-8") == original
@@ -234,6 +239,8 @@ def test_coding_backend_reports_live_availability_for_all_five_models(tmp_path: 
     assert all(item.available for item in status.models)
     assert all(item.requested_reasoning_effort == "max" for item in status.models)
     assert all(item.max_output_tokens == 131_072 for item in status.models)
+    assert status.provider_timeout.policy_name == "remote_async_generation_v1"
+    assert status.provider_timeout.read_seconds == 7_200
 
 
 @pytest.mark.parametrize("model", ADVANCED_CODING_MODELS)
@@ -268,6 +275,45 @@ def test_advanced_coding_failure_never_retries_or_falls_back(
 
     assert status.state is CodingJobState.FAILED
     assert calls == [model.value]
+
+
+def test_coding_read_timeout_is_prompt_free_and_never_retried(tmp_path: Path) -> None:
+    root, commit = _repository(tmp_path)
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        raise httpx.ReadTimeout("PRIVATE_TIMEOUT_TEXT", request=request)
+
+    manager = CodingManager(
+        usage_store=UsageStore(tmp_path / "usage.db"),
+        snapshotter=CodingSnapshotter(CodeReviewRepositoryCatalog({"unity": root})),
+        account=OpenCodeAccount(uid="go-user-01", alias="Go User"),
+        api_key_provider=lambda: "opaque-test-key-1234567890",
+        transport=httpx.MockTransport(handler),
+        state_root=tmp_path / "coding-state",
+    )
+    submission = manager.submit(_command(commit, CodingModel.GLM_5_3))
+    deadline = time.monotonic() + 5
+    status = manager.status(CodingStatusCommand(job_id=submission.job_id))
+    while status.state in {CodingJobState.QUEUED, CodingJobState.RUNNING}:
+        if time.monotonic() >= deadline:
+            raise AssertionError("coding job did not complete")
+        time.sleep(0.02)
+        status = manager.status(CodingStatusCommand(job_id=submission.job_id))
+
+    audit_text = (
+        tmp_path / "coding-state" / "jobs" / submission.job_id / "audit" / "provider-error.json"
+    ).read_text(encoding="utf-8")
+    audit = json.loads(audit_text)
+    assert calls == 1
+    assert status.state is CodingJobState.FAILED
+    assert status.timeout_phase == "read"
+    assert status.usage_observed is False
+    assert status.upstream_progress_confirmed is False
+    assert audit["timeout_policy"]["read_seconds"] == 7_200
+    assert "PRIVATE_" not in audit_text
 
 
 def test_candidate_cannot_change_unlisted_file(tmp_path: Path) -> None:

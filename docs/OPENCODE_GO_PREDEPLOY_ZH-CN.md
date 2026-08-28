@@ -36,6 +36,11 @@ Core 初次生成/语义修复、Coding 五路与 Review 三路统一使用共�
 Perception 保持 reasoning none 和按提取 profile 控制的结构化证据上限，H3 不使用 completion
 预算。所有实际 effort/cap 必须写入状态、manifest 或 usage 审计，不能再散落为入口私有策略。
 
+远程推理的网络等待不再使用零散的 10/15/30 分钟默认值。0.12.2 统一为：异步 Coding、
+Review、远程 Perception 读取 2 小时；同步 Core toolsmith 读取 1 小时；连接/连接池 30 秒、
+写入 10 分钟。所有上限仍为有限值，且不触发自动重试。非流式 Go 请求只能确认本地 worker
+仍在等待，无法确认上游 request 状态或实时 token 输出；`/models` 仅用于模型可用性检查。
+
 Responses 请求使用严格 JSON Schema；Messages 适配器只接受 MCP 已生成的 Base64 data image，
 不会读取 URL、`file://` 或任意路径。
 

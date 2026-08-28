@@ -30,6 +30,11 @@ from ask_ai_mcp.models import (
 from ask_ai_mcp.opencode_generation import WIDE_MAX_OUTPUT_TOKENS
 from ask_ai_mcp.policy import PolicyViolation, require_tool_spec_allowed
 from ask_ai_mcp.pricing import calculate_cost_estimate, load_peak_pricing_effective_at
+from ask_ai_mcp.provider_timeout import (
+    REMOTE_SYNC_GENERATION_TIMEOUT,
+    ProviderTimeoutPolicy,
+    timeout_policy_with_read_seconds,
+)
 from ask_ai_mcp.usage import UsageStore
 
 DEEPSEEK_CHAT_COMPLETIONS_URL = "https://api.deepseek.com/chat/completions"
@@ -168,14 +173,20 @@ class DeepSeekClient:
         api_key_provider: Callable[[], str] | None = None,
         usage_store: UsageStore | None = None,
         transport: httpx.BaseTransport | None = None,
-        timeout_seconds: float = 120.0,
+        timeout_seconds: float | None = None,
+        timeout_policy: ProviderTimeoutPolicy | None = None,
         clock: Callable[[], datetime] | None = None,
         peak_pricing_effective_at: datetime | None = None,
     ) -> None:
         self.api_key_provider = api_key_provider or CredentialStore().get_api_key
         self.usage_store = usage_store or UsageStore()
         self.transport = transport
-        self.timeout = httpx.Timeout(timeout_seconds, connect=10.0)
+        self.timeout_policy = timeout_policy or (
+            timeout_policy_with_read_seconds(REMOTE_SYNC_GENERATION_TIMEOUT, timeout_seconds)
+            if timeout_seconds is not None
+            else REMOTE_SYNC_GENERATION_TIMEOUT
+        )
+        self.timeout = self.timeout_policy.as_httpx()
         self.clock = clock or (lambda: datetime.now(UTC))
         self.peak_pricing_effective_at = (
             peak_pricing_effective_at

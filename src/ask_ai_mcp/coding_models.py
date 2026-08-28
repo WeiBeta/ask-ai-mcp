@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from enum import StrEnum
 from pathlib import PurePosixPath
 from typing import Self
 
 from pydantic import Field, field_validator, model_validator
 
-from ask_ai_mcp.models import OpenCodeGoAccountUsage, StrictModel
+from ask_ai_mcp.models import OpenCodeGoAccountUsage, ProviderTimeoutStatus, StrictModel
 
 _HOST_PATH = re.compile(r"(?i)(?:[A-Z]:[\\/]+(?:Users|Dev|AI)[\\/])")
 _SECRET_TEXT = re.compile(
@@ -167,6 +168,15 @@ class CodingStatus(StrictModel):
     model: CodingModel
     reasoning_effort: str = "max"
     max_output_tokens: int = Field(default=131_072, ge=1, le=131_072)
+    created_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    latency_ms: int | None = Field(default=None, ge=0)
+    timeout_phase: str | None = Field(default=None, pattern=r"^(connect|read|write|pool|unknown)$")
+    progress_source: str = Field(pattern=r"^(local_worker|provider_response|unavailable)$")
+    upstream_progress_confirmed: bool = False
+    usage_observed: bool = False
+    provider_timeout: ProviderTimeoutStatus | None = None
     candidate_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     changed_files: list[str] = Field(default_factory=list, max_length=12)
     summary: str | None = Field(default=None, max_length=2_000)
@@ -195,3 +205,4 @@ class CodingBackendStatus(StrictModel):
     account_ledger: OpenCodeGoAccountUsage | None = None
     catalog_version: str
     catalog_source_url: str
+    provider_timeout: ProviderTimeoutStatus

@@ -15,6 +15,12 @@
 后续按模型日志收敛。服务端不接受 generic prompt、任意模型、任意 URL、Shell、测试命令、
 工作树写入、应用补丁、commit、push、重试次数或切换账户参数。
 
+0.12.2 起，Coding 与 Review、远程 Perception 共用异步推理超时策略：连接/连接池 30 秒、
+写入 10 分钟、读取 2 小时。`coding_status` 的 `running` 只确认本地 worker 未结束；OpenCode
+未提供本项目可用的逐请求状态查询，因此不会把本地等待伪装成上游心跳，也不会通过 `/models`
+猜测任务仍在生成。超时 audit 只保存阶段、耗时、策略和 usage 可见性，不保存响应正文；失败
+不会自动重试、切模型或重复计费。
+
 ## 快照和候选
 
 `ASK_AI_MCP_CODING_REPOSITORIES` 是仓库 ID 到精确 Git 根目录的 JSON 映射。提交时必须给出

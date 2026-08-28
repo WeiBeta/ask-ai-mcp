@@ -24,6 +24,12 @@ prefixes, case changes, similar prefixes, and parent traversal remain rejected.
 Version 0.10.0 adds atomic, project-specific Review patch staging. A validated
 patch is committed with a content-free receipt and both hashes must match before
 patch-only submission can reach the provider.
+Version 0.12.2 centralizes bounded provider timeout policy. Async Coding, Review,
+and remote Perception use a two-hour read window; synchronous Core uses one hour.
+Status and prompt-free audit metadata distinguish local worker activity from
+confirmed upstream progress. Local Qwen slot polling, ComfyUI job polling, and
+sandbox execution deadlines remain separate mechanisms. Streaming progress is a
+future opt-in experiment, not an implicit retry or protocol relaxation.
 ## Phase 0: policy and skeleton
 
 - Establish Windows-only package layout and locked dependencies.

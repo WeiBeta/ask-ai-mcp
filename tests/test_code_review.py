@@ -559,6 +559,8 @@ def test_backend_reports_model_specific_review_policies(tmp_path: Path) -> None:
     assert policies[CodeReviewModel.GLM_5_3] == ("max", 131_072)
     assert policies[CodeReviewModel.KIMI_K3] == ("max", 131_072)
     assert policies[CodeReviewModel.DEEPSEEK_V4_PRO] == ("max", 131_072)
+    assert status.provider_timeout.policy_name == "remote_async_generation_v1"
+    assert status.provider_timeout.read_seconds == 7_200
     assert status.patch_roots_configured is False
     assert status.patch_root_count == 0
 
@@ -1149,6 +1151,14 @@ def test_review_provider_failures_are_safely_classified_without_retry(
     assert status.provider_failure_class is expected
     assert expected.value in audit_text
     assert "PRIVATE_" not in audit_text
+    assert status.usage_observed is False
+    assert status.upstream_progress_confirmed is False
+    if request_error == "timeout":
+        audit = json.loads(audit_text)
+        assert status.timeout_phase == "read"
+        assert audit["timeout_phase"] == "read"
+        assert audit["timeout_policy"]["read_seconds"] == 7_200
+        assert audit["usage_observed"] is False
 
 
 def test_review_two_noncanonical_categories_fail_without_value_leak_or_retry(

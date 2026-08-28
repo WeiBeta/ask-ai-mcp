@@ -954,6 +954,14 @@ class SourceExtractionCommand(StrictModel):
         return self
 
 
+class ProviderTimeoutStatus(StrictModel):
+    policy_name: str = Field(min_length=1, max_length=80)
+    connect_seconds: float = Field(gt=0, le=300)
+    read_seconds: float = Field(gt=0, le=14_400)
+    write_seconds: float = Field(gt=0, le=3_600)
+    pool_seconds: float = Field(gt=0, le=300)
+
+
 class SourceBackendStatus(StrictModel):
     provider: ModelProvider = ModelProvider.LOCAL_QWEN
     configured: bool
@@ -962,6 +970,7 @@ class SourceBackendStatus(StrictModel):
     runtime: str | None = Field(default=None, min_length=1, max_length=120)
     supported_profiles: list[SourceExtractionProfile] = Field(default_factory=list, max_length=2)
     active_jobs: int = Field(default=0, ge=0, le=1)
+    provider_timeout: ProviderTimeoutStatus | None = None
     detail: str = Field(min_length=1, max_length=500)
 
 
@@ -993,6 +1002,14 @@ class SourceJobReport(StrictModel):
     artifacts: list[SourceOutputArtifact] = Field(default_factory=list, max_length=200)
     warnings: list[str] = Field(default_factory=list, max_length=50)
     failure_kind: str | None = Field(default=None, min_length=1, max_length=120)
+    latency_ms: int | None = Field(default=None, ge=0)
+    timeout_phase: str | None = Field(default=None, pattern=r"^(connect|read|write|pool|unknown)$")
+    progress_source: str = Field(
+        default="unavailable", pattern=r"^(local_worker|provider_response|llama_slots|unavailable)$"
+    )
+    upstream_progress_confirmed: bool = False
+    usage_observed: bool = False
+    provider_timeout: ProviderTimeoutStatus | None = None
 
 
 class EvidenceKind(StrEnum):

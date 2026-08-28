@@ -67,6 +67,13 @@ from ask_ai_mcp.opencode_pricing import (
     OpenCodeGoRateBand,
     calculate_opencode_go_cost_breakdown,
 )
+from ask_ai_mcp.provider_timeout import (
+    REMOTE_ASYNC_GENERATION_TIMEOUT,
+    REMOTE_HEALTH_TIMEOUT,
+    ProviderTimeoutPolicy,
+    prompt_free_transport_audit,
+    timeout_policy_with_read_seconds,
+)
 from ask_ai_mcp.usage import UsageStore
 
 OPENCODE_GO_CHAT_URL = "https://opencode.ai/zen/go/v1/chat/completions"
@@ -235,7 +242,8 @@ class CodeReviewManager:
         account: OpenCodeAccount | None = None,
         api_key_provider=None,
         transport: httpx.BaseTransport | None = None,
-        timeout_seconds: float = 900.0,
+        timeout_seconds: float | None = None,
+        timeout_policy: ProviderTimeoutPolicy | None = None,
         executor: ThreadPoolExecutor | None = None,
     ) -> None:
         self.account = account if account is not None else load_opencode_account(required=False)
@@ -273,7 +281,12 @@ class CodeReviewManager:
             else lambda: api_key_provider is not None
         )
         self.transport = transport
-        self.timeout = httpx.Timeout(timeout_seconds, connect=15.0)
+        self.timeout_policy = timeout_policy or (
+            timeout_policy_with_read_seconds(REMOTE_ASYNC_GENERATION_TIMEOUT, timeout_seconds)
+            if timeout_seconds is not None
+            else REMOTE_ASYNC_GENERATION_TIMEOUT
+        )
+        self.timeout = self.timeout_policy.as_httpx()
         self.executor = executor or ThreadPoolExecutor(
             max_workers=4, thread_name_prefix="ask-ai-code-review"
         )
@@ -306,7 +319,7 @@ class CodeReviewManager:
             details.append("OpenCode Go credential is not configured")
         if check_remote and credentials_ready:
             try:
-                with self._client() as client:
+                with self._client(timeout=REMOTE_HEALTH_TIMEOUT.as_httpx()) as client:
                     response = client.get(OPENCODE_GO_MODELS_URL, headers=self._headers())
                     response.raise_for_status()
                     payload = response.json()
@@ -353,6 +366,7 @@ class CodeReviewManager:
             catalog_version=OPENCODE_GO_PRICING_VERSION,
             catalog_effective_at=OPENCODE_GO_PRICING_EFFECTIVE_AT,
             catalog_source_url=OPENCODE_GO_PRICING_SOURCE_URL,
+            provider_timeout=self.timeout_policy.status_metadata(),
         )
 
     @classmethod
@@ -505,6 +519,7 @@ class CodeReviewManager:
             "context_tokens": generation_policy.context_tokens,
             "context_safety_reserve_tokens": CONTEXT_SAFETY_RESERVE_TOKENS,
             "temperature": TEMPERATURE,
+            "provider_timeout": self.timeout_policy.audit_metadata(),
         }
         _atomic_json(input_root / "manifest.json", manifest)
         now = datetime.now(UTC)
@@ -640,6 +655,19 @@ class CodeReviewManager:
             validation_stage = self._public_validation_stage(command.job_id)
             partition_plan = self._public_partition_plan(command.job_id)
             artifacts = self._artifacts(command.job_id, audit_only=True)
+        provider_error = self._provider_error_metadata(command.job_id)
+        provider_response_observed = (
+            self.store.jobs_root / command.job_id / "audit" / "provider-response.json"
+        ).is_file()
+        latency_ms = row["latency_ms"]
+        if latency_ms is None and state is CodeReviewJobState.RUNNING and row["started_at"]:
+            latency_ms = max(
+                0,
+                round(
+                    (datetime.now(UTC) - datetime.fromisoformat(row["started_at"])).total_seconds()
+                    * 1_000
+                ),
+            )
         total = len(payload.findings)
         findings = payload.findings[command.offset : command.offset + command.limit]
         next_offset = command.offset + len(findings)
@@ -655,6 +683,21 @@ class CodeReviewManager:
             failure_code=failure_code,
             provider_failure_class=provider_failure_class,
             validation_stage=validation_stage,
+            created_at=row["created_at"],
+            started_at=row["started_at"],
+            completed_at=row["completed_at"],
+            latency_ms=latency_ms,
+            timeout_phase=provider_error.get("timeout_phase"),
+            progress_source=(
+                "provider_response"
+                if provider_response_observed
+                else "local_worker"
+                if state in {CodeReviewJobState.QUEUED, CodeReviewJobState.RUNNING}
+                else "unavailable"
+            ),
+            upstream_progress_confirmed=provider_response_observed,
+            usage_observed=provider_response_observed,
+            provider_timeout=self._job_timeout_status(command.job_id),
             total_findings=total,
             offset=command.offset,
             limit=command.limit,
@@ -665,6 +708,32 @@ class CodeReviewManager:
             partition_plan=partition_plan,
             artifacts=artifacts,
         )
+
+    def _provider_error_metadata(self, job_id: str) -> dict[str, Any]:
+        path = self.store.jobs_root / job_id / "audit" / "provider-error.json"
+        if not path.is_file():
+            return {}
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+            return value if isinstance(value, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def _job_timeout_status(self, job_id: str) -> dict[str, Any] | None:
+        path = self.store.jobs_root / job_id / "input" / "manifest.json"
+        if not path.is_file():
+            return None
+        try:
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+            value = manifest.get("provider_timeout") if isinstance(manifest, dict) else None
+            if not isinstance(value, dict):
+                return None
+            result = dict(value)
+            if "name" in result:
+                result["policy_name"] = result.pop("name")
+            return result
+        except (OSError, ValueError):
+            return None
 
     def _public_failure_code(self, job_id: str, value: object) -> CodeReviewFailureCode:
         raw = str(value or "")
@@ -734,7 +803,7 @@ class CodeReviewManager:
         if state is CodeReviewJobState.SUCCEEDED:
             return "review completed; adjudicate while model identity remains hidden"
         if state is not CodeReviewJobState.FAILED:
-            return "review is queued or running"
+            return "review is queued or running locally; upstream progress is not observable"
         details = {
             CodeReviewFailureCode.REVIEW_PARTITION_REQUIRED: (
                 "review input approaches the model context boundary; use the deterministic "
@@ -845,7 +914,11 @@ class CodeReviewManager:
             )
         except Exception as error:
             if isinstance(error, (httpx.HTTPStatusError, httpx.RequestError)):
-                self._write_provider_error(job_id, error)
+                self._write_provider_error(
+                    job_id,
+                    error,
+                    elapsed_ms=max(0, round((perf_counter() - started) * 1_000)),
+                )
             self.store.fail(
                 job_id,
                 self._failure_kind(error),
@@ -941,18 +1014,22 @@ class CodeReviewManager:
         }
 
     def _write_provider_error(
-        self, job_id: str, error: httpx.HTTPStatusError | httpx.RequestError
+        self,
+        job_id: str,
+        error: httpx.HTTPStatusError | httpx.RequestError,
+        *,
+        elapsed_ms: int,
     ) -> None:
         failure_class = self._provider_failure_class(error)
-        status_code = (
-            error.response.status_code if isinstance(error, httpx.HTTPStatusError) else None
+        audit = prompt_free_transport_audit(
+            error,
+            policy=self.timeout_policy,
+            elapsed_ms=elapsed_ms,
         )
+        audit["provider_failure_class"] = failure_class.value
         _atomic_json(
             self.store.jobs_root / job_id / "audit" / "provider-error.json",
-            {
-                "status_code": status_code,
-                "provider_failure_class": failure_class.value,
-            },
+            audit,
         )
 
     @staticmethod
@@ -1279,10 +1356,10 @@ class CodeReviewManager:
             ),
         }
 
-    def _client(self) -> httpx.Client:
+    def _client(self, *, timeout: httpx.Timeout | None = None) -> httpx.Client:
         return httpx.Client(
             transport=self.transport,
-            timeout=self.timeout,
+            timeout=timeout or self.timeout,
             follow_redirects=False,
             trust_env=False,
         )
