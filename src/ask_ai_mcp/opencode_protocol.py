@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from ask_ai_mcp.opencode_pricing import (
@@ -61,7 +62,7 @@ def request_body_for(
 ) -> dict[str, Any]:
     if provider_protocol(model) is OpenCodeGoProtocol.CHAT_COMPLETIONS:
         return chat_body
-    return {
+    body = {
         "model": model.value,
         "input": chat_body["messages"],
         "reasoning": {"effort": chat_body["reasoning_effort"]},
@@ -76,6 +77,68 @@ def request_body_for(
         "max_output_tokens": chat_body["max_tokens"],
         "store": False,
     }
+    if model is OpenCodeGoModel.GROK_4_6:
+        # Start an SSE response promptly so a slow reasoning pass does not sit
+        # behind an upstream non-streaming response-header timeout.
+        body["stream"] = True
+    return body
+
+
+def decode_provider_response(model: OpenCodeGoModel, response_body: bytes) -> dict[str, Any]:
+    """Decode one JSON response or one complete Responses SSE transcript."""
+
+    stripped = response_body.lstrip()
+    if not stripped.startswith((b"data:", b"event:")):
+        value = json.loads(response_body)
+        if not isinstance(value, dict):
+            raise ValueError("OpenCode Go returned a non-object response")
+        return value
+    if provider_protocol(model) is not OpenCodeGoProtocol.RESPONSES:
+        raise ValueError("unexpected SSE response for a non-Responses route")
+
+    final_response: dict[str, Any] | None = None
+    event_name: str | None = None
+    data_lines: list[str] = []
+
+    def consume_event() -> None:
+        nonlocal final_response, event_name, data_lines
+        if not data_lines:
+            event_name = None
+            return
+        data = "\n".join(data_lines)
+        data_lines = []
+        if data == "[DONE]":
+            event_name = None
+            return
+        event = json.loads(data)
+        if not isinstance(event, dict):
+            raise ValueError("OpenCode Go returned a non-object SSE event")
+        selected_type = event_name or event.get("type")
+        if selected_type in {
+            "response.completed",
+            "response.failed",
+            "response.incomplete",
+        }:
+            response = event.get("response")
+            if not isinstance(response, dict):
+                raise ValueError("Responses SSE terminal event is missing its response object")
+            final_response = response
+        event_name = None
+
+    text = response_body.decode("utf-8")
+    for line in text.splitlines():
+        if not line:
+            consume_event()
+        elif line.startswith("event:"):
+            event_name = line[6:].strip()
+        elif line.startswith("data:"):
+            data_lines.append(line[5:].lstrip())
+        elif not line.startswith(":"):
+            raise ValueError("OpenCode Go returned malformed SSE framing")
+    consume_event()
+    if final_response is None:
+        raise ValueError("Responses SSE stream ended without a terminal response")
+    return final_response
 
 
 def normalize_provider_response(model: OpenCodeGoModel, data: dict[str, Any]) -> dict[str, Any]:

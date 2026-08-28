@@ -1,11 +1,14 @@
 """Offline strict-schema and terminal-status tests for Responses routes."""
 
+import json
+
 import pytest
 
 from ask_ai_mcp.code_review_models import CodeReviewPayload
 from ask_ai_mcp.opencode_pricing import OpenCodeGoModel
 from ask_ai_mcp.opencode_protocol import (
     OpenCodeProviderResponseError,
+    decode_provider_response,
     normalize_provider_response,
     request_body_for,
 )
@@ -40,6 +43,44 @@ def test_responses_request_recursively_normalizes_strict_schema() -> None:
         schema_name="review",
     )
     _assert_strict_objects(body["text"]["format"]["schema"])
+    assert body["stream"] is True
+
+
+def test_responses_sse_returns_only_the_terminal_response() -> None:
+    completed = {
+        "status": "completed",
+        "output_text": "{}",
+        "usage": {"input_tokens": 12, "output_tokens": 3},
+    }
+    body = (
+        "event: response.created\n"
+        'data: {"type":"response.created","response":{"status":"in_progress"}}\n\n'
+        "event: response.output_text.delta\n"
+        'data: {"type":"response.output_text.delta","delta":"{}"}\n\n'
+        "event: response.completed\n"
+        f"data: {json.dumps({'type': 'response.completed', 'response': completed})}\n\n"
+        "data: [DONE]\n\n"
+    ).encode()
+
+    assert decode_provider_response(OpenCodeGoModel.GROK_4_6, body) == completed
+
+
+def test_responses_sse_requires_a_terminal_response() -> None:
+    body = b'data: {"type":"response.output_text.delta","delta":"partial"}\n\n'
+
+    with pytest.raises(ValueError, match="without a terminal response"):
+        decode_provider_response(OpenCodeGoModel.GROK_4_6, body)
+
+
+def test_responses_sse_preserves_terminal_failure_status() -> None:
+    body = (
+        b"event: response.failed\n"
+        b'data: {"type":"response.failed","response":{"status":"failed"}}\n\n'
+    )
+
+    decoded = decode_provider_response(OpenCodeGoModel.GROK_4_6, body)
+    with pytest.raises(OpenCodeProviderResponseError):
+        normalize_provider_response(OpenCodeGoModel.GROK_4_6, decoded)
 
 
 @pytest.mark.parametrize("status", ["failed", "cancelled", "in_progress", "queued"])

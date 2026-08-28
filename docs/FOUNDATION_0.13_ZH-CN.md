@@ -2,7 +2,7 @@
 
 ## 定位
 
-0.13.3 是隔离开发和灰度验证用的测试大版本。当前生产基线继续保持
+0.13.4 是隔离开发和灰度验证用的测试大版本。当前生产基线继续保持
 0.12.3；未经完整离线验收、冻结差异外部 Review、物理机灰度和用户明确
 合并决定，不得替换生产入口。
 
@@ -94,3 +94,11 @@ cache/reasoning 明细时明确记录为 `provider_dashboard_totals`，不得伪
 - 按 Grok 官方枚举改用 `xhigh`，不以第二次付费请求试错；
 - Review/Coding 在付费前将 Grok 输入限制为 199,999 token，达到 200K 高价档时 fail closed；
 - Review 返回确定性分片建议，Coding 要求显式减少 target/context 文件；两者均不自动重新提交。
+
+## 0.13.4 Grok 流式传输灰度
+
+- 0.13.3 的真实 Review 请求完整发出后，远端在约 30 秒内、任何响应头之前断开；
+- Grok Responses 改为单次 SSE 流式请求，以便上游尽早建立响应并持续发送事件；
+- 只接受 `response.completed`、`response.failed` 或 `response.incomplete` 的完整终态对象；
+- 缺少终态、畸形 SSE 或中途断流继续 fail closed，不自动重试、换模型或追加调用；
+- GLM、Kimi 与 DeepSeek 的 Chat Completions 传输保持不变。

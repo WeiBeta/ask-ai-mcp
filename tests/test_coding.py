@@ -152,18 +152,27 @@ def test_candidate_uses_fixed_model_policy_and_returns_external_diff(
             assert body["max_output_tokens"] == 131_072
             assert str(root) not in body["input"][1]["content"]
             assert body["text"]["format"]["strict"] is True
+            assert body["stream"] is True
+            completed = {
+                "status": "completed",
+                "output_text": json.dumps(payload),
+                "usage": {
+                    "input_tokens": 1_000,
+                    "input_tokens_details": {"cached_tokens": 500},
+                    "output_tokens": 200,
+                    "output_tokens_details": {"reasoning_tokens": 80},
+                },
+            }
             return httpx.Response(
                 200,
-                json={
-                    "status": "completed",
-                    "output_text": json.dumps(payload),
-                    "usage": {
-                        "input_tokens": 1_000,
-                        "input_tokens_details": {"cached_tokens": 500},
-                        "output_tokens": 200,
-                        "output_tokens_details": {"reasoning_tokens": 80},
-                    },
-                },
+                headers={"content-type": "text/event-stream"},
+                text=(
+                    "event: response.in_progress\n"
+                    'data: {"type":"response.in_progress"}\n\n'
+                    "event: response.completed\n"
+                    f"data: {json.dumps({'type': 'response.completed', 'response': completed})}\n\n"
+                    "data: [DONE]\n\n"
+                ),
             )
         assert str(request.url) == OPENCODE_GO_CHAT_URL
         assert body["reasoning_effort"] == "max"

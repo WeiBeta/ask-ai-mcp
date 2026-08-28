@@ -57,7 +57,7 @@ per-job artifacts; the SQLite review ledger stores hashes, metrics, adjudication
 and outcomes but not full source, diff, prompt, credential, or ordinary model output.
 Status keeps model names hidden while a person or Sol records adjudication.
 
-In the 0.13.3 test foundation, Coding/Review backend status also reports compact,
+In the 0.13.4 test foundation, Coding/Review backend status also reports compact,
 advisory-only route orders derived locally from the pricing window, remote availability,
 effective ledger allowance, and any model-specific standard-price input ceiling. The selected model remains explicit and failures never
 cause an automatic retry or model switch. Coding/Review backend and job status also report
@@ -65,6 +65,9 @@ whether encrypted wire capture is active, its bounded retention, and a content-f
 `wire_capture_uid`. Exact request/streamed-response bodies are held only in the
 separate UID-linked AES-256-GCM evidence store; API keys and authorization headers
 are never captured. No MCP tool can decrypt that store or edit arbitrary ledger rows.
+
+Grok's Responses route uses one SSE request and accepts only a complete terminal
+response event; all Chat Completions routes retain their existing transport.
 
 ## Multimodal source tools
 

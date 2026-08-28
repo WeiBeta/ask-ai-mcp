@@ -584,21 +584,28 @@ def test_grok_review_uses_responses_protocol_and_normalizes_usage(tmp_path: Path
         assert body["reasoning"] == {"effort": "xhigh"}
         assert body["max_output_tokens"] == 131_072
         assert body["text"]["format"]["strict"] is True
+        assert body["stream"] is True
         assert "input" in body and "messages" not in body
+        completed = {
+            "status": "completed",
+            "output_text": json.dumps({"findings": [], "omitted_context": [], "truncated": False}),
+            "usage": {
+                "input_tokens": 200,
+                "input_tokens_details": {"cached_tokens": 50},
+                "output_tokens": 40,
+                "output_tokens_details": {"reasoning_tokens": 20},
+            },
+        }
         return httpx.Response(
             200,
-            json={
-                "status": "completed",
-                "output_text": json.dumps(
-                    {"findings": [], "omitted_context": [], "truncated": False}
-                ),
-                "usage": {
-                    "input_tokens": 200,
-                    "input_tokens_details": {"cached_tokens": 50},
-                    "output_tokens": 40,
-                    "output_tokens_details": {"reasoning_tokens": 20},
-                },
-            },
+            headers={"content-type": "text/event-stream"},
+            text=(
+                "event: response.in_progress\n"
+                'data: {"type":"response.in_progress"}\n\n'
+                "event: response.completed\n"
+                f"data: {json.dumps({'type': 'response.completed', 'response': completed})}\n\n"
+                "data: [DONE]\n\n"
+            ),
         )
 
     usage = UsageStore(tmp_path / "usage.db")

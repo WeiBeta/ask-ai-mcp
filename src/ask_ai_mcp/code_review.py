@@ -75,6 +75,7 @@ from ask_ai_mcp.opencode_protocol import (
 )
 from ask_ai_mcp.opencode_protocol import (
     OpenCodeProviderResponseError,
+    decode_provider_response,
     endpoint_for,
     normalize_provider_response,
     provider_protocol,
@@ -1346,7 +1347,7 @@ class CodeReviewManager:
                 if capture is not None:
                     capture.complete_response()
                 response.raise_for_status()
-            data = json.loads(response_body)
+            data = decode_provider_response(model, bytes(response_body))
         except Exception as error:
             if capture is not None:
                 capture.fail(error)
