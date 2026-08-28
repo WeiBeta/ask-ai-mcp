@@ -9,6 +9,13 @@ all five existing surfaces, including compatibility Full.
 Coding-only advertises exactly three coding-candidate tools and is also absent
 from Core, Subagent, Perception, H3, Review, and compatibility Full.
 
+In the 0.13 test foundation these executable names are compatibility profiles,
+not provider or accounting boundaries. Profiles compose explicit capabilities;
+provider/model routing and the shared entitlement/ledger/approval services are
+separately tested internal modules. There is no accounting MCP process and no
+second usage database. Tool order and input parameter schemas remain frozen to
+the 0.12.3 surface during initial gray testing.
+
 ## Optional bounded coding worker
 
 `ask-ai-mcp-coding.exe` exposes `coding_backend_status`, `coding_submit`, and

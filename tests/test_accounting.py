@@ -66,8 +66,9 @@ def test_accounting_services_share_one_compatible_store(tmp_path) -> None:
 def test_user_approval_policy_is_independent_from_subscription_entitlement() -> None:
     selected = UserApprovalPolicy()
     assert (
-        selected.evaluate(ApprovalAction.USE_CONFIGURED_SUBSCRIPTION)
-        .requires_explicit_authorization
+        selected.evaluate(
+            ApprovalAction.USE_CONFIGURED_SUBSCRIPTION
+        ).requires_explicit_authorization
         is False
     )
     for action in (

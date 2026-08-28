@@ -508,7 +508,7 @@ def source_job_status(
 
 @core_tool(
     annotations=ToolAnnotations(
-        title="DeepSeek usage status",
+        title="Ask AI subscription usage status",
         readOnlyHint=True,
         destructiveHint=False,
         idempotentHint=True,
@@ -674,7 +674,7 @@ def list_registered_tools() -> RegisteredToolList:
     """List locally registered tools, execution counts, and blocking reasons.
 
     This is a local, prompt-free registry read. Every candidate tree is
-    rehashed before it is returned. It does not call DeepSeek or inspect source
+    rehashed before it is returned. It does not call a model or inspect source
     files.
     """
     return get_verified_runner().list_registered_tools()

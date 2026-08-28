@@ -109,6 +109,9 @@ def test_full_mcp_surface_and_raw_schema_are_narrow() -> None:
     assert review_annotations is not None
     assert review_annotations.readOnlyHint is False
     assert review_annotations.idempotentHint is False
+    usage_annotations = by_name["usage_status"].annotations
+    assert usage_annotations is not None
+    assert usage_annotations.title == "Ask AI subscription usage status"
     guidance_schema = by_name["workflow_guidance"].parameters
     assert set(guidance_schema["properties"]["topic"]["enum"]) == {
         "overview",

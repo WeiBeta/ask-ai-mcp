@@ -2,9 +2,9 @@
 
 ## Objective
 
-Ask AI MCP lets Claude Desktop and Codex Desktop offload repetitive tool-making
-and source preprocessing to DeepSeek while keeping final knowledge work under
-Opus/Sol control.
+Ask AI MCP lets Claude Desktop and Codex Desktop offload bounded tool-making,
+coding, review, perception and local media work to restricted workers while
+keeping final judgment and repository authority under Opus/Sol control.
 
 The primary business workload is evidence-based document production from mixed
 file bundles. Typical inputs include Markdown, text, PDF, Word, PowerPoint,
@@ -16,11 +16,11 @@ PPTX, and XLSX artifacts with significant table and layout requirements.
 The first product phase does not:
 
 - support macOS;
-- expose a general-purpose DeepSeek chat tool;
-- let DeepSeek co-author final document prose;
+- expose a general-purpose model chat tool;
+- let a Worker co-author final document prose;
 - let unreviewed generated code touch the repository or original source files;
-- let DeepSeek decide facts, reconcile evidence, or approve deliverables;
-- provide DeepSeek with shell, Git, browser, or unrestricted filesystem access.
+- let a Worker decide facts, reconcile evidence, or approve deliverables;
+- provide a Worker with shell, Git, browser, or unrestricted filesystem access.
 
 ## Responsibility planes
 
@@ -30,16 +30,33 @@ The host model owns task decomposition, evidence selection, factual judgment,
 conflict resolution, document structure, narrative, layout, final verification,
 and repository changes.
 
-### Toolsmith plane: DeepSeek
+### Worker plane: provider-neutral bounded roles
 
-DeepSeek receives bounded specifications, sanitized fixtures, and concise error
-reports. It may generate preprocessing or validation code and may repair a
-candidate for a bounded number of iterations. Generated code is always
-untrusted.
+Workers receive only the bounded input contract of their role. Stable roles are
+`toolsmith`, `coding`, `review`, `perception`, and `video`; provider and model
+names are route metadata selected behind that role. Generated code and model
+findings are always untrusted.
 
-DeepSeek Flash with thinking enabled is the default for bounded code creation.
-DeepSeek Pro is an explicit escalation for difficult diagnostics; it is not an
-automatic substitute for Sol architecture work.
+Toolsmith repair counts, Coding target files, Review snapshots, Perception input
+roots and H3 workspace boundaries remain capability-specific. A route failure
+never authorizes automatic paid retry, model fallback or a wider input scope.
+
+### Composition and accounting planes
+
+Each executable name is a thin compatibility profile composed from explicit
+capabilities. Profiles do not own provider or pricing logic. Core, Coding and
+Review share one provider-neutral accounting composition over the existing
+SQLite usage store:
+
+- entitlement checks answer whether an already configured subscription route
+  is available inside its current windows and model caps;
+- the immutable ledger appends prompt-free usage records and summarizes them;
+- approval policy separately answers whether private-source export, a new or
+  funded subscription, allow-list expansion, or a paid retry needs explicit
+  user authorization.
+
+Accounting is an internal module, not another MCP server or another state
+ledger. Historical direct-provider CNY fields remain compatibility data only.
 
 ### Execution plane: isolated candidate runner
 
@@ -68,7 +85,7 @@ canonical evidence representation that preserves:
 
 ### Artifact plane: Opus/Sol and specialized renderers
 
-DeepSeek does not edit Office files as a co-author. Opus/Sol uses structured
+A Worker does not edit Office files as a co-author. Opus/Sol uses structured
 evidence and approved local tooling to create final DOCX, PPTX, or XLSX files,
 then renders and visually validates them.
 
@@ -78,11 +95,11 @@ then renders and visually validates them.
 
 1. Opus/Sol defines purpose, input/output contracts, dependencies, fixtures,
    acceptance tests, and prohibited capabilities.
-2. DeepSeek generates source code and tests as structured candidate output.
+2. The selected toolsmith Worker generates source code and tests as structured candidate output.
 3. Policy scans reject forbidden imports, paths, network access, subprocesses,
    dynamic execution, and other unsafe constructs.
 4. The candidate runner executes static checks and tests on fixtures.
-5. A concise failure report may be returned to DeepSeek for at most two repair
+5. A concise failure report may be returned to the same Worker for at most two repair
    rounds.
 6. Opus/Sol reviews the final diff, dependencies, tests, and risks.
 7. Explicit promotion records the candidate hash and approved capabilities.
@@ -94,7 +111,7 @@ then renders and visually validates them.
 3. Tables remain structured and keep repeated headers, units, formulas, merged
    regions, and source coordinates.
 4. Images and diagrams are interpreted by local OCR/vision or the host model,
-   not sent directly to a text-only DeepSeek call.
+   not sent directly to an unrelated text-only Worker route.
 5. Opus/Sol selects evidence and forms the final facts and narrative.
 6. Specialized artifact tooling produces and validates the deliverable.
 

@@ -92,6 +92,15 @@ local worker activity from confirmed upstream progress, and prompt-free timeout 
 record phase, elapsed time, configured policy, and whether provider usage was observed.
 No timeout failure is retried or rerouted automatically.
 
+Version 0.13.0 is an isolated test-major foundation. Executable profiles are
+composed from explicit capabilities; worker roles are named independently from
+providers; Core, Coding, and Review share provider-neutral entitlement, ledger,
+and approval-policy services over the existing SQLite store. The seven entrypoint
+names and their 0.12.3 tool order/input schemas remain compatible. Production
+stays on 0.12.3 until the isolated branch passes full offline verification,
+external frozen-diff Review, physical gray testing, and a separate user-approved
+merge/deployment decision. See `docs/FOUNDATION_0.13_ZH-CN.md`.
+
 The first full billed lifecycle smoke passed on 2026-08-02 in one Flash call:
 the generated synthetic helper passed four isolated tests, was reviewed, and
 was registered under an exact hash with synthetic-input capability only.
