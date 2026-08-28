@@ -74,6 +74,7 @@ from ask_ai_mcp.opencode_protocol import (
     OPENCODE_GO_CHAT_URL as OPENCODE_GO_CHAT_URL,
 )
 from ask_ai_mcp.opencode_protocol import (
+    OpenCodeProviderResponseError,
     endpoint_for,
     normalize_provider_response,
     provider_protocol,
@@ -1100,6 +1101,22 @@ class CodeReviewManager:
                     error,
                     elapsed_ms=max(0, round((perf_counter() - started) * 1_000)),
                 )
+            elif isinstance(error, OpenCodeProviderResponseError):
+                _atomic_json(
+                    self.store.jobs_root / job_id / "audit" / "provider-error.json",
+                    {
+                        "provider_failure_class": CodeReviewProviderFailureClass.UPSTREAM.value,
+                        "provider_status": error.status,
+                        "elapsed_ms": max(0, round((perf_counter() - started) * 1_000)),
+                        **(
+                            {"wire_capture_uid": job_id}
+                            if (
+                                self.store.jobs_root / job_id / "audit" / "wire-capture.json"
+                            ).is_file()
+                            else {}
+                        ),
+                    },
+                )
             self.store.fail(
                 job_id,
                 self._failure_kind(error),
@@ -1242,6 +1259,11 @@ class CodeReviewManager:
             return (
                 f"{CodeReviewFailureCode.PROVIDER_REQUEST_FAILED.value}:"
                 f"{cls._provider_failure_class(error).value}"
+            )
+        if isinstance(error, OpenCodeProviderResponseError):
+            return (
+                f"{CodeReviewFailureCode.PROVIDER_REQUEST_FAILED.value}:"
+                f"{CodeReviewProviderFailureClass.UPSTREAM.value}"
             )
         if isinstance(error, (ValueError, json.JSONDecodeError)):
             return CodeReviewFailureCode.INVALID_PROVIDER_RESPONSE.value

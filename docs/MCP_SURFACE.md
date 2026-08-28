@@ -37,11 +37,11 @@ It exposes `code_review_backend_status`, `code_review_stage_patch`,
 `code_review_submit`, and the paginated `code_review_status`. Stage validates
 and atomically seals a patch plus receipt in the repository's dedicated external
 root. Submit accepts an allow-listed repository ID plus either two bounded refs
-or both staged hashes, one fixed profile, and one of three fixed
+or both staged hashes, one fixed profile, and one of four fixed
 OpenCode Go models. It has no generic prompt, shell, arbitrary path, Git-write,
 patch-generation, commit, push, or retry option.
 
-Review models are fixed to `deepseek-v4-pro`, `glm-5.3`, and `kimi-k3`, each
+Review models are fixed to `deepseek-v4-pro`, `glm-5.3`, `kimi-k3`, and `grok-4.6`, each
 with requested reasoning effort `max` and a 131,072-token total generation cap.
 Before a paid request, a context-boundary preflight either permits the single
 call or returns `REVIEW_PARTITION_REQUIRED` plus an advisory deterministic plan;

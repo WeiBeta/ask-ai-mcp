@@ -14,6 +14,31 @@ OPENCODE_GO_CHAT_URL = "https://opencode.ai/zen/go/v1/chat/completions"
 OPENCODE_GO_RESPONSES_URL = "https://opencode.ai/zen/go/v1/responses"
 
 
+class OpenCodeProviderResponseError(RuntimeError):
+    """A content-free terminal provider status returned over successful HTTP."""
+
+    def __init__(self, status: str) -> None:
+        super().__init__("OpenCode Go returned a terminal provider failure status")
+        self.status = status[:64]
+
+
+def strict_response_schema(value: object) -> object:
+    """Normalize Pydantic JSON Schema to the Responses strict subset."""
+
+    if isinstance(value, list):
+        return [strict_response_schema(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    normalized = {
+        key: strict_response_schema(item) for key, item in value.items() if key != "default"
+    }
+    properties = normalized.get("properties")
+    if normalized.get("type") == "object" and isinstance(properties, dict):
+        normalized["additionalProperties"] = False
+        normalized["required"] = list(properties)
+    return normalized
+
+
 def provider_protocol(model: OpenCodeGoModel) -> OpenCodeGoProtocol:
     return OPENCODE_GO_PRICES[model].protocol
 
@@ -45,7 +70,7 @@ def request_body_for(
                 "type": "json_schema",
                 "name": schema_name,
                 "strict": True,
-                "schema": schema,
+                "schema": strict_response_schema(schema),
             }
         },
         "max_output_tokens": chat_body["max_tokens"],
@@ -56,6 +81,9 @@ def request_body_for(
 def normalize_provider_response(model: OpenCodeGoModel, data: dict[str, Any]) -> dict[str, Any]:
     if provider_protocol(model) is OpenCodeGoProtocol.CHAT_COMPLETIONS:
         return data
+    status = data.get("status")
+    if status not in (None, "completed", "incomplete"):
+        raise OpenCodeProviderResponseError(str(status))
     text = data.get("output_text")
     if not isinstance(text, str):
         text = ""
@@ -75,9 +103,7 @@ def normalize_provider_response(model: OpenCodeGoModel, data: dict[str, Any]) ->
     return {
         "choices": [
             {
-                "finish_reason": (
-                    "stop" if data.get("status") in (None, "completed") else "length"
-                ),
+                "finish_reason": ("stop" if status in (None, "completed") else "length"),
                 "message": {"content": text},
             }
         ],

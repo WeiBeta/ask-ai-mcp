@@ -38,6 +38,7 @@ from ask_ai_mcp.code_review_workspace import (
     CodeReviewWorkspaceError,
 )
 from ask_ai_mcp.opencode_account import OpenCodeAccount
+from ask_ai_mcp.opencode_protocol import OPENCODE_GO_RESPONSES_URL, OpenCodeProviderResponseError
 from ask_ai_mcp.usage import UsageStore
 from ask_ai_mcp.wire_capture import decrypt_wire_file
 
@@ -567,6 +568,72 @@ def test_backend_reports_model_specific_review_policies(tmp_path: Path) -> None:
     assert status.provider_timeout.read_seconds == 7_200
     assert status.patch_roots_configured is False
     assert status.patch_root_count == 0
+
+
+def test_grok_review_uses_responses_protocol_and_normalizes_usage(tmp_path: Path) -> None:
+    root, base, head = _repository(tmp_path)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == OPENCODE_GO_RESPONSES_URL
+        body = json.loads(request.content)
+        assert body["model"] == CodeReviewModel.GROK_4_6.value
+        assert body["reasoning"] == {"effort": "max"}
+        assert body["max_output_tokens"] == 131_072
+        assert body["text"]["format"]["strict"] is True
+        assert "input" in body and "messages" not in body
+        return httpx.Response(
+            200,
+            json={
+                "status": "completed",
+                "output_text": json.dumps(
+                    {"findings": [], "omitted_context": [], "truncated": False}
+                ),
+                "usage": {
+                    "input_tokens": 200,
+                    "input_tokens_details": {"cached_tokens": 50},
+                    "output_tokens": 40,
+                    "output_tokens_details": {"reasoning_tokens": 20},
+                },
+            },
+        )
+
+    usage = UsageStore(tmp_path / "usage.db")
+    manager = CodeReviewManager(
+        store=CodeReviewStore(tmp_path / "review-state"),
+        usage_store=usage,
+        snapshotter=CodeReviewSnapshotter(CodeReviewRepositoryCatalog({"sample": root})),
+        account=OpenCodeAccount(uid="go-test-uid", alias="go-test"),
+        api_key_provider=lambda: "opaque-test-key-1234567890",
+        transport=httpx.MockTransport(handler),
+    )
+    submission = manager.submit(
+        CodeReviewSubmitCommand(
+            repository_id="sample",
+            base_ref=base,
+            head_ref=head,
+            review_profile=CodeReviewProfile.GENERAL,
+            model=CodeReviewModel.GROK_4_6,
+        )
+    )
+    deadline = time.monotonic() + 5
+    status = manager.status(CodeReviewStatusCommand(job_id=submission.job_id))
+    while status.state in {CodeReviewJobState.QUEUED, CodeReviewJobState.RUNNING}:
+        if time.monotonic() >= deadline:
+            raise AssertionError("review job did not complete")
+        time.sleep(0.02)
+        status = manager.status(CodeReviewStatusCommand(job_id=submission.job_id))
+    assert status.state is CodeReviewJobState.SUCCEEDED
+    assert status.total_findings == 0
+    summary = usage.summarize(days=30)
+    assert summary.by_model[CodeReviewModel.GROK_4_6.value] == 1
+    assert summary.prompt_cache_hit_tokens == 50
+    assert summary.reasoning_tokens == 20
+
+
+def test_grok_terminal_provider_status_maps_to_upstream_request_failure() -> None:
+    assert CodeReviewManager._failure_kind(OpenCodeProviderResponseError("failed")) == (
+        "PROVIDER_REQUEST_FAILED:UPSTREAM"
+    )
 
 
 def test_backend_reports_patch_root_presence_without_host_path(tmp_path: Path) -> None:

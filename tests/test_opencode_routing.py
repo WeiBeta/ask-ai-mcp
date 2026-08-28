@@ -21,9 +21,9 @@ def test_off_peak_prefers_deepseek_and_peak_prefers_glm_without_submitting() -> 
         ledger=None,
         priced_at=datetime(2026, 8, 28, 6, 0, tzinfo=UTC),
     )
-    assert off_standard[:2] == ["deepseek-v4-flash", "glm-5.3-flash"]
+    assert off_standard == ["deepseek-v4-flash", "glm-5.3-flash"]
     assert off_advanced == ["deepseek-v4-pro", "glm-5.3", "kimi-k3", "grok-4.6"]
-    assert peak_standard[:2] == ["glm-5.3-flash", "deepseek-v4-flash"]
+    assert peak_standard == ["glm-5.3-flash", "deepseek-v4-flash"]
     assert peak_advanced == ["glm-5.3", "deepseek-v4-pro", "kimi-k3", "grok-4.6"]
 
 

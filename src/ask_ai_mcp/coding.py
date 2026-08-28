@@ -48,6 +48,7 @@ from ask_ai_mcp.opencode_protocol import (
     OPENCODE_GO_CHAT_URL as OPENCODE_GO_CHAT_URL,
 )
 from ask_ai_mcp.opencode_protocol import (
+    OpenCodeProviderResponseError,
     endpoint_for,
     normalize_provider_response,
     provider_protocol,
@@ -458,6 +459,20 @@ class CodingManager:
             elapsed_ms = max(0, round((perf_counter() - started) * 1_000))
             if isinstance(error, (httpx.HTTPStatusError, httpx.RequestError)):
                 self._write_provider_error(job_root, error, elapsed_ms=elapsed_ms)
+            elif isinstance(error, OpenCodeProviderResponseError):
+                _atomic_json(
+                    job_root / "audit" / "provider-error.json",
+                    {
+                        "provider_failure_class": "UPSTREAM",
+                        "provider_status": error.status,
+                        "elapsed_ms": elapsed_ms,
+                        **(
+                            {"wire_capture_uid": job_id}
+                            if (job_root / "audit" / "wire-capture.json").is_file()
+                            else {}
+                        ),
+                    },
+                )
             record.update(
                 state=CodingJobState.FAILED.value,
                 detail="coding candidate failed; inspect prompt-free local error metadata",

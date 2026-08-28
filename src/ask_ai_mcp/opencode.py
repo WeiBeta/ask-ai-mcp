@@ -24,6 +24,7 @@ from ask_ai_mcp.opencode_pricing import (
     OpenCodeGoRateBand,
     calculate_opencode_go_cost_breakdown,
 )
+from ask_ai_mcp.opencode_protocol import strict_response_schema
 from ask_ai_mcp.provider_timeout import ProviderTimeoutPolicy
 from ask_ai_mcp.usage import UsageStore
 
@@ -103,18 +104,7 @@ class OpenCodeGoClient(DeepSeekClient):
     def _strict_schema(cls, value: object) -> object:
         """Normalize Pydantic JSON Schema to the Responses strict subset."""
 
-        if isinstance(value, list):
-            return [cls._strict_schema(item) for item in value]
-        if not isinstance(value, dict):
-            return value
-        normalized = {
-            key: cls._strict_schema(item) for key, item in value.items() if key != "default"
-        }
-        properties = normalized.get("properties")
-        if normalized.get("type") == "object" and isinstance(properties, dict):
-            normalized["additionalProperties"] = False
-            normalized["required"] = list(properties)
-        return normalized
+        return strict_response_schema(value)
 
     @staticmethod
     def _initial_model(spec: ToolBuildSpec) -> OpenCodeGoModel:

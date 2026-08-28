@@ -49,7 +49,7 @@ def coding_route_orders(
     )
     fallbacks = (OpenCodeGoModel.KIMI_K3, OpenCodeGoModel.GROK_4_6)
     return (
-        _usable_order(standard_primary + fallbacks, available=available, ledger=ledger),
+        _usable_order(standard_primary, available=available, ledger=ledger),
         _usable_order(advanced_primary + fallbacks, available=available, ledger=ledger),
     )
 
