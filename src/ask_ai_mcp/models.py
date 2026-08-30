@@ -673,6 +673,36 @@ class OpenCodeGoAccountUsage(StrictModel):
     estimated: bool = True
 
 
+class StorageRetentionMode(StrEnum):
+    """How one bounded local storage domain preserves or releases bytes."""
+
+    ROLLING = "rolling"
+    ARCHIVE = "archive"
+    PROTECTED = "protected"
+
+
+class StorageDomainStatus(StrictModel):
+    """Content-free usage for one named domain without exposing host paths."""
+
+    domain_id: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9_]+$")
+    retention_mode: StorageRetentionMode
+    current_bytes: int = Field(ge=0)
+    limit_bytes: int = Field(gt=0)
+    file_count: int = Field(ge=0)
+    root_count: int = Field(ge=1, le=64)
+    protected_entry_count: int = Field(default=0, ge=0)
+    over_limit: bool = False
+    maintenance_required: bool = False
+
+
+class StorageRetentionStatus(StrictModel):
+    """Provider-neutral storage policy and current content-free usage."""
+
+    policy_version: str = Field(min_length=1, max_length=64)
+    total_bytes: int = Field(ge=0)
+    domains: list[StorageDomainStatus] = Field(default_factory=list, max_length=16)
+
+
 class UsageSummary(StrictModel):
     days: int = Field(ge=1, le=366)
     total_calls: int = Field(ge=0)
@@ -701,6 +731,7 @@ class UsageSummary(StrictModel):
     recent_lifecycle_economics: list[LifecycleEconomics] = Field(
         default_factory=list, max_length=20
     )
+    storage_retention: StorageRetentionStatus | None = None
 
 
 class VerifiedToolRecord(StrictModel):

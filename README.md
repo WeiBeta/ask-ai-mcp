@@ -97,9 +97,10 @@ composed from explicit capabilities; worker roles are named independently from
 providers; Core, Coding, and Review share provider-neutral entitlement, ledger,
 and approval-policy services over the existing SQLite store. The seven entrypoint
 names and their 0.12.3 tool order/input schemas remain compatible. Production
-stays on 0.12.3 until the isolated branch passes full offline verification,
-external frozen-diff Review, physical gray testing, and a separate user-approved
-merge/deployment decision. See `docs/FOUNDATION_0.13_ZH-CN.md`.
+keeps 0.12.3 as the rollback line while approved 0.13.x builds undergo isolated
+offline verification, external frozen-diff Review, and physical gray testing.
+Each new physical activation still requires a separate user-approved deployment
+decision. See `docs/FOUNDATION_0.13_ZH-CN.md`.
 
 Version 0.13.2 adds Grok 4.6 as an explicit advanced Coding/Review candidate,
 local high-context pricing, and advisory-only Go route ordering. Version 0.13.1
@@ -118,10 +119,19 @@ and cost ceiling; MCP chooses one initial external Review Worker from current pr
 remote availability, effective allowance, and input limits. Existing callers that
 send one explicit provider model remain compatible. A failed generation is never
 retried, rerouted, partitioned, or submitted as a second job.
+Version 0.13.7 adds provider-neutral storage retention without another MCP tool or
+process. `usage_status` now reports path-free size, limit, mode, and maintenance state
+for eleven storage domains. Complete exported job/run/smoke bundles and new atomic
+staged-patch directories roll oldest-first; active, unexported, unadjudicated,
+modified, incomplete, reparse-point, and durable registry data remain protected.
+Replay capsules use an exact 100 MiB hash-valid rolling pool with an explicit keep
+marker for promoted benchmarks. Usage and Review SQLite truth are archive-only:
+crossing their maintenance threshold never silently deletes accounting, findings,
+adjudications, or outcomes.
 Normal audits retain only a call-attribution UID and content-free transport metadata;
 exact request and streamed response bodies are kept separately as AES-256-GCM frames
-under a Windows Credential Manager key. Authorization material is never captured, the
-default rolling retention is bounded to 100 MiB per specialist job pool, and failed
+under a Windows Credential Manager key. Authorization material is never captured,
+encrypted wire retention is bounded to 100 MiB per specialist pool, and failed
 streams retain only the encrypted bytes received before disconnect. A local operator-only,
 job-bound reconciliation command can attach dashboard totals to one billed transport
 failure without exposing a generic ledger-edit MCP tool.

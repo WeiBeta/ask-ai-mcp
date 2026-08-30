@@ -353,6 +353,7 @@ class CodeReviewStatus(StrictModel):
     truncated: bool = False
     partition_plan: CodeReviewPartitionPlan | None = None
     artifacts: list[CodeReviewArtifact] = Field(default_factory=list, max_length=20)
+    artifacts_retained: bool = True
 
 
 class CodeReviewModelAvailability(StrictModel):

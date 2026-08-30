@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -33,6 +34,10 @@ from ask_ai_mcp.sandbox import (
     DEFAULT_RUNNER_IMAGE,
     DockerVerifiedToolExecutor,
 )
+from ask_ai_mcp.storage_retention import (
+    VERIFIED_RUNS_MAX_BYTES,
+    AtomicBundleRetention,
+)
 
 ALLOWED_INPUT_ROOTS_ENV = "ASK_AI_MCP_ALLOWED_INPUT_ROOTS"
 MAX_INPUT_FILE_BYTES = 100 * 1024 * 1024
@@ -40,6 +45,7 @@ MAX_TOTAL_INPUT_BYTES = 500 * 1024 * 1024
 MAX_OUTPUT_FILES = 100
 MAX_TOTAL_OUTPUT_BYTES = 500 * 1024 * 1024
 _SAFE_SUFFIX = re.compile(r"^\.[A-Za-z0-9]{1,10}$")
+_LOGGER = logging.getLogger(__name__)
 
 
 class VerifiedToolExecutionError(RuntimeError):
@@ -63,10 +69,16 @@ class VerifiedToolRunner:
         runs_root: Path | None = None,
         allowed_input_roots: list[Path] | None = None,
         executor: DockerVerifiedToolExecutor | None = None,
+        retention: AtomicBundleRetention | None = None,
     ) -> None:
         self.registry = registry or VerifiedToolRegistry()
         self.runs_root = (runs_root or default_runs_root()).resolve()
         self.runs_root.mkdir(parents=True, exist_ok=True)
+        self.retention = retention or AtomicBundleRetention(
+            root=self.runs_root,
+            domain_id="verified_runs",
+            limit_bytes=VERIFIED_RUNS_MAX_BYTES,
+        )
         configured_roots = (
             allowed_input_roots if allowed_input_roots is not None else load_allowed_input_roots()
         )
@@ -168,6 +180,11 @@ class VerifiedToolRunner:
             failure_reason=failure_reason,
         )
         self._write_report(control_root / "report.json", report)
+        try:
+            self.retention.seal(run_id, terminal_at=report.completed_at)
+            self.retention.maintain(protected_bundle_ids=frozenset({run_id}))
+        except (OSError, RuntimeError, ValueError) as error:
+            _LOGGER.warning("verified-run retention maintenance failed: %s", type(error).__name__)
         return report
 
     @staticmethod

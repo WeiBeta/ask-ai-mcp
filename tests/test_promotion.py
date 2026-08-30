@@ -118,6 +118,7 @@ def test_exact_successful_candidate_can_be_registered_and_reverified(tmp_path: P
         (job_root / "control" / "manifest.json").read_text(encoding="utf-8")
     )
     assert source_manifest.state is CandidateJobState.APPROVED
+    assert (job_root / ".retention.json").is_file()
 
 
 def test_hash_mismatch_blocks_promotion(tmp_path: Path) -> None:

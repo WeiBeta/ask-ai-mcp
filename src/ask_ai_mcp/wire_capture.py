@@ -123,6 +123,7 @@ class EncryptedWireCapture:
         self.root = job_root / "wire"
         self.root.mkdir(parents=True, exist_ok=False)
         self.audit_path = job_root / "audit" / "wire-capture.json"
+        self.audit_path.parent.mkdir(parents=True, exist_ok=True)
         self._states = {
             direction: self._open_direction(direction) for direction in ("request", "response")
         }

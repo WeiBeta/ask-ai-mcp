@@ -465,8 +465,8 @@ def test_patch_only_preflight_is_hash_pinned_and_root_bounded(tmp_path: Path) ->
     (root / "app.py").write_text("UNCOMMITTED_WORKTREE_CONTENT\n", encoding="utf-8")
 
     staged = snapshotter.stage_patch("sample", patch_text)
-    patch_path = patch_root / f"{expected_sha256}.patch"
-    receipt_path = patch_root / f"{expected_sha256}.receipt.json"
+    patch_path = patch_root / expected_sha256 / "review.patch"
+    receipt_path = patch_root / expected_sha256 / "receipt.json"
     snapshot = snapshotter.from_staged_patch("sample", staged.patch_sha256, staged.receipt_sha256)
 
     assert staged.byte_length == len(patch_bytes)
@@ -493,6 +493,27 @@ def test_patch_only_preflight_is_hash_pinned_and_root_bounded(tmp_path: Path) ->
         snapshotter.from_staged_patch(
             "sample", expected_sha256, hashlib.sha256(tampered).hexdigest()
         )
+
+
+def test_legacy_staged_patch_pair_remains_readable(tmp_path: Path) -> None:
+    root, base, head = _repository(tmp_path)
+    patch_root = tmp_path / "sample"
+    patch_root.mkdir()
+    patch_text = _git(root, "diff", "--no-renames", "--unified=3", base, head) + "\n"
+    snapshotter = CodeReviewSnapshotter(
+        CodeReviewRepositoryCatalog({"sample": root}), patch_roots=(patch_root,)
+    )
+
+    staged = snapshotter.stage_patch("sample", patch_text)
+    container = patch_root / staged.patch_sha256
+    (container / "review.patch").replace(patch_root / f"{staged.patch_sha256}.patch")
+    (container / "receipt.json").replace(patch_root / f"{staged.patch_sha256}.receipt.json")
+    container.rmdir()
+
+    snapshot = snapshotter.from_staged_patch("sample", staged.patch_sha256, staged.receipt_sha256)
+
+    assert snapshot.source_identity == {"patch_sha256": staged.patch_sha256}
+    assert snapshot.diff_sha256 == staged.snapshot.diff_sha256
 
 
 def test_staged_patch_requires_matching_pair_and_project_root(tmp_path: Path) -> None:
@@ -548,6 +569,10 @@ def test_stage_patch_is_free_and_submit_requires_receipt_hash(tmp_path: Path) ->
 
     assert calls == 0
     assert staged.byte_length == len(patch_text.encode("utf-8"))
+    assert (
+        manager.stage_patch(CodeReviewStagePatchCommand(repository_id="sample", patch=patch_text))
+        == staged
+    )
     with pytest.raises(ValueError, match="receipt_sha256"):
         CodeReviewSubmitCommand(
             repository_id="sample",
@@ -555,7 +580,8 @@ def test_stage_patch_is_free_and_submit_requires_receipt_hash(tmp_path: Path) ->
             review_profile=CodeReviewProfile.GENERAL,
             model=CodeReviewModel.GLM_5_3,
         )
-    receipt_path = patch_root / f"{staged.patch_sha256}.receipt.json"
+    receipt_path = patch_root / staged.patch_sha256 / "receipt.json"
+    assert (patch_root / staged.patch_sha256 / ".retention.json").is_file()
     receipt_path.chmod(stat.S_IWRITE | stat.S_IREAD)
     receipt_path.write_bytes(b"{}\n")
     receipt_path.chmod(stat.S_IREAD)
@@ -703,6 +729,8 @@ def test_review_job_is_blind_paginated_and_records_adjudication(
     assert usage_policy == ("max", 131_072)
     assert status.model_identity_hidden is True
     assert status.total_findings == 1
+    assert status.artifacts_retained is True
+    assert not (manager.store.jobs_root / submission.job_id / ".retention.json").exists()
     assert status.findings[0].category.value == "correctness"
     assert (
         status.findings[0].evidence_sha256
@@ -729,6 +757,18 @@ def test_review_job_is_blind_paginated_and_records_adjudication(
         )
     )
     assert adjudicated.model_identity_hidden is True
+    assert (manager.store.jobs_root / submission.job_id / ".retention.json").is_file()
+    manager.retention.limit_bytes = 1
+    rolled = manager.retention.maintain()
+    assert rolled.evicted_bundle_count == 1
+    archived_status = manager.status(CodeReviewStatusCommand(job_id=submission.job_id))
+    assert archived_status.state is CodeReviewJobState.SUCCEEDED
+    assert archived_status.total_findings == 1
+    assert archived_status.findings == []
+    assert archived_status.next_offset is None
+    assert archived_status.artifacts_retained is False
+    assert archived_status.usage_observed is True
+    assert archived_status.progress_source == "provider_response"
     report = manager.store.monthly_report()
     language = next(item for item in report.slices if item.dimension == "language")
     assert language.precision == 1.0

@@ -30,6 +30,10 @@ from ask_ai_mcp.models import (
     SourceJobSubmission,
     SourceOutputArtifact,
 )
+from ask_ai_mcp.storage_retention import (
+    SOURCE_JOBS_MAX_BYTES,
+    AtomicBundleRetention,
+)
 
 SOURCE_INPUT_ROOTS_ENV = "ASK_AI_MCP_SOURCE_INPUT_ROOTS"
 SOURCE_JOBS_ROOT_ENV = "ASK_AI_MCP_SOURCE_JOBS_ROOT"
@@ -116,10 +120,16 @@ class SourceJobManager:
         jobs_root: Path | None = None,
         allowed_input_roots: list[Path] | None = None,
         executor: ThreadPoolExecutor | None = None,
+        retention: AtomicBundleRetention | None = None,
     ) -> None:
         self.backend = backend or UnconfiguredQwenBackend()
         self.jobs_root = (jobs_root or default_source_jobs_root()).resolve()
         self.jobs_root.mkdir(parents=True, exist_ok=True)
+        self.retention = retention or AtomicBundleRetention(
+            root=self.jobs_root,
+            domain_id="source_jobs",
+            limit_bytes=SOURCE_JOBS_MAX_BYTES,
+        )
         roots = (
             allowed_input_roots if allowed_input_roots is not None else load_source_input_roots()
         )
@@ -180,11 +190,25 @@ class SourceJobManager:
         with self._lock:
             report = self._reports.get(job_id)
         if report is not None:
+            self._seal_exported_job(report)
             return report
         path = self._within_jobs_root(self.jobs_root / job_id / "control" / "report.json")
         if not path.is_file():
             raise SourceProcessingError("source job was not found")
-        return SourceJobReport.model_validate_json(path.read_text(encoding="utf-8"))
+        report = SourceJobReport.model_validate_json(path.read_text(encoding="utf-8"))
+        self._seal_exported_job(report)
+        return report
+
+    def _seal_exported_job(self, report: SourceJobReport) -> None:
+        if report.state not in {SourceJobState.SUCCEEDED, SourceJobState.FAILED}:
+            return
+        report_path = self.jobs_root / report.job_id / "control" / "report.json"
+        try:
+            terminal_at = datetime.fromtimestamp(report_path.stat().st_mtime, tz=UTC)
+            self.retention.seal(report.job_id, terminal_at=terminal_at)
+            self.retention.maintain(protected_bundle_ids=frozenset({report.job_id}))
+        except (OSError, RuntimeError, ValueError) as error:
+            _LOGGER.warning("source retention maintenance failed: %s", type(error).__name__)
 
     def _run(
         self,
@@ -385,13 +409,16 @@ class SourceJobManager:
         return artifacts
 
     def _set_report(self, report: SourceJobReport) -> None:
-        with self._lock:
-            self._reports[report.job_id] = report
         control_root = self._within_jobs_root(self.jobs_root / report.job_id / "control")
         target = control_root / "report.json"
         temporary = control_root / f".{uuid4()}.tmp"
         temporary.write_text(report.model_dump_json(indent=2), encoding="utf-8")
         temporary.replace(target)
+        # Publish the in-memory state only after its durable report is visible.
+        # Otherwise a fast status reader can observe a terminal state and try
+        # to seal a bundle whose terminal report has not been committed yet.
+        with self._lock:
+            self._reports[report.job_id] = report
 
     def _snapshot_reports(self) -> list[SourceJobReport]:
         with self._lock:

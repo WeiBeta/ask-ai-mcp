@@ -384,8 +384,8 @@ class CodeReviewSnapshotter:
         patch_path, receipt_path = self._staged_paths(patch_root, patch_sha256)
         if not patch_path.is_file() or not receipt_path.is_file():
             raise CodeReviewWorkspaceError("staged patch and receipt must both exist")
-        _assert_no_reparse_escape(patch_path.resolve(strict=True), patch_root)
-        _assert_no_reparse_escape(receipt_path.resolve(strict=True), patch_root)
+        _assert_no_reparse_escape(patch_path, patch_root)
+        _assert_no_reparse_escape(receipt_path, patch_root)
         if patch_path.stat().st_mode & stat.S_IWRITE or receipt_path.stat().st_mode & stat.S_IWRITE:
             raise CodeReviewWorkspaceError("staged patch and receipt must remain read-only")
         data = patch_path.read_bytes()
@@ -440,6 +440,9 @@ class CodeReviewSnapshotter:
     def _staged_paths(patch_root: Path, patch_sha256: str) -> tuple[Path, Path]:
         if re.fullmatch(r"[a-f0-9]{64}", patch_sha256) is None:
             raise CodeReviewWorkspaceError("patch SHA-256 is invalid")
+        container = patch_root / patch_sha256
+        if container.is_dir():
+            return container / "review.patch", container / "receipt.json"
         return patch_root / f"{patch_sha256}.patch", patch_root / f"{patch_sha256}.receipt.json"
 
     @classmethod
@@ -447,14 +450,15 @@ class CodeReviewSnapshotter:
         cls, patch_root: Path, patch_sha256: str, data: bytes, receipt_data: bytes
     ) -> None:
         patch_path, receipt_path = cls._staged_paths(patch_root, patch_sha256)
+        if patch_path.parent != patch_root:
+            _assert_no_reparse_escape(patch_path.parent, patch_root)
         lock_path = patch_root / f".{patch_sha256}.lock"
         try:
             lock_path.mkdir()
         except FileExistsError as error:
             raise CodeReviewWorkspaceError("staged patch is locked or incomplete") from error
         token = uuid4().hex
-        patch_temp = patch_root / f".{token}.patch.tmp"
-        receipt_temp = patch_root / f".{token}.receipt.tmp"
+        temporary_root = patch_root / f".{token}.stage.tmp"
         try:
             if patch_path.exists() or receipt_path.exists():
                 if not patch_path.is_file() or not receipt_path.is_file():
@@ -462,16 +466,17 @@ class CodeReviewSnapshotter:
                 if patch_path.read_bytes() != data or receipt_path.read_bytes() != receipt_data:
                     raise CodeReviewWorkspaceError("existing staged patch pair does not match")
                 return
+            temporary_root.mkdir()
+            patch_temp = temporary_root / "review.patch"
+            receipt_temp = temporary_root / "receipt.json"
             cls._write_synced(patch_temp, data)
             cls._write_synced(receipt_temp, receipt_data)
-            os.replace(patch_temp, patch_path)
-            os.chmod(patch_path, stat.S_IREAD)
-            os.replace(receipt_temp, receipt_path)
-            os.chmod(receipt_path, stat.S_IREAD)
+            os.chmod(patch_temp, stat.S_IREAD)
+            os.chmod(receipt_temp, stat.S_IREAD)
+            os.replace(temporary_root, patch_root / patch_sha256)
         finally:
-            for temporary in (patch_temp, receipt_temp):
-                if temporary.exists():
-                    temporary.unlink()
+            if temporary_root.is_dir():
+                shutil.rmtree(temporary_root)
             lock_path.rmdir()
 
     @staticmethod

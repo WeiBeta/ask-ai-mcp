@@ -332,6 +332,24 @@ class CodeReviewStore:
             raise RuntimeError("code review job was not found")
         return row
 
+    def finding_progress(self, run_id: str) -> tuple[int, int]:
+        """Return durable finding and adjudication counts without artifact access."""
+
+        with self._connection() as connection:
+            finding_count = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM code_review_findings WHERE run_id = ?",
+                    (run_id,),
+                ).fetchone()[0]
+            )
+            adjudicated_count = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM code_review_adjudications WHERE run_id = ?",
+                    (run_id,),
+                ).fetchone()[0]
+            )
+        return finding_count, adjudicated_count
+
     def get_usage_reconciliation(self, run_id: str) -> sqlite3.Row | None:
         with self._connection() as connection:
             return connection.execute(

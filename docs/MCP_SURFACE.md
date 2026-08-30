@@ -21,9 +21,10 @@ the 0.12.3 surface during initial gray testing.
 `ask-ai-mcp-coding.exe` exposes `coding_backend_status`, `coding_submit`, and
 paginated `coding_status`. It accepts one allow-listed repository ID, an exact
 commit, named target/context files, a bounded task contract, and only
-five fixed models. `deepseek-v4-flash` and `glm-5.3-flash` are the preferred
+six fixed models. `deepseek-v4-flash` and `glm-5.3-flash` are the preferred
 routes; `deepseek-v4-pro`, `glm-5.3`, and `kimi-k3` are explicit advanced
-candidates for complex work. Every route requests `max` reasoning and a
+candidates for complex work, with `grok-4.6` as the final advanced reserve.
+Grok requests `xhigh`; every other route requests `max`, and all use a
 131,072-token total generation cap exposed by backend status and job metadata.
 Advanced routes are never selected as an automatic fallback.
 It freezes source with read-only Git operations and emits an external candidate
@@ -57,6 +58,10 @@ must point to a supplied changed hunk. Full inputs and outputs remain in separat
 per-job artifacts; the SQLite review ledger stores hashes, metrics, adjudications,
 and outcomes but not full source, diff, prompt, credential, or ordinary model output.
 Status keeps model names hidden while a person or Sol records adjudication.
+After every finding is durably adjudicated and the terminal page has been exported,
+the heavy Review artifact directory becomes eligible for whole-bundle rolling.
+The permanent Review database remains queryable; a later status read explicitly
+reports `artifacts_retained=false` rather than inventing missing output.
 
 In the 0.13.6 test foundation, Coding/Review backend status reports compact route
 orders derived locally from the pricing window, remote availability, effective ledger
@@ -158,6 +163,10 @@ byte ratios; they are not presented as tokens. OpenCode calls also report
 virtual USD by provider model/account and conservative rolling 5-hour, 7-day,
 and 30-day allowance windows. It also reports current UTC-day spend against a
 USD 2 utilization pace. That pace is informational and never blocks a call.
+Version 0.13.7 also returns `storage_retention`: eleven content-free domain rows
+with retention mode (`rolling`, `archive`, or `protected`), current bytes,
+configured limit, file/root counts, protected-entry count, and maintenance flags.
+It exposes no host path and does not add a storage-mutation MCP tool.
 
 ## `workflow_guidance`
 

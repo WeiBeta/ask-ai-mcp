@@ -153,6 +153,22 @@ GPU generation capability.
 - Verified tool registry: `%LOCALAPPDATA%\AskAIMCP\registry`
 - Verified execution runs: `%LOCALAPPDATA%\AskAIMCP\runs`
 
+Version 0.13.7 divides local state into three retention classes:
+
+- `archive`: `usage.db` and `code-review/review.db`; limits are maintenance
+  thresholds, and no accounting, finding, adjudication, or outcome row is silently
+  deleted;
+- `protected`: the verified registry and any active, incomplete, modified,
+  unexported, unadjudicated, reparse-point, or explicitly retained benchmark unit;
+- `rolling`: complete receipt-bound Coding/Review/Toolsmith/Source jobs, verified
+  runs, smoke runs, new hash-directory staged patches, and replay capsules.
+
+Rolling eviction is oldest-first and whole-unit. Replay is capped at 100 MiB and
+encrypted wire evidence keeps its independent 100 MiB per specialist-pool cap.
+Legacy staged-patch file pairs remain readable but protected; new pairs publish as
+one hash-named directory so deletion cannot mix patch and receipt generations.
+`usage_status` reports only content-free counters and never exposes these roots.
+
 Secrets will be stored in Windows Credential Manager. Environment variables may
 be supported for isolated development and CI, but secrets are never committed.
 

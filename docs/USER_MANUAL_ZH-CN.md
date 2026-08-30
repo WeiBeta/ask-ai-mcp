@@ -1,23 +1,24 @@
 # Ask AI MCP 简中使用与运维说明书
 
-适用版本：Ask AI MCP 0.6.2
+适用版本：Ask AI MCP 0.13.7
 适用平台：Windows 11
 适用客户端：Codex Desktop、Claude Desktop
 仓库：`xujinglong8814-WeiBeta/ask-ai-mcp`（私有）
 
-补充说明：第 4.6 节 Coding/Review 仓库白名单配置适用于 Ask AI MCP 0.10.0。
+补充说明：早期章节中的单一模型称呼已统一为 Ask AI Worker；实际供应商、模型、价格和额度只以
+当前 MCP schema 与 backend status 为准。第 4.6 节 Coding/Review 仓库白名单配置自 0.10.0 起适用。
 
 ## 1. 这套系统现在能做什么
 
-Ask AI MCP 已完成双端加载、跨客户端发现、独立完整审阅、双端批准、注册和 Docker 隔离运行验收。GPT/Codex 与 Claude 现在可以在规则允许时，把重复、机械、可测试的工具制造工作交给 DeepSeek。
+Ask AI MCP 已完成双端加载、跨客户端发现、独立完整审阅、双端批准、注册和 Docker 隔离运行验收。GPT/Codex 与 Claude 现在可以在规则允许时，把重复、机械、可测试的工作交给受限 Ask AI Worker。
 
 需要特别区分：
 
-- **调用 DeepSeek**：目前只有 `build_helper_tool` 及其服务端自动修复会调用 DeepSeek API 并产生费用。
-- **运行已验证工具**：`run_verified_tool` 在本机 Docker 中离线运行，不调用 DeepSeek，不产生模型费用。
-- **查询和审批**：用量、预算、操作指南、待审队列、摘要、完整审阅、批准和注册表查询都是本地操作，不调用 DeepSeek。
+- **调用外部 Worker**：Core、Coding、Review 或远端 Perception 只有在各自严格工具合约内才会调用当前后端路线并消耗订阅额度。
+- **运行已验证工具**：`run_verified_tool` 在本机 Docker 中离线运行，不调用外部模型，不产生模型费用。
+- **查询和审批**：用量、额度、存储状态、操作指南、待审队列、摘要、完整审阅、批准和注册表查询都是本地操作，不调用模型。
 
-0.6.2 没有开放任意提示词转发，也没有开放“把整份业务文件直接交给 DeepSeek 处理”的接口。DeepSeek 负责制造候选工具；经过验证的本地工具负责处理明确暂存的文件副本。
+0.13.7 仍没有开放任意提示词转发，也没有开放“把整份业务文件直接交给某个 Worker 处理”的接口。Worker 只生成受限候选；经过验证的本地工具负责处理明确暂存的文件副本。
 
 ## 2. 不可突破的角色边界
 
@@ -25,11 +26,11 @@ Ask AI MCP 已完成双端加载、跨客户端发现、独立完整审阅、双
 |---|---|---|---|
 | GPT/Codex | 架构、安全、规格、测试要求、仓库修改、最终结论与交付 | 可机械验证的脚本候选、测试、格式检查器、解析器 | 最终事实、正文、来源冲突、发布判断 |
 | Claude | 事实综合、来源仲裁、文档结构、文风、篇幅、表格表达与交付质量 | 文档预处理工具、格式检查工具、机械性代码候选 | 正文撰写、续写、共同写作、最终措辞与结论 |
-| DeepSeek | 受限工具制造、候选修复、机械性代码 | 严格规格下的候选文件和测试 | 直接交付正文、事实判断、整份知识库处理、自我批准 |
+| Ask AI Worker | 受限工具制造、候选修复、机械性代码或独立审查 | 严格规格下的候选文件、测试和 finding | 直接交付正文、事实判断、整份知识库处理、自我批准 |
 
-DeepSeek 的任何代码均不可信。通过静态检查和隔离测试，只能证明它满足已有检查与测试，不能替代 GPT/Codex 或 Claude 的独立审查。
+Worker 的任何输出均是不可信候选。通过静态检查和隔离测试，只能证明它满足已有检查与测试，不能替代 GPT/Codex 或 Claude 的独立审查。
 
-## 3. 什么时候应当调用 DeepSeek
+## 3. 什么时候应当调用 Ask AI Worker
 
 只有同时满足以下基础条件，才考虑调用：
 
@@ -59,7 +60,7 @@ DeepSeek 的任何代码均不可信。通过静态检查和隔离测试，只�
 
 ### 3.3 一个简单判断式
 
-> 如果“写规格 + 审候选”的成本不明显低于控制模型直接完成，就不要调用 DeepSeek。
+> 如果“写规格 + 审候选”的成本不明显低于控制模型直接完成，就不要调用 Worker。
 
 ## 4. 标准文件目录
 
@@ -310,11 +311,11 @@ GPT/Codex 是工程控制者。典型工作方式：
 
 - 发现 Office/PDF/表格处理需要反复写脚本时，判断是否值得制造复用工具；
 - 自行制定数据契约、最小依赖、禁止能力和测试；
-- 让 DeepSeek 生成候选实现和测试；
+- 让受限 Coding/Toolsmith Worker 生成候选实现和测试；
 - 自行完成静态、安全、架构和仓库级审查；
-- 绝不让 DeepSeek 直接修改正式仓库；
+- 绝不让 Worker 直接修改正式仓库；
 - 将通过审查的通用工具注册并复用；
-- 对 DeepSeek 输出做机械验证，不把摘要当作正确性证明。
+- 对 Worker 输出做机械验证，不把摘要当作正确性证明。
 
 例子：
 
@@ -337,9 +338,9 @@ Claude 是业务文档控制者。典型工作方式：
 
 - 合适：制造 PPTX 页级结构清单和版式异常检查工具；
 - 合适：制造 DOCX 表格尺寸、跨页、样式一致性检查工具；
-- 不合适：让 DeepSeek 补写缺失的 1300 字正文；
-- 不合适：让 DeepSeek 模仿当前文风共同撰写报告；
-- 不合适：让 DeepSeek决定冲突来源中哪个数据应写入正文。
+- 不合适：让 Worker 补写缺失的 1300 字正文；
+- 不合适：让 Worker 模仿当前文风共同撰写报告；
+- 不合适：让 Worker 决定冲突来源中哪个数据应写入正文。
 
 ## 8. 模型、订阅与修复规则
 
@@ -404,9 +405,31 @@ https://github.com/xujinglong8814-WeiBeta/ask-ai-mcp
 
 建议保留级别：
 
-- 必须：`usage.db`、`jobs`、`registry`；
-- 可选：`runs`。如果已把重要结果和 manifest 保存到 `AskAI-Exchange`，旧 runs 可按保留策略归档；
+- 必须：`usage.db`、`code-review/review.db`、`registry`；
+- 自动滚动：已完整导出且 receipt/哈希有效的 Coding、Review、Toolsmith、Source、`runs`、smoke、
+  新版 staged patch 与 replay；Review finding 未全部裁决时不会滚动；
+- 固定上限：加密 wire 与纯 LLM replay 各自使用 100 MiB 滚动池；标记为 benchmark 的 replay 不淘汰；
+- 只提示维护：永久 SQLite 超过阈值时 `usage_status.storage_retention` 标记维护需求，不静默删除；
 - 不可替代：Credential Manager 中的 API 密钥，应在目标机重新录入。
+
+0.13.7 默认阈值如下；除 wire 外均可在 `usage_status.storage_retention` 中按域查看实际占用：
+
+| 数据域 | 默认阈值 | 处理方式 |
+|---|---:|---|
+| `usage.db`、`review.db` | 各 512 MiB | 永久账本，仅提示人工归档维护 |
+| Review job | 2 GiB | 满足终态、完整导出和裁决门禁后整目录滚动 |
+| Coding job、Toolsmith job | 各 1 GiB | 满足终态/完整导出或已提升门禁后整目录滚动 |
+| Source job | 20 GiB | 终态报告完整导出后整目录滚动 |
+| verified run | 2 GiB | 完整报告落盘后整目录滚动 |
+| smoke | 512 MiB | 完整报告落盘后整目录滚动 |
+| Review patch staging | 每个项目 1 GiB | 只滚动新版哈希目录；旧双文件保持保护 |
+| replay | 100 MiB | 只滚动完整且哈希有效、未标记保留的 capsule |
+| verified registry | 2 GiB 维护阈值 | 已批准产品状态，禁止自动删除 |
+| Coding/Review wire | 每个专用池 100 MiB | AES-256-GCM 完整调用 UID 滚动池 |
+
+0.13.7 的 `usage_status` 会返回 11 个不含物理路径、prompt 或源码的存储域状态。`rolling` 表示只按
+完整单元从旧到新淘汰，`archive` 表示逻辑永久数据只允许人工归档/轮换，`protected` 表示自动清理
+禁止触碰。工具表面没有任意删除命令；旧版 staged patch 双文件可继续使用，但不会被自动迁移或删除。
 
 ### 9.4 配置备份
 
@@ -426,18 +449,18 @@ https://github.com/xujinglong8814-WeiBeta/ask-ai-mcp
 2. 启用或安装 WSL 2 与 Docker Desktop，不关闭现有 Windows 功能；
 3. 登录专用 GitHub 账号并克隆私有仓库到 `C:\Dev\ask-ai-mcp`；
 4. 运行 `uv sync --all-groups`；
-5. 在 Windows Credential Manager 重新录入 DeepSeek API 密钥；
+5. 在 Windows Credential Manager 重新录入当前已配置订阅的 API 密钥；
 6. 创建 `%USERPROFILE%\Documents\AskAI-Exchange` 目录结构；
 7. 恢复漫游交接目录；
 8. 如需继承审阅、预算和注册工具，停机恢复 `%LOCALAPPDATA%\AskAIMCP`；
 9. 合并 Claude 与 Codex MCP 配置，修正绝对路径；
 10. 重启两个 GUI，确认 Core 8、Subagent 11、H3 4 或 Full 15 项工具；
 11. 调用 `workflow_guidance`、`list_pending_reviews`、`usage_status` 做无费用检查；
-12. 用合成 CSV 做一次 `run_verified_tool` 回归，不调用 DeepSeek。
+12. 用合成 CSV 做一次 `run_verified_tool` 回归，不调用外部模型。
 
 自动化迁移包只迁移 MCP Server，并分为 Core 8、Subagent 11、H3 4 和 Full 15
 四个配置。所有版本都不携带 ComfyUI、Qwen、模型、业务文件、本机状态或凭据；目标机必须重新录入
-DeepSeek API 密钥。需要继承历史状态时，仍应采用单独的所有者专用停机冷备份。
+当前订阅 API 密钥。需要继承历史状态时，仍应采用单独的所有者专用停机冷备份。
 
 ## 11. 常见状态与处理
 
@@ -476,7 +499,7 @@ DeepSeek API 密钥。需要继承历史状态时，仍应采用单独的所有�
 - [ ] 只暂存了任务所需副本；
 - [ ] 输入和输出 SHA-256 已记录；
 - [ ] 使用的工具名、版本、candidate SHA 与 run ID 已记录；
-- [ ] DeepSeek 只参与允许的机械性工作；
+- [ ] Ask AI Worker 只参与允许的机械性工作；
 - [ ] 最终事实、正文与结论由 GPT/Codex 或 Claude 独立完成；
 - [ ] 重要输出已从本机 runs 复制到 `accepted-output`；
 - [ ] 双端交接内容已保存到 `handoff`；
@@ -488,8 +511,8 @@ DeepSeek API 密钥。需要继承历史状态时，仍应采用单独的所有�
 
 - 不开放盘符根目录、整个用户目录或完整业务资料库作为输入根；
 - 不把 API 密钥写入 JSON、TOML、Markdown、日志、Git 或交接目录；
-- 不把整份业务文档通过 `build_helper_tool` 发送给 DeepSeek；
-- 不让 DeepSeek 撰写或续写最终正文；
+- 不把整份业务文档通过 `build_helper_tool` 发送给 Worker；
+- 不让 Worker 撰写或续写最终正文；
 - 不因测试通过而省略独立代码审查；
 - 不在两个活动进程之间实时同步 SQLite 状态库；
 - 不自动批准、自动升级昂贵路由或绕过订阅账本门禁；

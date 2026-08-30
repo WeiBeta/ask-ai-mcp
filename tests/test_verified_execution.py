@@ -121,6 +121,7 @@ def test_registered_tool_runs_only_on_staged_copy_and_records_hashes(tmp_path: P
     assert source.read_bytes() == b"synthetic workbook bytes"
     assert {item.relative_path for item in report.output_artifacts} == {"_ask_ai_result.json"}
     assert Path(report.output_directory).is_relative_to((tmp_path / "runs").resolve())
+    assert (tmp_path / "runs" / report.run_id / ".retention.json").is_file()
     listed = runner.list_registered_tools().tools[0]
     assert listed.runnable is True
     assert listed.execution_count == 1

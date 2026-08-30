@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import subprocess
 import time
 from datetime import UTC, datetime
@@ -35,7 +36,10 @@ from ask_ai_mcp.coding_models import (
 )
 from ask_ai_mcp.coding_workspace import CodingSnapshotter
 from ask_ai_mcp.opencode_account import load_opencode_account
+from ask_ai_mcp.storage_retention import SMOKE_MAX_BYTES, AtomicBundleRetention
 from ask_ai_mcp.usage import UsageStore
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _git(root: Path, *arguments: str) -> str:
@@ -221,6 +225,16 @@ def main() -> int:
     report_path.write_text(
         json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8"
     )
+    try:
+        retention = AtomicBundleRetention(
+            root=root.parent,
+            domain_id="opencode_smoke",
+            limit_bytes=SMOKE_MAX_BYTES,
+        )
+        retention.seal(stamp, terminal_at=datetime.now(UTC))
+        retention.maintain(protected_bundle_ids=frozenset({stamp}))
+    except (OSError, RuntimeError, ValueError) as error:
+        _LOGGER.warning("smoke retention maintenance failed: %s", type(error).__name__)
     print(report_path)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return (

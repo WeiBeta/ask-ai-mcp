@@ -40,10 +40,9 @@ baseline. It defines immutable executable profiles over explicit capabilities,
 introduces provider-neutral worker-role routing names, and splits accounting
 into entitlement checks, an immutable usage ledger, and user-approval policy
 over the existing SQLite store. The seven executable names, tool order and
-parameter schemas remain compatible with 0.12.3. Production stays on 0.12.3
-until 0.13 passes full offline verification, external frozen-diff Review and
-explicit physical gray testing; merge and deployment require a separate user
-decision.
+parameter schemas remain compatible with 0.12.3. That line remains the rollback
+baseline while approved 0.13.x builds undergo isolated verification and physical
+gray testing; every new merge/deployment still requires a separate user decision.
 
 Version 0.13.2 adds Grok 4.6, tiered local pricing, and non-executing route
 recommendations while preserving explicit model selection and no paid retry.
@@ -80,6 +79,24 @@ input limits and the minimum input-cost estimate. The selected model, policy ver
 decision metadata are persisted in the manifest and audit. Explicit manual model
 selection remains available for controlled comparisons, but a failed request
 must never trigger retry, fallback, model switching or a second job.
+Version 0.13.7 adds provider-neutral storage quota and retention management
+without adding another MCP entrypoint. Terminal Coding, Review, Toolsmith,
+Source, verified-run, smoke and staged-patch bundles may roll only as complete
+atomic units; active, unresolved, unexported or receipt-incomplete work remains
+protected. Encrypted wire capture keeps its existing 100 MiB rolling boundary.
+The pure-LLM replay capsule pool also becomes a 100 MiB rolling store: only
+complete hash-valid capsules are eligible for oldest-first eviction, a single
+oversized capsule fails closed, and promoted benchmark cases remain explicitly
+identifiable. Registry entries are durable approved product state and are never
+silently evicted. Usage/accounting truth and Review run, finding, adjudication
+and outcome data remain logically permanent; growth is handled by compact
+read-only archival or database rotation rather than destructive retention.
+`usage_status` exposes content-free per-domain usage, limits and maintenance
+state. The implementation uses receipt-bound whole-directory eviction, preserves
+legacy staged-patch pairs as protected input, and keeps Review artifacts until all
+findings are durably adjudicated. A transient Windows reader collision during Coding
+terminal-state publication is handled by bounded local file-replace retries; it never
+causes another provider call.
 Version 0.13.1 adds UID-correlated encrypted wire evidence for Coding/Review,
 stream-boundary transport diagnostics, and a local operator-only idempotent
 reconciliation receipt for dashboard-confirmed billed transport failures. It

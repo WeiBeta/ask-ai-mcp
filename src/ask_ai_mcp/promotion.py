@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import shutil
 import stat
@@ -23,7 +24,13 @@ from ask_ai_mcp.models import (
     VerifiedToolRecord,
 )
 from ask_ai_mcp.sandbox import BACKEND_NAME, DEFAULT_RUNNER_IMAGE
+from ask_ai_mcp.storage_retention import (
+    TOOLSMITH_JOBS_MAX_BYTES,
+    AtomicBundleRetention,
+)
 from ask_ai_mcp.workspace import default_jobs_root
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class CandidatePromotionError(RuntimeError):
@@ -37,10 +44,21 @@ def default_verified_tools_root() -> Path:
 class VerifiedToolRegistry:
     """Copy exact approved bytes into an immutable-by-hash local registry."""
 
-    def __init__(self, root: Path | None = None, *, jobs_root: Path | None = None) -> None:
+    def __init__(
+        self,
+        root: Path | None = None,
+        *,
+        jobs_root: Path | None = None,
+        retention: AtomicBundleRetention | None = None,
+    ) -> None:
         self.root = (root or default_verified_tools_root()).resolve()
         self.jobs_root = (jobs_root or default_jobs_root()).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
+        self.retention = retention or AtomicBundleRetention(
+            root=self.jobs_root,
+            domain_id="toolsmith_jobs",
+            limit_bytes=TOOLSMITH_JOBS_MAX_BYTES,
+        )
 
     def approve(
         self,
@@ -96,6 +114,7 @@ class VerifiedToolRegistry:
                 raise CandidatePromotionError("only the two desktop controllers may approve")
             updated = existing.model_copy(update={"approval_identities": identities})
             self._write_json_atomic(target / "record.json", updated.model_dump_json(indent=2))
+            self._seal_promoted_job(source_root, updated.approved_at)
             return target, updated
 
         record = VerifiedToolRecord(
@@ -140,7 +159,15 @@ class VerifiedToolRegistry:
             if target_created and target.exists():
                 shutil.rmtree(target)
             raise
+        self._seal_promoted_job(source_root, record.approved_at)
         return target, record
+
+    def _seal_promoted_job(self, job_root: Path, approved_at: datetime) -> None:
+        try:
+            self.retention.seal(job_root.name, terminal_at=approved_at)
+            self.retention.maintain(protected_bundle_ids=frozenset({job_root.name}))
+        except (OSError, RuntimeError, ValueError) as error:
+            _LOGGER.warning("toolsmith retention maintenance failed: %s", type(error).__name__)
 
     def load(
         self,

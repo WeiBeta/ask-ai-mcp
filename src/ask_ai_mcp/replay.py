@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
 import sqlite3
+import stat
+import threading
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -26,12 +30,15 @@ from ask_ai_mcp.models import (
     ToolCandidatePayload,
 )
 from ask_ai_mcp.review import CandidateReviewRepository
+from ask_ai_mcp.storage_retention import REPLAY_MAX_BYTES
 from ask_ai_mcp.workspace import default_jobs_root
 
 REPLAY_CAPTURE_ENV = "ASK_AI_MCP_REPLAY_CAPTURE"
 REPLAY_ROOT_ENV = "ASK_AI_MCP_REPLAY_ROOT"
 REPLAY_SCHEMA_VERSION = "toolsmith_replay_v1"
+REPLAY_RETAIN_MARKER = "retention.keep"
 _FALSE_VALUES = frozenset({"0", "false", "no", "off"})
+_REPLAY_WRITE_LOCK = threading.RLock()
 
 
 class ReplayCaptureError(RuntimeError):
@@ -76,6 +83,14 @@ class ReplayImportSummary(StrictModel):
     warnings: list[str] = Field(default_factory=list, max_length=100)
 
 
+@dataclass(frozen=True, slots=True)
+class _ReplayRetentionCandidate:
+    lifecycle_id: str
+    root: Path
+    size_bytes: int
+    captured_at: float
+
+
 def replay_capture_enabled() -> bool:
     value = os.environ.get(REPLAY_CAPTURE_ENV, "0")
     return value.strip().casefold() not in _FALSE_VALUES
@@ -91,8 +106,11 @@ def default_replay_root() -> Path:
 class ReplayStore:
     """Persist immutable capsules separately from prompt-free operational audit logs."""
 
-    def __init__(self, root: Path | None = None) -> None:
+    def __init__(self, root: Path | None = None, *, max_bytes: int = REPLAY_MAX_BYTES) -> None:
+        if max_bytes <= 0:
+            raise ValueError("replay storage limit must be positive")
         self.root = (root or default_replay_root()).resolve()
+        self.max_bytes = max_bytes
         self.root.mkdir(parents=True, exist_ok=True)
 
     @classmethod
@@ -104,25 +122,82 @@ class ReplayStore:
             UUID(capsule.lifecycle_id)
         except ValueError as error:
             raise ReplayCaptureError("invalid lifecycle identifier") from error
-        capsule_root = self._within(self.root / capsule.lifecycle_id)
-        capsule_root.mkdir(parents=False, exist_ok=True)
-        target = self._within(capsule_root / "capsule.json")
-        digest_target = self._within(capsule_root / "capsule.sha256")
         payload = capsule.model_dump_json(indent=2).encode("utf-8")
         digest = hashlib.sha256(payload).hexdigest()
+        digest_payload = f"{digest}  capsule.json\n".encode("ascii")
+        capsule_size = len(payload) + len(digest_payload)
+        if capsule_size > self.max_bytes:
+            raise ReplayCaptureError("replay capsule exceeds the configured rolling limit")
 
-        if target.exists():
-            existing = target.read_bytes()
-            if existing != payload:
-                raise ReplayCaptureError("immutable replay capsule already exists with other bytes")
-            self._verify_digest(target, digest_target)
+        with _REPLAY_WRITE_LOCK:
+            capsule_root = self._within(self.root / capsule.lifecycle_id)
+            target = self._within(capsule_root / "capsule.json")
+            digest_target = self._within(capsule_root / "capsule.sha256")
+            if capsule_root.exists():
+                if not capsule_root.is_dir() or self._is_reparse(capsule_root):
+                    raise ReplayCaptureError("replay capsule root is not a safe directory")
+                if not target.is_file():
+                    raise ReplayCaptureError("immutable replay capsule is incomplete")
+                existing = target.read_bytes()
+                if existing != payload:
+                    raise ReplayCaptureError(
+                        "immutable replay capsule already exists with other bytes"
+                    )
+                self._verify_digest(target, digest_target)
+                return target
+
+            current_bytes, candidates = self._retention_inventory()
+            eviction_plan = self._eviction_plan(
+                candidates,
+                required_bytes=max(0, current_bytes + capsule_size - self.max_bytes),
+            )
+
+            temporary_root = self._within(
+                self.root / f".{capsule.lifecycle_id}.{uuid4()}.replay-tmp"
+            )
+            tombstones: list[tuple[_ReplayRetentionCandidate, Path]] = []
+            try:
+                temporary_root.mkdir(parents=False, exist_ok=False)
+                (temporary_root / "capsule.json").write_bytes(payload)
+                (temporary_root / "capsule.sha256").write_bytes(digest_payload)
+                for candidate in eviction_plan:
+                    current = self._retention_candidate(candidate.root, candidate.size_bytes)
+                    if current != candidate:
+                        raise OSError("replay capsule changed before rolling eviction")
+                    tombstone = self._within(
+                        self.root / f".{candidate.lifecycle_id}.{uuid4()}.replay-evicted"
+                    )
+                    os.replace(candidate.root, tombstone)
+                    tombstones.append((candidate, tombstone))
+                os.replace(temporary_root, capsule_root)
+            except OSError as error:
+                restore_failed = False
+                for candidate, tombstone in reversed(tombstones):
+                    try:
+                        if tombstone.exists() and not candidate.root.exists():
+                            os.replace(tombstone, candidate.root)
+                    except OSError:
+                        restore_failed = True
+                self._discard_tree(temporary_root)
+                detail = (
+                    "replay retention transaction requires manual recovery"
+                    if restore_failed
+                    else "failed to publish replay capsule atomically"
+                )
+                raise ReplayCaptureError(detail) from error
+            for _candidate, tombstone in tombstones:
+                self._discard_tree(tombstone)
             return target
 
-        temporary = self._within(capsule_root / f".{uuid4()}.tmp")
-        temporary.write_bytes(payload)
-        temporary.replace(target)
-        digest_target.write_text(f"{digest}  capsule.json\n", encoding="ascii")
-        return target
+    def retain(self, lifecycle_id: str) -> Path:
+        """Protect one complete hash-valid capsule from rolling eviction."""
+
+        with _REPLAY_WRITE_LOCK:
+            capsule = self.load(lifecycle_id)
+            capsule_root = self._within(self.root / capsule.lifecycle_id)
+            marker = self._within(capsule_root / REPLAY_RETAIN_MARKER)
+            marker.touch(exist_ok=True)
+            return marker
 
     def load(self, lifecycle_id: str) -> ToolsmithReplayCapsule:
         try:
@@ -148,6 +223,140 @@ class ReplayStore:
         if not resolved.is_relative_to(self.root):
             raise ReplayCaptureError("replay path escapes configured root")
         return resolved
+
+    def _retention_inventory(self) -> tuple[int, list[_ReplayRetentionCandidate]]:
+        total_bytes = 0
+        candidates: list[_ReplayRetentionCandidate] = []
+        try:
+            entries = list(os.scandir(self.root))
+        except OSError as error:
+            raise ReplayCaptureError("failed to inspect replay storage") from error
+        for entry in entries:
+            try:
+                entry_stat = entry.stat(follow_symlinks=False)
+            except OSError as error:
+                raise ReplayCaptureError("replay storage contains unreadable entries") from error
+            if self._is_reparse_stat(entry_stat):
+                continue
+            if stat.S_ISREG(entry_stat.st_mode):
+                total_bytes += entry_stat.st_size
+                continue
+            if not stat.S_ISDIR(entry_stat.st_mode):
+                continue
+            entry_root = Path(entry.path)
+            size_bytes, safe = self._safe_directory_size(entry_root)
+            total_bytes += size_bytes
+            if not safe:
+                raise ReplayCaptureError("protected replay data cannot be measured safely")
+            candidate = self._retention_candidate(entry_root, size_bytes)
+            if candidate is not None:
+                candidates.append(candidate)
+        return total_bytes, candidates
+
+    def _retention_candidate(
+        self,
+        capsule_root: Path,
+        size_bytes: int,
+    ) -> _ReplayRetentionCandidate | None:
+        try:
+            lifecycle_id = str(UUID(capsule_root.name))
+        except ValueError:
+            return None
+        if lifecycle_id != capsule_root.name or (capsule_root / REPLAY_RETAIN_MARKER).exists():
+            return None
+        try:
+            names = {entry.name for entry in os.scandir(capsule_root)}
+        except OSError:
+            return None
+        if names != {"capsule.json", "capsule.sha256"}:
+            return None
+        target = capsule_root / "capsule.json"
+        digest_target = capsule_root / "capsule.sha256"
+        try:
+            if target.stat().st_size > self.max_bytes or digest_target.stat().st_size > 256:
+                return None
+            self._verify_digest(target, digest_target)
+            capsule = ToolsmithReplayCapsule.model_validate_json(target.read_text(encoding="utf-8"))
+        except (OSError, ValueError, ReplayCaptureError):
+            return None
+        if capsule.lifecycle_id != lifecycle_id:
+            return None
+        captured_at = capsule.captured_at
+        if captured_at.tzinfo is None:
+            captured_at = captured_at.replace(tzinfo=UTC)
+        return _ReplayRetentionCandidate(
+            lifecycle_id=lifecycle_id,
+            root=capsule_root,
+            size_bytes=size_bytes,
+            captured_at=captured_at.timestamp(),
+        )
+
+    @staticmethod
+    def _eviction_plan(
+        candidates: list[_ReplayRetentionCandidate],
+        *,
+        required_bytes: int,
+    ) -> list[_ReplayRetentionCandidate]:
+        if required_bytes <= 0:
+            return []
+        plan: list[_ReplayRetentionCandidate] = []
+        reclaimed = 0
+        for candidate in sorted(
+            candidates,
+            key=lambda item: (item.captured_at, item.lifecycle_id),
+        ):
+            plan.append(candidate)
+            reclaimed += candidate.size_bytes
+            if reclaimed >= required_bytes:
+                return plan
+        raise ReplayCaptureError("protected replay data prevents quota compliance")
+
+    @classmethod
+    def _safe_directory_size(cls, root: Path) -> tuple[int, bool]:
+        total = 0
+        pending = [root]
+        while pending:
+            directory = pending.pop()
+            try:
+                entries = list(os.scandir(directory))
+            except OSError:
+                return total, False
+            for entry in entries:
+                try:
+                    entry_stat = entry.stat(follow_symlinks=False)
+                except OSError:
+                    return total, False
+                if cls._is_reparse_stat(entry_stat):
+                    return total, False
+                if stat.S_ISREG(entry_stat.st_mode):
+                    total += entry_stat.st_size
+                elif stat.S_ISDIR(entry_stat.st_mode):
+                    pending.append(Path(entry.path))
+                else:
+                    return total, False
+        return total, True
+
+    @staticmethod
+    def _discard_tree(path: Path) -> None:
+        try:
+            if path.is_dir() and not ReplayStore._is_reparse(path):
+                shutil.rmtree(path)
+        except OSError:
+            pass
+
+    @staticmethod
+    def _is_reparse(path: Path) -> bool:
+        try:
+            return ReplayStore._is_reparse_stat(path.lstat())
+        except OSError:
+            return True
+
+    @staticmethod
+    def _is_reparse_stat(value: os.stat_result) -> bool:
+        attributes = getattr(value, "st_file_attributes", 0)
+        return stat.S_ISLNK(value.st_mode) or bool(
+            attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+        )
 
 
 class LegacyReplayImporter:

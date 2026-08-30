@@ -73,6 +73,7 @@ from ask_ai_mcp.review import CandidateReviewRepository
 from ask_ai_mcp.review_attestation import ReviewAttestationStore
 from ask_ai_mcp.sandbox import docker_backend_status
 from ask_ai_mcp.source import SourceJobManager
+from ask_ai_mcp.storage_retention import StorageRetentionManager
 from ask_ai_mcp.usage import UsageStore
 from ask_ai_mcp.verified_execution import VerifiedToolRunner
 from ask_ai_mcp.workspace import CandidateWorkspaceManager
@@ -181,6 +182,13 @@ _DESKTOP_CLIENT_NAMES = frozenset({"claude_desktop", "codex_desktop"})
 def get_usage_store() -> UsageStore:
     """Create the shared audit store lazily after MCP initialization."""
     return UsageStore()
+
+
+@lru_cache(maxsize=1)
+def get_storage_retention_manager() -> StorageRetentionManager:
+    """Create the path-redacted local storage observer lazily."""
+
+    return StorageRetentionManager()
 
 
 @lru_cache(maxsize=1)
@@ -516,8 +524,11 @@ def source_job_status(
     )
 )
 def usage_status(days: Annotated[int, Field(ge=1, le=366)] = 15) -> UsageSummary:
-    """Return subscription usage, daily pace, and lifecycle economics; never calls a model."""
-    return get_usage_store().summarize(days=days)
+    """Return usage, lifecycle economics, and path-free storage quotas; never calls a model."""
+    summary = get_usage_store().summarize(days=days)
+    return summary.model_copy(
+        update={"storage_retention": get_storage_retention_manager().status()}
+    )
 
 
 @core_tool(

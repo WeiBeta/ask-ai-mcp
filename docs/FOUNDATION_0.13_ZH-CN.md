@@ -2,9 +2,9 @@
 
 ## 定位
 
-0.13.6 是隔离开发和灰度验证用的测试大版本。当前生产基线继续保持
-0.12.3；未经完整离线验收、冻结差异外部 Review、物理机灰度和用户明确
-合并决定，不得替换生产入口。
+0.13.7 是隔离开发和灰度验证用的测试小版本。当前物理机灰度基线为 0.13.6，
+0.12.3 继续作为可回滚版本；未经完整离线验收、冻结差异外部 Review 和用户明确
+部署决定，0.13.7 不得替换现有入口。
 
 ## 分层
 
@@ -120,3 +120,18 @@ cache/reasoning 明细时明确记录为 `provider_dashboard_totals`，不得伪
 - 旧客户端显式传 `model` 时兼容为 `route_mode=explicit`，但控制者 Codex 模型永远不是 Review
   Worker 枚举；
 - 选路只发生在首次提交前，任何失败都不得触发重试、分片、回退、换模或第二 job。
+
+## 0.13.7 本机存储留存
+
+- `usage_status` 复用现有 Core 接口，返回 11 个不含宿主路径和正文的存储域状态；不新增留存 MCP
+  入口，也不开放任意删除接口。
+- `usage.db`、`code-review/review.db` 属于逻辑永久账本；阈值只触发维护提示，不静默删除调用、
+  finding、裁决或 outcome。`registry` 是已批准产品状态，禁止自动淘汰。
+- Coding、Review、Toolsmith、Source、verified run、smoke 和新版 Review staging 仅在终态、完整导出、
+  receipt 与哈希一致后，才允许按完整目录从旧到新滚动。Review 有 finding 时还必须全部完成永久裁决。
+- 新 staging 使用 patch SHA 命名目录原子发布 `review.patch` 与 `receipt.json`；0.13.6 旧双文件继续
+  可读但保持保护状态，不做猜测性迁移或清理。
+- 纯 LLM replay 固定为 100 MiB；只淘汰完整、哈希有效、未标记保留的 capsule。单个 capsule 超限
+  在写入前拒绝，不能先删旧数据再失败。
+- Windows 状态轮询与终态 `job.json` 原子替换发生短暂共享冲突时，只重试本地文件替换；绝不重发
+  provider 请求。

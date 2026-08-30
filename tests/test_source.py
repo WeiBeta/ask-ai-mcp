@@ -181,6 +181,7 @@ def test_source_job_stages_copy_and_returns_canonical_manifest(tmp_path: Path) -
     assert manifest["backend"]["provider"] == "local_qwen"
     assert manifest["inputs"][0]["original_name"] == "复杂 报告.pdf"
     assert len(manifest["inputs"][0]["sha256"]) == 64
+    assert (tmp_path / "jobs" / submission.job_id / ".retention.json").is_file()
 
 
 def test_source_rejects_unimplemented_document_type_and_outside_root(tmp_path: Path) -> None:
@@ -221,6 +222,7 @@ def test_backend_failure_returns_kind_without_sensitive_message(tmp_path: Path) 
     assert report.state is SourceJobState.FAILED
     assert report.failure_kind == "RuntimeError"
     assert "sensitive" not in report.detail
+    assert (tmp_path / "jobs" / submission.job_id / ".retention.json").is_file()
 
 
 def test_still_processing_failure_reports_slots_without_resubmit_signal(tmp_path: Path) -> None:

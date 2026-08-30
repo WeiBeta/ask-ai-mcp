@@ -5,6 +5,7 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
+import logging
 import os
 import re
 import threading
@@ -12,7 +13,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime
 from math import ceil
 from pathlib import Path
-from time import perf_counter
+from time import perf_counter, sleep
 from typing import Any
 from uuid import uuid4
 
@@ -68,6 +69,10 @@ from ask_ai_mcp.provider_timeout import (
     timeout_policy_with_read_seconds,
     transport_failure_kind_from_audit,
 )
+from ask_ai_mcp.storage_retention import (
+    CODING_JOBS_MAX_BYTES,
+    AtomicBundleRetention,
+)
 from ask_ai_mcp.usage import UsageStore
 from ask_ai_mcp.wire_capture import (
     EncryptedWireCapture,
@@ -89,6 +94,7 @@ _SECRET_TEXT = re.compile(
     r"(?i)(?:api[_-]?key|access[_-]?token|client[_-]?secret|password)\s*[:=]\s*"
     r"[\"'][^\"'\r\n]{12,}[\"']|-----BEGIN [A-Z ]*PRIVATE KEY-----"
 )
+_LOGGER = logging.getLogger(__name__)
 
 
 def _sha256(data: bytes) -> str:
@@ -103,11 +109,22 @@ def _estimated_tokens(value: str) -> int:
 
 def _atomic_json(path: Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(
-        json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8"
-    )
-    temporary.replace(path)
+    temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    try:
+        with temporary.open("w", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True))
+            handle.flush()
+            os.fsync(handle.fileno())
+        for attempt in range(100):
+            try:
+                os.replace(temporary, path)
+                return
+            except PermissionError:
+                if attempt == 99:
+                    raise
+                sleep(0.01)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _safe_state_root() -> Path:
@@ -150,6 +167,7 @@ class CodingManager:
         encrypted_wire_capture: bool | None = None,
         wire_capture_key_provider=None,
         wire_capture_max_bytes_override: int | None = None,
+        retention: AtomicBundleRetention | None = None,
     ) -> None:
         self.account = account if account is not None else load_opencode_account(required=False)
         if self.account is None and api_key_provider is not None:
@@ -160,6 +178,12 @@ class CodingManager:
         self.root = state_root or _safe_state_root()
         self.jobs_root = self.root / "jobs"
         self.jobs_root.mkdir(parents=True, exist_ok=True)
+        self.retention = retention or AtomicBundleRetention(
+            root=self.jobs_root,
+            domain_id="coding_jobs",
+            limit_bytes=CODING_JOBS_MAX_BYTES,
+            excluded_paths=("wire", "audit/wire-capture.json"),
+        )
         credentials = OpenCodeCredentialStore(self.account.uid) if self.account else None
         self.api_key_provider = api_key_provider or (
             credentials.get_api_key if credentials is not None else self._missing_credential
@@ -194,6 +218,7 @@ class CodingManager:
         )
         self._futures: dict[str, Future[None]] = {}
         self._future_lock = threading.Lock()
+        self._export_lock = threading.Lock()
 
     @staticmethod
     def _missing_credential() -> str:
@@ -387,7 +412,7 @@ class CodingManager:
         next_offset = (
             command.offset + len(chunk) if command.offset + len(chunk) < len(patch) else None
         )
-        return CodingStatus(
+        status = CodingStatus(
             job_id=command.job_id,
             state=CodingJobState(record["state"]),
             detail=str(record["detail"]),
@@ -424,6 +449,71 @@ class CodingManager:
             patch_chunk=chunk,
             next_offset=next_offset,
         )
+        patch_exported = self._record_patch_export(
+            job_root,
+            state=status.state,
+            offset=command.offset,
+            chunk_length=len(chunk),
+            patch_length=len(patch),
+        )
+        if (
+            status.state in {CodingJobState.SUCCEEDED, CodingJobState.FAILED}
+            and patch_exported
+            and status.completed_at is not None
+        ):
+            self._seal_exported_job(command.job_id, status.completed_at)
+        return status
+
+    def _record_patch_export(
+        self,
+        job_root: Path,
+        *,
+        state: CodingJobState,
+        offset: int,
+        chunk_length: int,
+        patch_length: int,
+    ) -> bool:
+        if state not in {CodingJobState.SUCCEEDED, CodingJobState.FAILED}:
+            return False
+        if patch_length == 0:
+            return True
+        export_path = job_root / "export.json"
+        try:
+            with self._export_lock:
+                exported_through = 0
+                if export_path.is_file():
+                    export = json.loads(export_path.read_text(encoding="utf-8"))
+                    if (
+                        not isinstance(export, dict)
+                        or export.get("schema_version") != 1
+                        or export.get("patch_length") != patch_length
+                        or not isinstance(export.get("exported_through"), int)
+                    ):
+                        raise ValueError("coding patch export receipt is invalid")
+                    exported_through = int(export["exported_through"])
+                if offset <= exported_through:
+                    contiguous_end = min(patch_length, max(exported_through, offset + chunk_length))
+                    if contiguous_end != exported_through:
+                        _atomic_json(
+                            export_path,
+                            {
+                                "schema_version": 1,
+                                "patch_length": patch_length,
+                                "exported_through": contiguous_end,
+                            },
+                        )
+                        exported_through = contiguous_end
+                return exported_through >= patch_length
+        except (OSError, ValueError) as error:
+            _LOGGER.warning("coding export tracking failed: %s", type(error).__name__)
+            return False
+
+    def _seal_exported_job(self, job_id: str, completed_at: datetime) -> None:
+        try:
+            self.retention.seal(job_id, terminal_at=completed_at)
+            self.retention.maintain(protected_bundle_ids=frozenset({job_id}))
+        except (OSError, RuntimeError, ValueError) as error:
+            _LOGGER.warning("coding retention maintenance failed: %s", type(error).__name__)
 
     def _run(self, job_id: str, command: CodingSubmitCommand, snapshot: CodingSnapshot) -> None:
         job_root = self.jobs_root / job_id

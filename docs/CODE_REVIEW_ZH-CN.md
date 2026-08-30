@@ -52,8 +52,9 @@ advisory-only 的按文件分片计划。Controller 必须显式生成并重新�
 根、整个用户目录、非 Git 根、路径穿越、逃逸 symlink/junction/reparse point 和 submodule
 内容。每个 patch root 的末级目录名必须与仓库 ID 完全一致。`code_review_stage_patch` 先验证
 patch 已是最终脱敏 diff，再在该目录写临时文件，由控制器计算精确 UTF-8 字节数和 SHA-256，
-按 hash 原子改名为只读 `.patch`，最后原子写只读 `.receipt.json`。任何中断最多留下无 receipt
-的孤立 patch，后续提交会 fail closed；不会从 refs 重建、修复或自动重试。
+把只读 `review.patch` 与 `receipt.json` 一并原子发布到 patch SHA 命名的子目录。0.13.6 旧版
+同级 `.patch`/`.receipt.json` 双文件仍可读取，但保持自动留存保护，不做猜测性迁移。任何不完整
+目录或 receipt 不匹配都会在提交前 fail closed；不会从 refs 重建、修复或自动重试。
 若输入仍含 `.meta`、二进制、密钥段、宿主绝对路径或 diff 前导内容，0.13.6 的拒绝错误只返回
 输入/净化后字节数与 SHA-256、接受/排除段数量、原因计数、宿主路径替换数量和前导字节数；
 不返回或持久化补丁正文、文件路径、匹配值或密钥，也不会自动替调用方净化再提交。
@@ -78,6 +79,10 @@ Windows 反斜杠到仓库标准 `/` 的确定性规范化保持不变，但 pro
 finding 指纹和归因 UID；不保存完整源码、完整 diff、完整 prompt、密钥或常规模型完整输出。
 `wire` 是独立 AES-256-GCM 分块密文证据仓，默认 100 MiB 按完整 UID 滚动淘汰；API key、
 Authorization 与 Cookie 即使在密文仓也不保存。
+0.13.7 只有在终态结果完整导出、全部 finding 已写入永久 SQLite 裁决后，才给重型 job 目录写入
+内容无关留存 receipt 并允许整包滚动；失败或零 finding 作业也必须先读取终态。若旧产物已滚动，
+`code_review_status` 从永久账本返回计数并明确 `artifacts_retained=false`，不会伪造丢失正文。
+新版 hash 目录 staging 同样只按完整 patch/receipt 单元滚动；当前提交对应目录始终受保护。
 
 ## OpenCode Go 双层账本
 

@@ -13,6 +13,22 @@ from ask_ai_mcp.wire_capture import (
 )
 
 
+def test_capture_creates_its_own_audit_directory(tmp_path: Path) -> None:
+    job_id = "00000000-0000-4000-8000-000000000001"
+    job_root = tmp_path / job_id
+    job_root.mkdir()
+
+    capture = EncryptedWireCapture(
+        job_root=job_root,
+        job_id=job_id,
+        key_provider=lambda: b"k" * 32,
+        max_bytes=1_024,
+    )
+
+    assert (job_root / "audit" / "wire-capture.json").is_file()
+    capture.fail(RuntimeError("synthetic stop"))
+
+
 def test_encrypted_capture_round_trips_by_attribution_uid_without_plaintext_at_rest(
     tmp_path: Path,
 ) -> None:

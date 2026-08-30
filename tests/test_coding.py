@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -234,12 +235,199 @@ def test_candidate_uses_fixed_model_policy_and_returns_external_diff(
     assert job["command"]["model"] == model.value
     assert job["reasoning_effort"] == expected_effort
     assert job["max_output_tokens"] == 131_072
+    assert (tmp_path / "coding-state" / "jobs" / submission.job_id / ".retention.json").is_file()
     summary = usage.summarize(days=30)
     assert summary.opencode_go_accounts[0].account == "go-user-01"
     assert summary.by_model[model.value] == 1
     allowances = {item.model_id: item for item in summary.opencode_go_accounts[0].model_allowances}
     assert model.value in allowances
     assert summary.reasoning_tokens == 80
+
+
+def test_coding_retention_requires_contiguous_full_patch_export(tmp_path: Path) -> None:
+    root, commit = _repository(tmp_path)
+    state_root = tmp_path / "coding-state"
+    manager = CodingManager(
+        usage_store=UsageStore(tmp_path / "usage.db"),
+        snapshotter=CodingSnapshotter(CodeReviewRepositoryCatalog({"unity": root})),
+        account=OpenCodeAccount(uid="go-user-01", alias="Go User"),
+        api_key_provider=lambda: "opaque-test-key-1234567890",
+        state_root=state_root,
+    )
+    job_id = "11111111-1111-4111-8111-111111111111"
+    job_root = state_root / "jobs" / job_id
+    (job_root / "output").mkdir(parents=True)
+    patch = "x" * 2_500
+    (job_root / "output" / "candidate.diff").write_text(patch, encoding="utf-8")
+    (job_root / "job.json").write_text(
+        json.dumps(
+            {
+                "state": CodingJobState.SUCCEEDED.value,
+                "detail": "coding candidate completed",
+                "command": _command(commit).model_dump(mode="json"),
+                "base_commit": commit,
+                "reasoning_effort": "max",
+                "max_output_tokens": 131_072,
+                "created_at": "2026-08-30T00:00:00+00:00",
+                "started_at": "2026-08-30T00:00:01+00:00",
+                "completed_at": "2026-08-30T00:00:02+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    skipped = manager.status(CodingStatusCommand(job_id=job_id, offset=2_000, limit=1_000))
+    assert skipped.next_offset is None
+    assert not (job_root / "export.json").exists()
+    assert not (job_root / ".retention.json").exists()
+
+    first = manager.status(CodingStatusCommand(job_id=job_id, offset=0, limit=1_000))
+    assert first.next_offset == 1_000
+    assert not (job_root / ".retention.json").exists()
+    second = manager.status(CodingStatusCommand(job_id=job_id, offset=1_000, limit=1_000))
+    assert second.next_offset == 2_000
+    assert not (job_root / ".retention.json").exists()
+    final = manager.status(CodingStatusCommand(job_id=job_id, offset=2_000, limit=1_000))
+
+    assert final.next_offset is None
+    assert final.patch_chunk == "x" * 500
+    assert (job_root / ".retention.json").is_file()
+
+
+def test_coding_wire_capture_initializes_audit_directory(tmp_path: Path) -> None:
+    root, commit = _repository(tmp_path)
+    original = (root / "Counter.cs").read_text(encoding="utf-8")
+    original_hash = hashlib.sha256(original.encode()).hexdigest()
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "summary": "Increment by two.",
+                                    "changes": [
+                                        {
+                                            "file": "Counter.cs",
+                                            "original_sha256": original_hash,
+                                            "content": original.replace("x + 1", "x + 2"),
+                                        }
+                                    ],
+                                    "suggested_tests": ["Run the counter test."],
+                                    "risks": [],
+                                    "truncated": False,
+                                }
+                            )
+                        }
+                    }
+                ],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 50},
+            },
+        )
+
+    manager = CodingManager(
+        usage_store=UsageStore(tmp_path / "usage.db"),
+        snapshotter=CodingSnapshotter(CodeReviewRepositoryCatalog({"unity": root})),
+        account=OpenCodeAccount(uid="go-user-01", alias="Go User"),
+        api_key_provider=lambda: "opaque-test-key-1234567890",
+        transport=httpx.MockTransport(handler),
+        state_root=tmp_path / "coding-state",
+        encrypted_wire_capture=True,
+        wire_capture_key_provider=lambda: b"k" * 32,
+    )
+
+    submission = manager.submit(_command(commit))
+    deadline = time.monotonic() + 30
+    status = manager.status(CodingStatusCommand(job_id=submission.job_id, limit=1_000))
+    while status.state in {CodingJobState.QUEUED, CodingJobState.RUNNING}:
+        if time.monotonic() >= deadline:
+            raise AssertionError("coding job did not complete")
+        time.sleep(0.02)
+        status = manager.status(CodingStatusCommand(job_id=submission.job_id, limit=1_000))
+
+    assert status.state is CodingJobState.SUCCEEDED
+    audit_path = (
+        tmp_path / "coding-state" / "jobs" / submission.job_id / "audit" / "wire-capture.json"
+    )
+    assert json.loads(audit_path.read_text(encoding="utf-8"))["state"] == "complete"
+
+
+def test_coding_terminal_record_retries_transient_windows_replace_denial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, commit = _repository(tmp_path)
+    original = (root / "Counter.cs").read_text(encoding="utf-8")
+    original_hash = hashlib.sha256(original.encode()).hexdigest()
+    calls = 0
+    replace_calls = 0
+    real_replace = os.replace
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "summary": "Increment by two.",
+                                    "changes": [
+                                        {
+                                            "file": "Counter.cs",
+                                            "original_sha256": original_hash,
+                                            "content": original.replace("x + 1", "x + 2"),
+                                        }
+                                    ],
+                                    "suggested_tests": ["Run the counter test."],
+                                    "risks": [],
+                                    "truncated": False,
+                                }
+                            )
+                        }
+                    }
+                ],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 50},
+            },
+        )
+
+    def transient_replace(source: str | Path, destination: str | Path) -> None:
+        nonlocal replace_calls
+        destination_path = Path(destination)
+        if destination_path.name == "job.json" and destination_path.exists():
+            replace_calls += 1
+            if replace_calls <= 2:
+                raise PermissionError("simulated Windows reader collision")
+        real_replace(source, destination)
+
+    monkeypatch.setattr(os, "replace", transient_replace)
+    manager = CodingManager(
+        usage_store=UsageStore(tmp_path / "usage.db"),
+        snapshotter=CodingSnapshotter(CodeReviewRepositoryCatalog({"unity": root})),
+        account=OpenCodeAccount(uid="go-user-01", alias="Go User"),
+        api_key_provider=lambda: "opaque-test-key-1234567890",
+        transport=httpx.MockTransport(handler),
+        state_root=tmp_path / "coding-state",
+        encrypted_wire_capture=False,
+    )
+    submission = manager.submit(_command(commit))
+    deadline = time.monotonic() + 5
+    status = manager.status(CodingStatusCommand(job_id=submission.job_id))
+    while status.state in {CodingJobState.QUEUED, CodingJobState.RUNNING}:
+        if time.monotonic() >= deadline:
+            raise AssertionError("coding job did not complete")
+        time.sleep(0.02)
+        status = manager.status(CodingStatusCommand(job_id=submission.job_id))
+
+    assert calls == 1
+    assert replace_calls >= 3
+    assert status.state is CodingJobState.SUCCEEDED
+    assert not list((tmp_path / "coding-state").rglob(".job.json.*.tmp"))
 
 
 def test_coding_backend_reports_live_availability_for_all_six_models(tmp_path: Path) -> None:
