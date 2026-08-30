@@ -28,6 +28,14 @@
 - 用户明确暂停、GUI 重启、断线或上下文压缩前，先保存可脱离聊天恢复的结构化暂停回执；恢复后从已核验状态继续，不重做已完成工作。不得自动归档或删除 Codex 任务、session、lock、数据库或保留中的证据。
 - 建议、推荐默认、沉默或含糊短语不构成 push、merge、发布、付费扩容、系统变更或破坏性操作授权。需要用户检查点时采用四句式反馈：现状、限制、影响、需要用户做什么；等待前先完成不依赖该信息的安全工作。
 
+## Goal 无人值守审批与普通发布
+
+- 管理主会话与 Coding、Review、测试等执行任务默认继承同一用户级 sandbox、approval、MCP 和 rules 配置；新建或切换任务不扩大权限，也不得把另一任务中的自然语言授权当作本任务的宿主权限。
+- 当前用户配置中已启用且列入 `enabled_tools` 的 Core 候选生成/审查、Coding、Review 提交与状态工具，可在 MCP backend 报告的既有订阅、额度、仓库、输入和路由门禁内无人值守执行。后端拒绝即为该次工单终止结果；不得自动重试、分片、换模型、换账户或创建第二个付费任务。
+- `approve_tool_candidate`、`run_verified_tool` 以及未来新增或未列入白名单的 MCP 工具仍须审批；任何候选都不得因此自动应用到业务仓库或提升为权威结果。
+- 两个已授权仓库的普通分支发布只使用 `C:\Users\user\.codex\bin\Invoke-CodexSafeGitPush.ps1`。固定调用为 `& 'C:\Program Files\PowerShell\7\pwsh.exe' -NoProfile -NonInteractive -File 'C:\Users\user\.codex\bin\Invoke-CodexSafeGitPush.ps1' -Repository '<worktree-root>'`；不得增加 refspec、远端、force、delete、tag 或受保护分支参数。包装器必须核验 origin、共享 Git 根、当前 `codex/*` 分支并只推送同名分支。
+- 直接 `git push` 继续逐次审批。`main`、`master`、`release`/`release/*`、删除远端分支、force push、修改远端地址或凭据，只能在用户对精确 ref 和范围明确授权后执行；不得借包装器或其他命令绕过。
+
 ## 源文件与产物安全
 
 - 原始源文件只读。工具只处理副本，并写入专用输出目录。

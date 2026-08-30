@@ -35,14 +35,15 @@ Version 0.12.3 aligns injected timeout overrides with the public status contract
 and adds direct regression coverage for successful Review metadata and local
 Qwen requests that remain active after a client timeout.
 
-Version 0.13.0 is an isolated test-major foundation, not the deployed production
-baseline. It defines immutable executable profiles over explicit capabilities,
+Version 0.13.0 is a test-major foundation rather than a stable 1.0 line. It
+defines immutable executable profiles over explicit capabilities,
 introduces provider-neutral worker-role routing names, and splits accounting
 into entitlement checks, an immutable usage ledger, and user-approval policy
 over the existing SQLite store. The seven executable names, tool order and
-parameter schemas remain compatible with 0.12.3. That line remains the rollback
-baseline while approved 0.13.x builds undergo isolated verification and physical
-gray testing; every new merge/deployment still requires a separate user decision.
+parameter schemas remain compatible with 0.12.3. Version 0.13.7 is now the
+physical gray-test baseline after offline, external-Review and restarted-client
+acceptance; 0.12.3 remains the rollback baseline. Later 0.13.x changes still
+require a reproducible defect or an explicit scoped feature decision.
 
 Version 0.13.2 adds Grok 4.6, tiered local pricing, and non-executing route
 recommendations while preserving explicit model selection and no paid retry.
@@ -197,10 +198,12 @@ supports a decision on production limits and model routing.
 
 ## Phase 7: provider-neutral external model workers and instruction cutover
 
-Status: 0.13.0 test foundation in progress on an isolated branch. The profile,
-worker-route and accounting boundaries are implemented without creating a new
-accounting MCP process or changing the persistence schema. Deployment prompt
-cutover and physical gray testing remain intentionally pending.
+Status: the 0.13 foundation and provider-neutral instruction cutover are
+implemented. Version 0.13.7 is active as the physical gray-test baseline on the
+dedicated `codex/0.13-foundation` branch; Core, Coding and Review passed free
+post-restart status acceptance, while 0.12.3 remains available for rollback.
+Real-workload Coding/Review samples continue to drive any 0.13.x diagnostic or
+bug-fix work; Perception and H3 remain on-demand specialty profiles.
 
 - Replace `DeepSeek` as a controller role name with the provider-neutral
   `external_model_worker`; retain provider names only inside provider adapters,
