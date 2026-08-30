@@ -42,6 +42,7 @@ from ask_ai_mcp.code_review_workspace import (
 )
 from ask_ai_mcp.opencode_account import OpenCodeAccount
 from ask_ai_mcp.opencode_protocol import OPENCODE_GO_RESPONSES_URL, OpenCodeProviderResponseError
+from ask_ai_mcp.storage_retention import AtomicBundleRetention
 from ask_ai_mcp.usage import UsageStore
 from ask_ai_mcp.wire_capture import decrypt_wire_file
 
@@ -581,7 +582,14 @@ def test_stage_patch_is_free_and_submit_requires_receipt_hash(tmp_path: Path) ->
             model=CodeReviewModel.GLM_5_3,
         )
     receipt_path = patch_root / staged.patch_sha256 / "receipt.json"
-    assert (patch_root / staged.patch_sha256 / ".retention.json").is_file()
+    assert not (patch_root / staged.patch_sha256 / ".retention.json").exists()
+    pressure = AtomicBundleRetention(
+        root=patch_root,
+        domain_id="review_patch_staging",
+        limit_bytes=1,
+    )
+    assert pressure.maintain().evicted_bundle_count == 0
+    assert (patch_root / staged.patch_sha256).is_dir()
     receipt_path.chmod(stat.S_IWRITE | stat.S_IREAD)
     receipt_path.write_bytes(b"{}\n")
     receipt_path.chmod(stat.S_IREAD)
@@ -596,6 +604,70 @@ def test_stage_patch_is_free_and_submit_requires_receipt_hash(tmp_path: Path) ->
             )
         )
     assert calls == 0
+
+
+def test_staged_patch_enters_rolling_pool_only_after_terminal_export(tmp_path: Path) -> None:
+    root, base, head = _repository(tmp_path)
+    patch_root = tmp_path / "sample"
+    patch_root.mkdir()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": [{"id": CodeReviewModel.GLM_5_3.value}]})
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "content": json.dumps(
+                                {"findings": [], "omitted_context": [], "truncated": False}
+                            )
+                        },
+                    }
+                ],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 20},
+            },
+        )
+
+    manager = CodeReviewManager(
+        store=CodeReviewStore(tmp_path / "review-state"),
+        usage_store=UsageStore(tmp_path / "usage.db"),
+        snapshotter=CodeReviewSnapshotter(
+            CodeReviewRepositoryCatalog({"sample": root}), patch_roots=(patch_root,)
+        ),
+        account=OpenCodeAccount(uid="go-test-uid", alias="go-test"),
+        api_key_provider=lambda: "opaque-test-key-1234567890",
+        transport=httpx.MockTransport(handler),
+    )
+    patch_text = _git(root, "diff", "--no-renames", "--unified=3", base, head) + "\n"
+    staged = manager.stage_patch(
+        CodeReviewStagePatchCommand(repository_id="sample", patch=patch_text)
+    )
+    retention_receipt = patch_root / staged.patch_sha256 / ".retention.json"
+
+    assert not retention_receipt.exists()
+    submission = manager.submit(
+        CodeReviewSubmitCommand(
+            repository_id="sample",
+            patch_sha256=staged.patch_sha256,
+            receipt_sha256=staged.receipt_sha256,
+            review_profile=CodeReviewProfile.GENERAL,
+            model=CodeReviewModel.GLM_5_3,
+        )
+    )
+    deadline = time.monotonic() + 5
+    status = manager.status(CodeReviewStatusCommand(job_id=submission.job_id))
+    while status.state in {CodeReviewJobState.QUEUED, CodeReviewJobState.RUNNING}:
+        if time.monotonic() >= deadline:
+            raise AssertionError("review job did not complete")
+        time.sleep(0.02)
+        status = manager.status(CodeReviewStatusCommand(job_id=submission.job_id))
+
+    assert status.state is CodeReviewJobState.SUCCEEDED
+    assert status.next_offset is None
+    assert retention_receipt.is_file()
 
 
 def test_submodule_pointer_changes_are_not_sent_for_review(tmp_path: Path) -> None:

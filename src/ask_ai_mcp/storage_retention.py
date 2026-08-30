@@ -332,6 +332,12 @@ class AtomicBundleRetention:
                 os.replace(candidate.root, tombstone)
                 shutil.rmtree(tombstone)
             except OSError:
+                try:
+                    if tombstone.exists() and not candidate.root.exists():
+                        os.replace(tombstone, candidate.root)
+                except OSError:
+                    pass
+                usage = _safe_usage(self.root)
                 break
             evicted += 1
             usage = _safe_usage(self.root)

@@ -114,7 +114,8 @@ class VerifiedToolRegistry:
                 raise CandidatePromotionError("only the two desktop controllers may approve")
             updated = existing.model_copy(update={"approval_identities": identities})
             self._write_json_atomic(target / "record.json", updated.model_dump_json(indent=2))
-            self._seal_promoted_job(source_root, updated.approved_at)
+            if len(updated.approval_identities) == 2:
+                self._seal_promoted_job(source_root, updated.approved_at)
             return target, updated
 
         record = VerifiedToolRecord(
@@ -159,7 +160,6 @@ class VerifiedToolRegistry:
             if target_created and target.exists():
                 shutil.rmtree(target)
             raise
-        self._seal_promoted_job(source_root, record.approved_at)
         return target, record
 
     def _seal_promoted_job(self, job_root: Path, approved_at: datetime) -> None:

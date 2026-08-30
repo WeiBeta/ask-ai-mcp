@@ -22,6 +22,7 @@ from ask_ai_mcp.models import (
 )
 from ask_ai_mcp.promotion import CandidatePromotionError, VerifiedToolRegistry
 from ask_ai_mcp.sandbox import DEFAULT_RUNNER_IMAGE
+from ask_ai_mcp.storage_retention import AtomicBundleRetention
 from ask_ai_mcp.workspace import CandidateWorkspaceManager
 
 
@@ -118,7 +119,7 @@ def test_exact_successful_candidate_can_be_registered_and_reverified(tmp_path: P
         (job_root / "control" / "manifest.json").read_text(encoding="utf-8")
     )
     assert source_manifest.state is CandidateJobState.APPROVED
-    assert (job_root / ".retention.json").is_file()
+    assert not (job_root / ".retention.json").exists()
 
 
 def test_hash_mismatch_blocks_promotion(tmp_path: Path) -> None:
@@ -176,11 +177,25 @@ def test_second_desktop_approval_is_appended_without_changing_candidate(
     tmp_path: Path,
 ) -> None:
     job_root, manifest = make_executed_job(tmp_path)
-    registry = VerifiedToolRegistry(tmp_path / "verified", jobs_root=tmp_path / "jobs")
+    retention = AtomicBundleRetention(
+        root=tmp_path / "jobs",
+        domain_id="toolsmith_jobs",
+        limit_bytes=1,
+    )
+    registry = VerifiedToolRegistry(
+        tmp_path / "verified",
+        jobs_root=tmp_path / "jobs",
+        retention=retention,
+    )
     _, first = registry.approve(
         job_root=job_root,
         request=approval(manifest, approved_by="codex_desktop"),
     )
+
+    assert not (job_root / ".retention.json").exists()
+    assert retention.maintain().evicted_bundle_count == 0
+    assert job_root.is_dir()
+
     _, second = registry.approve(
         job_root=job_root,
         request=approval(manifest, approved_by="claude_desktop"),
@@ -190,3 +205,4 @@ def test_second_desktop_approval_is_appended_without_changing_candidate(
     assert second.approval_identities == ["codex_desktop", "claude_desktop"]
     assert second.file_sha256 == first.file_sha256
     assert registry.list_records() == [second]
+    assert (job_root / ".retention.json").is_file()

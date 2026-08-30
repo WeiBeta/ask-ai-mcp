@@ -4,6 +4,8 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 from ask_ai_mcp import server, storage_retention
 from ask_ai_mcp.models import StorageRetentionMode
 from ask_ai_mcp.storage_retention import (
@@ -160,6 +162,41 @@ def test_atomic_bundle_retention_evicts_only_oldest_sealed_bundle(tmp_path: Path
     assert not older.exists()
     assert (newer / RETENTION_RECEIPT_NAME).is_file()
     assert not list(root.glob(".*.retention-evicted"))
+
+
+def test_atomic_bundle_retention_restores_candidate_after_transient_delete_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "jobs"
+    bundle = root / "terminal"
+    bundle.mkdir(parents=True)
+    (bundle / "payload.bin").write_bytes(b"a" * 100)
+    retention = AtomicBundleRetention(root=root, domain_id="test_jobs", limit_bytes=1)
+    retention.seal("terminal", terminal_at=datetime(2026, 8, 30, tzinfo=UTC))
+    real_rmtree = storage_retention.shutil.rmtree
+    calls = 0
+
+    def fail_once(path: Path) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise PermissionError("synthetic transient delete failure")
+        real_rmtree(path)
+
+    monkeypatch.setattr(storage_retention.shutil, "rmtree", fail_once)
+
+    first = retention.maintain()
+
+    assert first.evicted_bundle_count == 0
+    assert first.over_limit is True
+    assert bundle.is_dir()
+    assert not list(root.glob(".*.retention-evicted"))
+
+    second = retention.maintain()
+
+    assert second.evicted_bundle_count == 1
+    assert second.over_limit is False
+    assert not bundle.exists()
 
 
 def test_unsealed_or_modified_bundle_remains_protected(tmp_path: Path) -> None:

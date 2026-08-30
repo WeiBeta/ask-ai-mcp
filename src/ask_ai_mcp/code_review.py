@@ -791,21 +791,6 @@ class CodeReviewManager:
 
     def stage_patch(self, command: CodeReviewStagePatchCommand) -> CodeReviewStagedPatch:
         staged = self.snapshotter.stage_patch(command.repository_id, command.patch)
-        patch_root = next(
-            root for root in self.snapshotter.patch_roots if root.name == command.repository_id
-        )
-        try:
-            retention = AtomicBundleRetention(
-                root=patch_root,
-                domain_id="review_patch_staging",
-                limit_bytes=PATCH_STAGING_MAX_BYTES,
-            )
-            staged_patch = patch_root / staged.patch_sha256 / "review.patch"
-            terminal_at = datetime.fromtimestamp(staged_patch.stat().st_mtime, tz=UTC)
-            retention.seal(staged.patch_sha256, terminal_at=terminal_at)
-            retention.maintain(protected_bundle_ids=frozenset({staged.patch_sha256}))
-        except (OSError, RuntimeError, ValueError) as error:
-            _LOGGER.warning("review patch retention maintenance failed: %s", type(error).__name__)
         return CodeReviewStagedPatch(
             repository_id=staged.repository_id,
             patch_sha256=staged.patch_sha256,
@@ -950,6 +935,36 @@ class CodeReviewManager:
             self.retention.maintain(protected_bundle_ids=frozenset({job_id}))
         except (OSError, RuntimeError, ValueError) as error:
             _LOGGER.warning("review retention maintenance failed: %s", type(error).__name__)
+        self._seal_resolved_staged_patch(job_id, completed_at)
+
+    def _seal_resolved_staged_patch(self, job_id: str, completed_at: datetime) -> None:
+        try:
+            manifest = json.loads(
+                (self.store.jobs_root / job_id / "input" / "manifest.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            source_identity = manifest.get("source_identity")
+            repository_id = manifest.get("repository_id")
+            patch_sha256 = (
+                source_identity.get("patch_sha256") if isinstance(source_identity, dict) else None
+            )
+            if not isinstance(repository_id, str) or not isinstance(patch_sha256, str):
+                return
+            patch_root = next(
+                root for root in self.snapshotter.patch_roots if root.name == repository_id
+            )
+            if not (patch_root / patch_sha256).is_dir():
+                return
+            retention = AtomicBundleRetention(
+                root=patch_root,
+                domain_id="review_patch_staging",
+                limit_bytes=PATCH_STAGING_MAX_BYTES,
+            )
+            retention.seal(patch_sha256, terminal_at=completed_at)
+            retention.maintain(protected_bundle_ids=frozenset({patch_sha256}))
+        except (OSError, RuntimeError, StopIteration, ValueError) as error:
+            _LOGGER.warning("review patch retention maintenance failed: %s", type(error).__name__)
 
     def _provider_error_metadata(self, job_id: str) -> dict[str, Any]:
         path = self.store.jobs_root / job_id / "audit" / "provider-error.json"
