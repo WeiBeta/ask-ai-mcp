@@ -18,6 +18,13 @@ finish reason 与成本分布再收敛。固定 profile 为 `general`、`securit
 任意 URL、Shell、任意文件写入、Git 写操作、提交、推送、自动重试或默认补丁；唯一写入面是
 配置好的项目专属仓库外 patch staging 目录。
 
+0.13.6 起 `code_review_submit` 默认使用 `route_mode=policy`，不要求用户手工判断峰谷、余额或
+远端可用性。MCP 在冻结 snapshot 和免费预检完成后、唯一一次 provider call 之前，根据当前
+DeepSeek 峰谷、远端模型目录、单模型有效余额、输入边界和最小输入成本选择一条初始 Review
+Worker 路线，并把候选顺序、最终模型、策略版本和选择时间写入 manifest/audit。历史调用只要仍
+显式传入 `model`，会兼容解释为 `route_mode=explicit`；显式模式只用于受控 A/B，不接受
+`gpt-5.6-luna` 等 Codex 控制模型名称。两种模式都不允许失败后重试、回退、换模或第二 job。
+
 每次任务把实际 reasoning effort 与输出上限写入 manifest、Review SQLite 和共享 API usage
 账本。若 provider 返回 `finish_reason=length`，且 reasoning token 占 completion token 至少 95%，
 任务以 `REASONING_BUDGET_EXHAUSTED` 失败；其他长度截断为 `OUTPUT_TRUNCATED`。状态接口返回
@@ -47,6 +54,9 @@ advisory-only 的按文件分片计划。Controller 必须显式生成并重新�
 patch 已是最终脱敏 diff，再在该目录写临时文件，由控制器计算精确 UTF-8 字节数和 SHA-256，
 按 hash 原子改名为只读 `.patch`，最后原子写只读 `.receipt.json`。任何中断最多留下无 receipt
 的孤立 patch，后续提交会 fail closed；不会从 refs 重建、修复或自动重试。
+若输入仍含 `.meta`、二进制、密钥段、宿主绝对路径或 diff 前导内容，0.13.6 的拒绝错误只返回
+输入/净化后字节数与 SHA-256、接受/排除段数量、原因计数、宿主路径替换数量和前导字节数；
+不返回或持久化补丁正文、文件路径、匹配值或密钥，也不会自动替调用方净化再提交。
 `code_review_backend_status` 只报告 patch root 是否配置及数量，不返回宿主路径。
 Codex/Claude 的具体白名单配置片段、转义规则和重启验收见
 [简中使用与运维说明书](USER_MANUAL_ZH-CN.md#46-codingreview-仓库白名单配置)。

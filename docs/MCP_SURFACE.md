@@ -37,8 +37,9 @@ It exposes `code_review_backend_status`, `code_review_stage_patch`,
 `code_review_submit`, and the paginated `code_review_status`. Stage validates
 and atomically seals a patch plus receipt in the repository's dedicated external
 root. Submit accepts an allow-listed repository ID plus either two bounded refs
-or both staged hashes, one fixed profile, and one of four fixed
-OpenCode Go models. It has no generic prompt, shell, arbitrary path, Git-write,
+or both staged hashes, one fixed profile, and either MCP policy routing or one
+explicit external Review Worker from the four fixed OpenCode Go models. It has
+no generic prompt, shell, arbitrary path, Git-write,
 patch-generation, commit, push, or retry option.
 
 Review models are fixed to `deepseek-v4-pro`, `glm-5.3`, `kimi-k3`, and `grok-4.6`.
@@ -57,10 +58,12 @@ per-job artifacts; the SQLite review ledger stores hashes, metrics, adjudication
 and outcomes but not full source, diff, prompt, credential, or ordinary model output.
 Status keeps model names hidden while a person or Sol records adjudication.
 
-In the 0.13.5 test foundation, Coding/Review backend status also reports compact,
-advisory-only route orders derived locally from the pricing window, remote availability,
-effective ledger allowance, and any model-specific standard-price input ceiling. The selected model remains explicit and failures never
-cause an automatic retry or model switch. Coding/Review backend and job status also report
+In the 0.13.6 test foundation, Coding/Review backend status reports compact route
+orders derived locally from the pricing window, remote availability, effective ledger
+allowance, and model-specific standard-price input ceilings. Coding remains
+advisory-only. Review policy submit atomically materializes the first eligible route
+after snapshot/preflight; explicit selection remains available for controlled tests.
+Neither mode performs a post-failure retry or model switch. Coding/Review backend and job status also report
 whether encrypted wire capture is active, its bounded retention, and a content-free
 `wire_capture_uid`. Exact request/streamed-response bodies are held only in the
 separate UID-linked AES-256-GCM evidence store; API keys and authorization headers

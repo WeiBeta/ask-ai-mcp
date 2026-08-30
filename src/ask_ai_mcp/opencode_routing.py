@@ -1,4 +1,4 @@
-"""Local, advisory-only OpenCode Go route ordering."""
+"""Local OpenCode Go route ordering without provider submission or fallback."""
 
 from __future__ import annotations
 
@@ -60,6 +60,6 @@ def review_route_order(
     ledger: OpenCodeGoAccountUsage | None,
     priced_at: datetime | None = None,
 ) -> list[str]:
-    """Return the advisory Review order; the caller must still select one model explicitly."""
+    """Return the Review policy order used for one atomic initial route selection."""
 
     return coding_route_orders(available=available, ledger=ledger, priced_at=priced_at)[1]

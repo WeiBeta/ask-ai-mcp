@@ -79,6 +79,49 @@ class CodeReviewWorkspaceError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class CodeReviewSanitizationDiagnostics:
+    input_bytes: int
+    input_sha256: str
+    sanitized_bytes: int
+    sanitized_sha256: str
+    section_count: int
+    accepted_section_count: int
+    excluded_section_count: int
+    exclusion_reason_counts: dict[str, int]
+    host_path_redaction_count: int
+    dropped_prefix_bytes: int
+
+    def safe_payload(self) -> dict[str, object]:
+        return {
+            "failure_code": "PATCH_SANITIZATION_MISMATCH",
+            "input_bytes": self.input_bytes,
+            "input_sha256": self.input_sha256,
+            "sanitized_bytes": self.sanitized_bytes,
+            "sanitized_sha256": self.sanitized_sha256,
+            "section_count": self.section_count,
+            "accepted_section_count": self.accepted_section_count,
+            "excluded_section_count": self.excluded_section_count,
+            "exclusion_reason_counts": dict(sorted(self.exclusion_reason_counts.items())),
+            "host_path_redaction_count": self.host_path_redaction_count,
+            "dropped_prefix_bytes": self.dropped_prefix_bytes,
+        }
+
+
+class CodeReviewPatchSanitizationError(CodeReviewWorkspaceError):
+    """Content-free staging rejection for a patch that still needs sanitization."""
+
+    def __init__(self, diagnostics: CodeReviewSanitizationDiagnostics) -> None:
+        self.diagnostics = diagnostics
+        safe = json.dumps(
+            diagnostics.safe_payload(),
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        super().__init__(f"staged patch sanitization mismatch: {safe}")
+
+
+@dataclass(frozen=True)
 class CodeReviewSnapshot:
     repository_id: str
     diff_text: str
@@ -90,6 +133,7 @@ class CodeReviewSnapshot:
     context: tuple[dict[str, object], ...]
     omitted_context: tuple[str, ...]
     source_identity: dict[str, str]
+    sanitization_diagnostics: CodeReviewSanitizationDiagnostics
 
 
 @dataclass(frozen=True)
@@ -305,11 +349,10 @@ class CodeReviewSnapshotter:
             patch_text,
             source_identity={"patch_sha256": patch_sha256},
             context_ref=None,
+            reject_sanitization_mismatch=True,
         )
         if snapshot.diff_text.encode("utf-8") != data:
-            raise CodeReviewWorkspaceError(
-                "staged patches must already equal the fully sanitized review diff"
-            )
+            raise CodeReviewPatchSanitizationError(snapshot.sanitization_diagnostics)
         receipt = {
             "schema_version": 1,
             "repository_id": repository_id,
@@ -446,11 +489,14 @@ class CodeReviewSnapshotter:
         *,
         source_identity: dict[str, str],
         context_ref: str | None,
+        reject_sanitization_mismatch: bool = False,
     ) -> CodeReviewSnapshot:
         sections = self._sections(raw_diff)
         submodule_roots = self._submodule_roots(root, context_ref)
         accepted: list[tuple[str, str]] = []
         omitted: list[str] = []
+        exclusion_reason_counts: dict[str, int] = {}
+        host_path_redaction_count = 0
         for relative, section in sections:
             reason = self._exclusion_reason(
                 relative,
@@ -461,17 +507,39 @@ class CodeReviewSnapshotter:
             )
             if reason:
                 omitted.append(f"{relative}: {reason}")
+                code = self._exclusion_reason_code(reason)
+                exclusion_reason_counts[code] = exclusion_reason_counts.get(code, 0) + 1
             else:
+                host_path_redaction_count += len(_HOST_ABSOLUTE_PATH.findall(section))
                 redacted = _redact_host_paths(section)
                 if redacted != section:
                     omitted.append(f"{relative}: host absolute paths redacted")
                 accepted.append((relative, redacted))
+        diff_text = "".join(section for _, section in accepted)
+        diff_bytes = diff_text.encode("utf-8")
+        raw_diff_bytes = raw_diff.encode("utf-8")
+        first_header = re.search(r"(?m)^diff --git ", raw_diff)
+        dropped_prefix_bytes = len(
+            raw_diff[: first_header.start()].encode("utf-8") if first_header else raw_diff_bytes
+        )
+        sanitization_diagnostics = CodeReviewSanitizationDiagnostics(
+            input_bytes=len(raw_diff_bytes),
+            input_sha256=_sha256(raw_diff_bytes),
+            sanitized_bytes=len(diff_bytes),
+            sanitized_sha256=_sha256(diff_bytes),
+            section_count=len(sections),
+            accepted_section_count=len(accepted),
+            excluded_section_count=len(sections) - len(accepted),
+            exclusion_reason_counts=exclusion_reason_counts,
+            host_path_redaction_count=host_path_redaction_count,
+            dropped_prefix_bytes=dropped_prefix_bytes,
+        )
         if not accepted:
+            if reject_sanitization_mismatch:
+                raise CodeReviewPatchSanitizationError(sanitization_diagnostics)
             raise CodeReviewWorkspaceError("no reviewable text diff remains after exclusions")
         if len(accepted) > MAX_CHANGED_FILES:
             raise CodeReviewWorkspaceError("changed file count exceeds the review limit")
-        diff_text = "".join(section for _, section in accepted)
-        diff_bytes = diff_text.encode("utf-8")
         if len(diff_bytes) > MAX_DIFF_BYTES:
             raise CodeReviewWorkspaceError("sanitized diff exceeds the review limit")
         changed_lines = sum(
@@ -509,7 +577,19 @@ class CodeReviewSnapshotter:
             context=tuple(context),
             omitted_context=tuple(omitted),
             source_identity=source_identity,
+            sanitization_diagnostics=sanitization_diagnostics,
         )
+
+    @staticmethod
+    def _exclusion_reason_code(reason: str) -> str:
+        return {
+            "submodule content excluded": "submodule_content",
+            "vendor, generated, or build artifact excluded": "generated_or_vendor_content",
+            "secret-bearing path or content excluded": "secret_bearing_content",
+            "binary diff excluded": "binary_diff",
+            "unsupported or binary file type excluded": "unsupported_file_type",
+            "large or non-file context excluded": "large_or_non_file_context",
+        }.get(reason, "other_exclusion")
 
     @staticmethod
     def _sections(raw_diff: str) -> list[tuple[str, str]]:

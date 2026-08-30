@@ -355,7 +355,7 @@ def code_review_stage_patch(command: CodeReviewStagePatchCommand) -> CodeReviewS
     )
 )
 def code_review_submit(command: CodeReviewSubmitCommand) -> CodeReviewSubmission:
-    """Snapshot one allow-listed diff and queue one fixed-model read-only review."""
+    """Snapshot one diff and queue one policy-routed or explicit external Worker review."""
 
     return get_code_review_manager().submit(command)
 

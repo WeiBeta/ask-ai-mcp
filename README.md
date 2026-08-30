@@ -112,6 +112,12 @@ adding retries, fallback models, or extra provider calls.
 Version 0.13.5 preserves a fully received and strictly decoded terminal SSE event
 when only the trailing transport closes abnormally; partial/nonterminal streams still
 fail closed, and encrypted audit metadata records the trailing transport condition.
+Version 0.13.6 adds content-free Review staging mismatch diagnostics and a default
+policy-routed Review submit mode. The user authorizes the frozen payload, purpose,
+and cost ceiling; MCP chooses one initial external Review Worker from current pricing,
+remote availability, effective allowance, and input limits. Existing callers that
+send one explicit provider model remain compatible. A failed generation is never
+retried, rerouted, partitioned, or submitted as a second job.
 Normal audits retain only a call-attribution UID and content-free transport metadata;
 exact request and streamed response bodies are kept separately as AES-256-GCM frames
 under a Windows Credential Manager key. Authorization material is never captured, the

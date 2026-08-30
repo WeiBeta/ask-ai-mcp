@@ -2,7 +2,7 @@
 
 ## 定位
 
-0.13.5 是隔离开发和灰度验证用的测试大版本。当前生产基线继续保持
+0.13.6 是隔离开发和灰度验证用的测试大版本。当前生产基线继续保持
 0.12.3；未经完整离线验收、冻结差异外部 Review、物理机灰度和用户明确
 合并决定，不得替换生产入口。
 
@@ -110,3 +110,13 @@ cache/reasoning 明细时明确记录为 `provider_dashboard_totals`，不得伪
 - 缺少终态、半截 JSON、畸形 SSE、非 Grok 路线继续按 transport failure 处理；
 - 加密 wire 以 `complete_after_transport_error` 记录内容无关的尾部异常类型；
 - Review/Coding 都有 manager-level 单调用测试，禁止借此重试或回退模型。
+
+## 0.13.6 Review staging 诊断与策略路由
+
+- staging 净化不等价时只返回长度、哈希、段数量、排除原因计数、宿主路径替换计数和前导字节数；
+- `.meta` 等非审查文本仍被排除，不保存失败补丁正文、文件路径或匹配值；
+- Review 默认 `route_mode=policy`，由 MCP 在唯一 provider call 前结合峰谷、availability、有效余额
+  和输入边界原子选择一条首次 Worker 路线；
+- 旧客户端显式传 `model` 时兼容为 `route_mode=explicit`，但控制者 Codex 模型永远不是 Review
+  Worker 枚举；
+- 选路只发生在首次提交前，任何失败都不得触发重试、分片、回退、换模或第二 job。

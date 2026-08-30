@@ -19,6 +19,11 @@ class CodeReviewModel(StrEnum):
     GROK_4_6 = "grok-4.6"
 
 
+class CodeReviewRouteMode(StrEnum):
+    POLICY = "policy"
+    EXPLICIT = "explicit"
+
+
 class CodeReviewProfile(StrEnum):
     GENERAL = "general"
     SECURITY = "security"
@@ -163,7 +168,21 @@ class CodeReviewSubmitCommand(StrictModel):
     patch_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     receipt_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     review_profile: CodeReviewProfile
-    model: CodeReviewModel
+    route_mode: CodeReviewRouteMode = Field(
+        default=CodeReviewRouteMode.POLICY,
+        description=(
+            "Select the first eligible external Review Worker from the current MCP routing "
+            "policy. Use explicit only for a controlled comparison; this is not the Codex "
+            "controller model."
+        ),
+    )
+    model: CodeReviewModel | None = Field(
+        default=None,
+        description=(
+            "External Review Worker route reported by code_review_backend_status; never a "
+            "Codex/controller model. Required only for explicit route mode."
+        ),
+    )
     review_group_id: str | None = Field(
         default=None,
         pattern=r"^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$",
@@ -182,6 +201,12 @@ class CodeReviewSubmitCommand(StrictModel):
 
     @model_validator(mode="after")
     def choose_exactly_one_input_mode(self) -> Self:
+        if self.model is not None and "route_mode" not in self.model_fields_set:
+            object.__setattr__(self, "route_mode", CodeReviewRouteMode.EXPLICIT)
+        if self.route_mode is CodeReviewRouteMode.EXPLICIT and self.model is None:
+            raise ValueError("explicit route mode requires one external Review Worker model")
+        if self.route_mode is CodeReviewRouteMode.POLICY and self.model is not None:
+            raise ValueError("policy route mode selects the external Review Worker inside MCP")
         refs = self.base_ref is not None or self.head_ref is not None
         patch = self.patch_sha256 is not None or self.receipt_sha256 is not None
         if refs == patch:
@@ -228,6 +253,9 @@ class CodeReviewSubmission(StrictModel):
     snapshot_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     changed_file_count: int = Field(ge=0)
     changed_line_count: int = Field(ge=0)
+    selected_model: CodeReviewModel
+    route_mode: CodeReviewRouteMode
+    routing_policy_version: str = Field(min_length=1, max_length=64)
     failure_code: CodeReviewFailureCode | None = None
     partition_plan: CodeReviewPartitionPlan | None = None
 

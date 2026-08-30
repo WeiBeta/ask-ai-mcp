@@ -56,6 +56,30 @@ it preserves the one-call, no-retry and no-fallback boundary.
 Version 0.13.5 accepts a fully decoded terminal SSE event even if the transport
 fails while closing after that event, while partial and nonterminal streams remain
 fail-closed and are covered at both Review and Coding manager boundaries.
+Version 0.13.6 adds prompt-free diagnostics when Review patch staging
+rejects an input because the fully sanitized diff is not byte-identical. The
+failure reports only content-free input/sanitized byte lengths and hashes,
+accepted/excluded section counts, exclusion-reason counts, host-path-redaction
+counts, and dropped-prefix length. It must not retain or expose patch text, file
+paths, matched values, secrets, or other source content. The change does not add
+automatic sanitization, retry, submission, sharding or model switching, and it
+does not expand the reviewable suffix allow-list; Unity `.meta` sections remain
+excluded. Offline acceptance must cover unsupported-suffix exclusion, host-path
+redaction, prefix removal, exact already-sanitized success, stable diagnostic
+metadata, and zero provider calls on rejection. The release also
+clarifies in the public Review schema that `model` selects one backend-reported
+external Review Worker route, not the Codex/controller model. It keeps the
+strict provider-model enum, rejects controller model names locally, never replaces
+the requested route implicitly, and covers that distinction with schema tests.
+The release also promotes the existing advisory route order into an explicit
+policy-routed submit mode. The user authorizes the frozen payload, purpose and
+cost ceiling rather than guessing a provider model. After snapshot/preflight and
+before the only provider call, MCP atomically selects one route from current
+peak/off-peak pricing, remote availability, per-model effective balance, model
+input limits and the minimum input-cost estimate. The selected model, policy version and
+decision metadata are persisted in the manifest and audit. Explicit manual model
+selection remains available for controlled comparisons, but a failed request
+must never trigger retry, fallback, model switching or a second job.
 Version 0.13.1 adds UID-correlated encrypted wire evidence for Coding/Review,
 stream-boundary transport diagnostics, and a local operator-only idempotent
 reconciliation receipt for dashboard-confirmed billed transport failures. It

@@ -8,7 +8,7 @@ import json
 import stat
 import subprocess
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -25,6 +25,7 @@ from ask_ai_mcp.code_review_models import (
     CodeReviewModel,
     CodeReviewProfile,
     CodeReviewProviderFailureClass,
+    CodeReviewRouteMode,
     CodeReviewStagePatchCommand,
     CodeReviewStatusCommand,
     CodeReviewSubmitCommand,
@@ -32,7 +33,9 @@ from ask_ai_mcp.code_review_models import (
 )
 from ask_ai_mcp.code_review_store import CodeReviewStore
 from ask_ai_mcp.code_review_workspace import (
+    CodeReviewPatchSanitizationError,
     CodeReviewRepositoryCatalog,
+    CodeReviewSanitizationDiagnostics,
     CodeReviewSnapshot,
     CodeReviewSnapshotter,
     CodeReviewWorkspaceError,
@@ -168,6 +171,172 @@ def test_review_mcp_is_a_four_tool_surface_excluded_from_full() -> None:
     assert review_tools.isdisjoint(full_tools)
 
 
+def test_submit_schema_distinguishes_controller_from_review_worker() -> None:
+    common = {
+        "repository_id": "sample",
+        "base_ref": "2" * 40,
+        "head_ref": "3" * 40,
+        "review_profile": CodeReviewProfile.GENERAL,
+    }
+
+    policy = CodeReviewSubmitCommand(**common)
+    legacy_explicit = CodeReviewSubmitCommand(**common, model=CodeReviewModel.GLM_5_3)
+
+    assert policy.route_mode is CodeReviewRouteMode.POLICY
+    assert policy.model is None
+    assert legacy_explicit.route_mode is CodeReviewRouteMode.EXPLICIT
+    assert legacy_explicit.model is CodeReviewModel.GLM_5_3
+    with pytest.raises(ValueError, match="explicit route mode requires"):
+        CodeReviewSubmitCommand(**common, route_mode=CodeReviewRouteMode.EXPLICIT)
+    with pytest.raises(ValueError, match="policy route mode selects"):
+        CodeReviewSubmitCommand(
+            **common,
+            route_mode=CodeReviewRouteMode.POLICY,
+            model=CodeReviewModel.GLM_5_3,
+        )
+    with pytest.raises(ValueError):
+        CodeReviewSubmitCommand(
+            **common,
+            route_mode=CodeReviewRouteMode.EXPLICIT,
+            model="gpt-5.6-luna",
+        )
+    schema = CodeReviewSubmitCommand.model_json_schema()["properties"]
+    assert "External Review Worker" in schema["model"]["description"]
+    assert "Codex controller model" in schema["route_mode"]["description"]
+
+
+@pytest.mark.parametrize(
+    ("instant", "remote_models", "expected_model"),
+    [
+        (
+            datetime(2026, 8, 31, 12, tzinfo=UTC),
+            tuple(CodeReviewModel),
+            CodeReviewModel.DEEPSEEK_V4_PRO,
+        ),
+        (
+            datetime(2026, 8, 31, 2, tzinfo=UTC),
+            tuple(CodeReviewModel),
+            CodeReviewModel.GLM_5_3,
+        ),
+        (
+            datetime(2026, 8, 31, 2, tzinfo=UTC),
+            (CodeReviewModel.KIMI_K3, CodeReviewModel.GROK_4_6),
+            CodeReviewModel.KIMI_K3,
+        ),
+    ],
+)
+def test_policy_route_is_selected_once_from_current_peak_and_availability(
+    tmp_path: Path,
+    instant: datetime,
+    remote_models: tuple[CodeReviewModel, ...],
+    expected_model: CodeReviewModel,
+) -> None:
+    root, base, head = _repository(tmp_path)
+    health_calls = 0
+    generation_models: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal health_calls
+        if request.method == "GET":
+            health_calls += 1
+            return httpx.Response(
+                200, json={"data": [{"id": item.value} for item in remote_models]}
+            )
+        body = json.loads(request.content)
+        generation_models.append(body["model"])
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "content": json.dumps(
+                                {"findings": [], "omitted_context": [], "truncated": False}
+                            )
+                        },
+                    }
+                ],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 20},
+            },
+        )
+
+    store = CodeReviewStore(tmp_path / "review-state")
+    manager = CodeReviewManager(
+        store=store,
+        usage_store=UsageStore(tmp_path / "usage.db"),
+        snapshotter=CodeReviewSnapshotter(CodeReviewRepositoryCatalog({"sample": root})),
+        account=OpenCodeAccount(uid="go-test-uid", alias="go-test"),
+        api_key_provider=lambda: "opaque-test-key-1234567890",
+        transport=httpx.MockTransport(handler),
+        clock=lambda: instant,
+    )
+
+    submission = manager.submit(
+        CodeReviewSubmitCommand(
+            repository_id="sample",
+            base_ref=base,
+            head_ref=head,
+            review_profile=CodeReviewProfile.GENERAL,
+        )
+    )
+    deadline = time.monotonic() + 5
+    status = manager.status(CodeReviewStatusCommand(job_id=submission.job_id))
+    while status.state in {CodeReviewJobState.QUEUED, CodeReviewJobState.RUNNING}:
+        if time.monotonic() >= deadline:
+            raise AssertionError("policy-routed review job did not complete")
+        time.sleep(0.02)
+        status = manager.status(CodeReviewStatusCommand(job_id=submission.job_id))
+
+    manifest = json.loads(
+        (store.jobs_root / submission.job_id / "input" / "manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert status.state is CodeReviewJobState.SUCCEEDED
+    assert health_calls == 1
+    assert generation_models == [expected_model.value]
+    assert submission.selected_model is expected_model
+    assert submission.route_mode is CodeReviewRouteMode.POLICY
+    assert manifest["selected_model"] == expected_model.value
+    assert manifest["route_mode"] == "policy"
+    assert manifest["routing_policy_version"] == "opencode-go-routing-v1"
+
+
+def test_policy_route_fails_before_provider_when_no_model_is_available(tmp_path: Path) -> None:
+    root, base, head = _repository(tmp_path)
+    health_calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal health_calls
+        assert request.method == "GET"
+        health_calls += 1
+        return httpx.Response(200, json={"data": []})
+
+    store = CodeReviewStore(tmp_path / "review-state")
+    manager = CodeReviewManager(
+        store=store,
+        usage_store=UsageStore(tmp_path / "usage.db"),
+        snapshotter=CodeReviewSnapshotter(CodeReviewRepositoryCatalog({"sample": root})),
+        account=OpenCodeAccount(uid="go-test-uid", alias="go-test"),
+        api_key_provider=lambda: "opaque-test-key-1234567890",
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(RuntimeError, match="no policy-eligible"):
+        manager.submit(
+            CodeReviewSubmitCommand(
+                repository_id="sample",
+                base_ref=base,
+                head_ref=head,
+                review_profile=CodeReviewProfile.GENERAL,
+            )
+        )
+
+    assert health_calls == 1
+    assert list(store.jobs_root.iterdir()) == []
+
+
 def test_snapshot_uses_commit_hashes_and_never_exposes_host_root(tmp_path: Path) -> None:
     root, base, head = _repository(tmp_path)
     (root / "app.py").write_text("UNCOMMITTED_WORKTREE_CONTENT\n", encoding="utf-8")
@@ -198,14 +367,89 @@ def test_patch_traversal_and_secret_bearing_diffs_are_rejected(tmp_path: Path) -
     secret = (
         b"diff --git a/.env b/.env\n--- a/.env\n+++ b/.env\n+API_KEY='abcdefghijklmnopqrstuvwxyz'\n"
     )
-    with pytest.raises(CodeReviewWorkspaceError, match="no reviewable"):
+    with pytest.raises(CodeReviewPatchSanitizationError) as raised:
         snapshotter.stage_patch("sample", secret.decode())
+    assert raised.value.diagnostics.exclusion_reason_counts == {"secret_bearing_content": 1}
+    assert "abcdefghijklmnopqrstuvwxyz" not in str(raised.value)
     unsanitized = (
         "diff --git a/app.py b/app.py\n--- a/app.py\n+++ b/app.py\n"
         "@@ -1 +1 @@\n-old\n+C:\\Users\\person\\private.txt\n"
     )
-    with pytest.raises(CodeReviewWorkspaceError, match="fully sanitized review diff"):
+    with pytest.raises(CodeReviewPatchSanitizationError) as raised:
         snapshotter.stage_patch("sample", unsanitized)
+    diagnostics = raised.value.diagnostics
+    assert diagnostics.host_path_redaction_count == 1
+    assert diagnostics.excluded_section_count == 0
+    assert diagnostics.input_sha256 != diagnostics.sanitized_sha256
+    assert "private.txt" not in str(raised.value)
+
+
+def test_patch_sanitization_mismatch_reports_only_content_free_reason_counts(
+    tmp_path: Path,
+) -> None:
+    root, _, _ = _repository(tmp_path)
+    patch_root = tmp_path / "sample"
+    patch_root.mkdir()
+    snapshotter = CodeReviewSnapshotter(
+        CodeReviewRepositoryCatalog({"sample": root}), patch_roots=(patch_root,)
+    )
+    patch = (
+        "diagnostic preamble\n"
+        "diff --git a/app.py b/app.py\n--- a/app.py\n+++ b/app.py\n@@ -1 +1 @@\n-old\n+new\n"
+        "diff --git a/first.meta b/first.meta\n"
+        "--- a/first.meta\n+++ b/first.meta\n@@ -0,0 +1 @@\n+fixture\n"
+        "diff --git a/other.meta b/other.meta\n"
+        "--- a/other.meta\n+++ b/other.meta\n@@ -0,0 +1 @@\n+fixture\n"
+    )
+
+    with pytest.raises(CodeReviewPatchSanitizationError) as raised:
+        snapshotter.stage_patch("sample", patch)
+
+    diagnostics = raised.value.diagnostics
+    assert diagnostics.section_count == 3
+    assert diagnostics.accepted_section_count == 1
+    assert diagnostics.excluded_section_count == 2
+    assert diagnostics.exclusion_reason_counts == {"unsupported_file_type": 2}
+    assert diagnostics.dropped_prefix_bytes == len(b"diagnostic preamble\n")
+    assert diagnostics.host_path_redaction_count == 0
+    serialized = str(raised.value)
+    assert "PATCH_SANITIZATION_MISMATCH" in serialized
+    assert "first.meta" not in serialized
+    assert "other.meta" not in serialized
+    assert "fixture" not in serialized
+
+
+def test_all_excluded_patch_still_returns_content_free_sanitization_diagnostics(
+    tmp_path: Path,
+) -> None:
+    root, _, _ = _repository(tmp_path)
+    patch_root = tmp_path / "sample"
+    patch_root.mkdir()
+    snapshotter = CodeReviewSnapshotter(
+        CodeReviewRepositoryCatalog({"sample": root}), patch_roots=(patch_root,)
+    )
+    patch = (
+        "diff --git a/first.meta b/first.meta\n"
+        "--- a/first.meta\n+++ b/first.meta\n@@ -0,0 +1 @@\n+fixture-one\n"
+        "diff --git a/second.meta b/second.meta\n"
+        "--- a/second.meta\n+++ b/second.meta\n@@ -0,0 +1 @@\n+fixture-two\n"
+    )
+
+    with pytest.raises(CodeReviewPatchSanitizationError) as raised:
+        snapshotter.stage_patch("sample", patch)
+
+    diagnostics = raised.value.diagnostics
+    assert diagnostics.section_count == 2
+    assert diagnostics.accepted_section_count == 0
+    assert diagnostics.excluded_section_count == 2
+    assert diagnostics.exclusion_reason_counts == {"unsupported_file_type": 2}
+    assert diagnostics.sanitized_bytes == 0
+    serialized = str(raised.value)
+    assert "PATCH_SANITIZATION_MISMATCH" in serialized
+    assert "first.meta" not in serialized
+    assert "second.meta" not in serialized
+    assert "fixture-one" not in serialized
+    assert "fixture-two" not in serialized
 
 
 def test_patch_only_preflight_is_hash_pinned_and_root_bounded(tmp_path: Path) -> None:
@@ -1111,6 +1355,18 @@ def _synthetic_review_snapshot(diff_payload_bytes: int) -> CodeReviewSnapshot:
         context=(),
         omitted_context=(),
         source_identity={"base_commit": "2" * 40, "head_commit": "3" * 40},
+        sanitization_diagnostics=CodeReviewSanitizationDiagnostics(
+            input_bytes=len(diff_text.encode()),
+            input_sha256=digest,
+            sanitized_bytes=len(diff_text.encode()),
+            sanitized_sha256=digest,
+            section_count=1,
+            accepted_section_count=1,
+            excluded_section_count=0,
+            exclusion_reason_counts={},
+            host_path_redaction_count=0,
+            dropped_prefix_bytes=0,
+        ),
     )
 
 

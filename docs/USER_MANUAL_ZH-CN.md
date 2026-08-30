@@ -148,6 +148,8 @@ Coding/Review 会在 provider call 前拒绝，不进入 Grok 高价档。作者
 0.13.4 起只有 Grok Responses 使用 SSE；客户端必须收到完整终态事件才接受结果，中途断流
 仍按单次失败处理，不自动再次收费。
 0.13.5 起，完整终态已经严格解析后发生的尾部断流不会丢弃有效结果；缺终态或半截流仍失败。
+0.13.6 起，Review 默认由 MCP 根据实时峰谷、远端可用性和有效余额选择一条首次 Worker 路线；
+用户批准冻结输入、用途和费用上限即可，不需要猜具体模型。失败后仍不会自动换模或重试。
 
 ### 4.4 凭据位置
 
@@ -235,6 +237,8 @@ Review patch root 必须是仓库外的项目专属小目录，且末级目录�
 repository ID 完全一致。多个 root 用分号分隔；不得配置整个用户目录、`C:\Dev`
 或业务仓库。先调用 `code_review_stage_patch` 得到 patch/receipt 两个 SHA-256；
 `code_review_submit` 的 patch 模式只接受这两个哈希，不接受任意宿主路径。
+如果 staging 报 `PATCH_SANITIZATION_MISMATCH`，应根据内容无关的原因计数重新生成已经排除
+`.meta`、二进制、密钥段、宿主路径和前导内容的 bounded patch；不得让 broker 自动修补或重试。
 
 白名单只授权 MCP 按既有安全边界读取冻结 commit、指定目标文件或冻结 diff，不授权读取未提交
 工作树、整库发送、任意路径访问、自动应用补丁或直接修改业务仓库。

@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import threading
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime
 from math import ceil
@@ -36,6 +37,7 @@ from ask_ai_mcp.code_review_models import (
     CodeReviewPayload,
     CodeReviewProfile,
     CodeReviewProviderFailureClass,
+    CodeReviewRouteMode,
     CodeReviewStagedPatch,
     CodeReviewStagePatchCommand,
     CodeReviewStatus,
@@ -187,6 +189,12 @@ def _model_policy(model: CodeReviewModel) -> tuple[str, int]:
     return policy.reasoning_effort, policy.max_output_tokens
 
 
+def _required_model(command: CodeReviewSubmitCommand) -> CodeReviewModel:
+    if command.model is None:
+        raise RuntimeError("Review Worker route was not resolved before execution")
+    return command.model
+
+
 def _output_failure_code(
     finish_reasons: list[object], usage: dict[str, Any]
 ) -> CodeReviewFailureCode | None:
@@ -270,6 +278,7 @@ class CodeReviewManager:
         timeout_seconds: float | None = None,
         timeout_policy: ProviderTimeoutPolicy | None = None,
         executor: ThreadPoolExecutor | None = None,
+        clock: Callable[[], datetime] | None = None,
         encrypted_wire_capture: bool | None = None,
         wire_capture_key_provider=None,
         wire_capture_max_bytes_override: int | None = None,
@@ -330,6 +339,7 @@ class CodeReviewManager:
         self.executor = executor or ThreadPoolExecutor(
             max_workers=4, thread_name_prefix="ask-ai-code-review"
         )
+        self.clock = clock or (lambda: datetime.now(UTC))
         self._futures: dict[str, Future[None]] = {}
         self._future_lock = threading.Lock()
 
@@ -341,7 +351,9 @@ class CodeReviewManager:
     def configured_repository_ids(cls) -> list[str]:
         return sorted(CodeReviewRepositoryCatalog().repositories)
 
-    def backend_status(self, *, check_remote: bool = True) -> CodeReviewBackendStatus:
+    def backend_status(
+        self, *, check_remote: bool = True, priced_at: datetime | None = None
+    ) -> CodeReviewBackendStatus:
         repository_ids = sorted(self.snapshotter.catalog.repositories)
         available = {model.value: False for model in CodeReviewModel}
         remote_checked = False
@@ -405,7 +417,11 @@ class CodeReviewManager:
                 for model in CodeReviewModel
             ],
             routing_policy_version=OPENCODE_ROUTING_POLICY_VERSION,
-            route_order=review_route_order(available=available, ledger=account_ledger),
+            route_order=review_route_order(
+                available=available,
+                ledger=account_ledger,
+                priced_at=priced_at or self.clock(),
+            ),
             account_ledger=account_ledger,
             monthly_report=self.store.monthly_report(),
             catalog_version=OPENCODE_GO_PRICING_VERSION,
@@ -422,7 +438,8 @@ class CodeReviewManager:
         command: CodeReviewSubmitCommand,
         snapshot: CodeReviewSnapshot,
     ) -> CodeReviewPartitionPlan | None:
-        policy = opencode_generation_policy(OpenCodeGoModel(command.model.value))
+        model = _required_model(command)
+        policy = opencode_generation_policy(OpenCodeGoModel(model.value))
         prompt_tokens = _estimated_tokens(
             _SYSTEM_PROMPT + cls._prompt(command.review_profile, snapshot)
         )
@@ -514,17 +531,74 @@ class CodeReviewManager:
             sections[file_path] = "".join(lines)
         return sections
 
+    def _select_route(
+        self,
+        command: CodeReviewSubmitCommand,
+        snapshot: CodeReviewSnapshot,
+        *,
+        priced_at: datetime,
+    ) -> tuple[CodeReviewModel, tuple[CodeReviewModel, ...]]:
+        if command.route_mode is CodeReviewRouteMode.EXPLICIT:
+            model = _required_model(command)
+            reason = self.accounting.entitlements.denial_reason(
+                account=self.account_uid,
+                model_id=model.value,
+                subscription_id=self.subscription_id,
+            )
+            if reason:
+                raise RuntimeError(reason)
+            return model, (model,)
+
+        status = self.backend_status(check_remote=True, priced_at=priced_at)
+        if not status.remote_models_checked:
+            raise RuntimeError("policy route selection requires current remote model status")
+        candidates = tuple(status.route_order)
+        if not candidates:
+            raise RuntimeError("no policy-eligible Review Worker route is currently available")
+        allowance = (
+            {
+                item.model_id: item.effective_remaining_usd
+                for item in status.account_ledger.model_allowances
+            }
+            if status.account_ledger is not None
+            else {}
+        )
+        prompt_tokens = _estimated_tokens(
+            _SYSTEM_PROMPT + self._prompt(command.review_profile, snapshot)
+        )
+        partitioned: list[CodeReviewModel] = []
+        for candidate in candidates:
+            reason = self.accounting.entitlements.denial_reason(
+                account=self.account_uid,
+                model_id=candidate.value,
+                subscription_id=self.subscription_id,
+            )
+            if reason:
+                continue
+            minimum_cost = calculate_opencode_go_cost_breakdown(
+                OpenCodeGoModel(candidate.value),
+                input_tokens=prompt_tokens,
+                output_tokens=0,
+                priced_at=priced_at,
+            ).total_cost_usd
+            remaining = allowance.get(candidate.value)
+            if minimum_cost is None or (remaining is not None and minimum_cost > remaining):
+                continue
+            resolved = command.model_copy(
+                update={"route_mode": CodeReviewRouteMode.EXPLICIT, "model": candidate}
+            )
+            if self._preflight_partition_plan(resolved, snapshot) is None:
+                return candidate, candidates
+            partitioned.append(candidate)
+        if partitioned:
+            return partitioned[0], candidates
+        raise RuntimeError(
+            "no policy-eligible Review Worker route has sufficient current entitlement"
+        )
+
     def submit(self, command: CodeReviewSubmitCommand) -> CodeReviewSubmission:
         if self.account is None:
             raise RuntimeError("OpenCode Go account UID must be selected before review submission")
-        model = OpenCodeGoModel(command.model.value)
-        reason = self.accounting.entitlements.denial_reason(
-            account=self.account_uid,
-            model_id=model.value,
-            subscription_id=self.subscription_id,
-        )
-        if reason:
-            raise RuntimeError(reason)
         if command.base_ref is not None:
             snapshot = self.snapshotter.from_refs(
                 command.repository_id, command.base_ref, command.head_ref or ""
@@ -535,15 +609,23 @@ class CodeReviewManager:
                 command.patch_sha256 or "",
                 command.receipt_sha256 or "",
             )
+        route_selected_at = self.clock()
+        selected_model, route_candidates = self._select_route(
+            command, snapshot, priced_at=route_selected_at
+        )
+        resolved_command = command.model_copy(
+            update={"route_mode": CodeReviewRouteMode.EXPLICIT, "model": selected_model}
+        )
+        model = OpenCodeGoModel(selected_model.value)
         job_id = str(uuid4())
         group_id = command.review_group_id or str(uuid4())
         blind_label = f"review-{hashlib.sha256(job_id.encode()).hexdigest()[:8]}"
-        reasoning_effort, max_output_tokens = _model_policy(command.model)
+        reasoning_effort, max_output_tokens = _model_policy(selected_model)
         generation_policy = opencode_generation_policy(model)
         estimated_prompt_tokens = _estimated_tokens(
-            _SYSTEM_PROMPT + self._prompt(command.review_profile, snapshot)
+            _SYSTEM_PROMPT + self._prompt(resolved_command.review_profile, snapshot)
         )
-        partition_plan = self._preflight_partition_plan(command, snapshot)
+        partition_plan = self._preflight_partition_plan(resolved_command, snapshot)
         job_root = self.store.jobs_root / job_id
         input_root = job_root / "input"
         output_root = job_root / "output"
@@ -567,6 +649,11 @@ class CodeReviewManager:
             "source_identity": snapshot.source_identity,
             "prompt_version": PROMPT_VERSION,
             "contract_version": CONTRACT_VERSION,
+            "route_mode": command.route_mode.value,
+            "selected_model": selected_model.value,
+            "routing_policy_version": OPENCODE_ROUTING_POLICY_VERSION,
+            "route_selected_at": route_selected_at.isoformat(),
+            "route_candidates": [item.value for item in route_candidates],
             "reasoning_effort": reasoning_effort,
             "max_output_tokens": max_output_tokens,
             "estimated_prompt_tokens": estimated_prompt_tokens,
@@ -636,6 +723,11 @@ class CodeReviewManager:
                 "max_output_tokens": max_output_tokens,
                 "visible_output_reserve_tokens": CONTEXT_SAFETY_RESERVE_TOKENS,
                 "partition_required": partition_plan is not None,
+                "route_mode": command.route_mode.value,
+                "selected_model": selected_model.value,
+                "routing_policy_version": OPENCODE_ROUTING_POLICY_VERSION,
+                "route_selected_at": route_selected_at.isoformat(),
+                "route_candidates": [item.value for item in route_candidates],
             },
         )
         if partition_plan is not None:
@@ -658,10 +750,13 @@ class CodeReviewManager:
                 snapshot_sha256=snapshot.snapshot_sha256,
                 changed_file_count=len(snapshot.changed_files),
                 changed_line_count=snapshot.changed_line_count,
+                selected_model=selected_model,
+                route_mode=command.route_mode,
+                routing_policy_version=OPENCODE_ROUTING_POLICY_VERSION,
                 failure_code=CodeReviewFailureCode.REVIEW_PARTITION_REQUIRED,
                 partition_plan=partition_plan,
             )
-        future = self.executor.submit(self._run, job_id, command, snapshot)
+        future = self.executor.submit(self._run, job_id, resolved_command, snapshot)
         with self._future_lock:
             self._futures[job_id] = future
         future.add_done_callback(lambda _: self._forget(job_id))
@@ -675,6 +770,9 @@ class CodeReviewManager:
             snapshot_sha256=snapshot.snapshot_sha256,
             changed_file_count=len(snapshot.changed_files),
             changed_line_count=snapshot.changed_line_count,
+            selected_model=selected_model,
+            route_mode=command.route_mode,
+            routing_policy_version=OPENCODE_ROUTING_POLICY_VERSION,
         )
 
     def stage_patch(self, command: CodeReviewStagePatchCommand) -> CodeReviewStagedPatch:
@@ -1049,7 +1147,9 @@ class CodeReviewManager:
                 response_audit_path,
                 response_audit,
             )
-            usage = self._usage(response, OpenCodeGoModel(command.model.value), priced_at)
+            usage = self._usage(
+                response, OpenCodeGoModel(_required_model(command).value), priced_at
+            )
             try:
                 payload, raw_text, diagnostics = self._validated_payload(response, snapshot)
                 response_audit.update(diagnostics)
@@ -1154,15 +1254,17 @@ class CodeReviewManager:
                 timestamp=priced_at,
                 client_name=os.environ.get("ASK_AI_MCP_CLIENT_NAME", "code_review"),
                 task_kind="code_review",
-                model=command.model.value,
+                model=_required_model(command).value,
                 provider=ModelProvider.OPENCODE,
-                provider_model_id=command.model.value,
-                provider_runtime=provider_protocol(OpenCodeGoModel(command.model.value)).value,
+                provider_model_id=_required_model(command).value,
+                provider_runtime=provider_protocol(
+                    OpenCodeGoModel(_required_model(command).value)
+                ).value,
                 provider_account=self.account_uid,
                 provider_subscription_id=self.subscription_id,
                 thinking_enabled=True,
-                reasoning_effort=_model_policy(command.model)[0],
-                max_output_tokens=_model_policy(command.model)[1],
+                reasoning_effort=_model_policy(_required_model(command))[0],
+                max_output_tokens=_model_policy(_required_model(command))[1],
                 priced_at=priced_at,
                 pricing_band=PricingBand(str(usage["pricing_band"])),
                 pricing_schedule_version=OPENCODE_GO_PRICING_VERSION,
@@ -1286,9 +1388,10 @@ class CodeReviewManager:
         self, job_id: str, command: CodeReviewSubmitCommand, snapshot: CodeReviewSnapshot
     ) -> tuple[dict[str, Any], datetime, int]:
         prompt = self._prompt(command.review_profile, snapshot)
-        reasoning_effort, max_output_tokens = _model_policy(command.model)
+        model = _required_model(command)
+        reasoning_effort, max_output_tokens = _model_policy(model)
         body = {
-            "model": command.model.value,
+            "model": model.value,
             "messages": [
                 {
                     "role": "system",
@@ -1301,7 +1404,7 @@ class CodeReviewManager:
             "max_tokens": max_output_tokens,
             "response_format": {"type": "json_object"},
         }
-        model = OpenCodeGoModel(command.model.value)
+        model = OpenCodeGoModel(_required_model(command).value)
         body = request_body_for(
             model,
             body,
