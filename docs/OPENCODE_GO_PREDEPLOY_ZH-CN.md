@@ -1,8 +1,8 @@
 # OpenCode Go 预部署交接
 
-更新日期：2026-08-27（Asia/Shanghai）
-状态：固定协议适配、UID 账户、共享虚拟额度账本及独立 Coding/Review 入口已实现；五个固定
-模型的真实付费联调已于 2026-08-27 完成。
+更新日期：2026-09-01（Asia/Shanghai）
+状态：固定协议适配、UID 账户、共享虚拟额度账本及独立 Coding/Review 入口已实现；首批五个
+固定模型的真实付费联调已于 2026-08-27 完成，Grok 4.6 后续实付链路也已验证。
 
 ## 目标与工具面
 
@@ -26,12 +26,12 @@ PDF、PPTX 和 UTF-8 文本；音频、视频需要独立预处理与时间码�
 | 阶段 | 模型 | 协议 | 固定端点 |
 |---|---|---|---|
 | Coding 默认候选 | DSV4 Flash 或 GLM-5.3-Flash | Chat Completions，`max` | `/zen/go/v1/chat/completions` |
-| Coding 高级候选 | DSV4 Pro、GLM-5.3 或 Kimi K3 | Chat Completions，`max` | `/zen/go/v1/chat/completions` |
-| Review 深审 | DSV4 Pro、GLM-5.3 或 Kimi K3 | Chat Completions，`max` | `/zen/go/v1/chat/completions` |
+| Coding 高级候选 | DSV4 Pro、GLM-5.3、Kimi K3 或 Grok 4.6 | Chat Completions `max`；Responses `xhigh` | 固定 Go 端点 |
+| Review 深审 | DSV4 Pro、GLM-5.3、Kimi K3 或 Grok 4.6 | Chat Completions `max`；Responses `xhigh` | 固定 Go 端点 |
 | Core 工具制造 | 固定服务端策略 | 固定协议 | 固定 Go 端点 |
 | 多模态来源结构化 | Qwen3.8 Max | Anthropic Messages | `/zen/go/v1/messages` |
 
-Core 初次生成/语义修复、Coding 五路与 Review 三路统一使用共享 Go 生成策略；文本 thinking
+Core 初次生成/语义修复、Coding 六路与 Review 四路统一使用共享 Go 生成策略；文本 thinking
 工况的客户端总生成上限为 131,072 token。Core 静态哈希绑定小修保持 thinking off/4,096，
 Perception 保持 reasoning none 和按提取 profile 控制的结构化证据上限，H3 不使用 completion
 预算。所有实际 effort/cap 必须写入状态、manifest 或 usage 审计，不能再散落为入口私有策略。
@@ -82,11 +82,14 @@ ASK_AI_MCP_SOURCE_INPUT_ROOTS=<分号分隔的窄目录>
 
 本地 SQLite 记录 provider、实际模型、协议、账户、输入/输出、缓存读写 token 和估算虚拟
 美元，不保存密钥、完整 prompt、来源正文或普通模型输出。价格表固定为
-`opencode-go-2026-08-28`，避免官网价格变化后悄悄重算历史。
+`opencode-go-2026-09-01`，目录快照生效时间为 2026-09-01；历史记录保留写入时的目录版本，
+不重算。
 
-每个账户 UID 分别显示并保守检查共享滚动 5 小时 12 美元、
-7 天 30 美元和 30 天 60 美元；同时检查 GLM/Kimi/Pro/Grok 各 15 美元、Flash 30 美元的模型
-月度额度。模型有效余额取共享月余额与模型余额较小值，跨模型共享消费不会重复扣除。
+共享额度与模型额度是两层独立账本：共享滚动 5 小时 12 美元、7 天 30 美元和 30 天 60 美元
+按账户 UID 只聚合一次；模型子额度只聚合该模型消费，不归一化成 credits，也不会按模型数量
+重复扣减共享消费。GLM-5.3、GLM-5.3-Flash、Kimi K3、DeepSeek V4 Pro、Grok 4.6 各 15 美元、
+DeepSeek V4 Flash 30 美元的模型月度额度继续独立检查。模型有效余额取共享月余额与模型余额
+较小值，跨模型共享消费不会重复扣除。
 DeepSeek 仅在工作日按官方 UTC 两段 peak 窗口计价；周末 off-peak。缓存写等缺失价格明确为
 unsupported，不默认为 0。
 Grok 4.6 使用 Responses 协议与官方 `xhigh` 推理档，并按 200K 输入 token 阈值切换两档价格；

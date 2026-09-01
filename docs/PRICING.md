@@ -66,18 +66,22 @@ of truth for actual deductions.
 
 ## OpenCode Go catalog and limits
 
-The independent OpenCode Go catalog is pinned as `opencode-go-2026-08-28` with
-an effective instant and source URL. Remote model discovery may check
-`/zen/go/v1/models`, but it cannot change prices or expand the fixed reviewer
-model enum. Catalog updates require a code change, fixed-value tests, and manual
-review; historical rows retain their recorded catalog version.
+The independent OpenCode Go catalog is pinned as `opencode-go-2026-09-01` with
+an effective instant of 2026-09-01 and a fixed source URL. Remote model
+discovery may check `/zen/go/v1/models`, but it cannot change prices or expand
+the fixed reviewer model enum. Catalog updates require a code change, fixed-value
+tests, and manual review; historical rows retain their recorded catalog version
+and are never recomputed from a later snapshot.
 
-The subscription ledger enforces shared rolling virtual-USD windows of $12 per
-5 hours, $30 per 7 days, and $60 per 30 days. It also tracks monthly included
-usage caps of $15 for GLM 5.3, GLM-5.3-Flash, Kimi K3, DeepSeek V4 Pro, and Grok 4.6,
-and $30 for DeepSeek V4 Flash. Effective monthly remaining is the lesser of shared monthly
-remaining and the selected model's remaining cap. Shared usage is aggregated
-once per explicit API-visible account UID, never once per model.
+The account ledger is two-layered. Shared rolling virtual-USD windows of $12 per
+5 hours, $30 per 7 days, and $60 per 30 days aggregate account-level spend once
+per explicit API-visible account UID. The model-allowance layer tracks monthly
+included usage caps of $15 for GLM 5.3, GLM-5.3-Flash, Kimi K3, DeepSeek V4 Pro,
+and Grok 4.6, and $30 for DeepSeek V4 Flash, using only that model's spend. The
+layers are not collapsed into a single credits balance, and shared consumption
+is never deducted once per model. Effective monthly remaining is the lesser of
+shared monthly remaining and the selected model's remaining cap; independent
+model caps compose without re-aggregating shared spend.
 
 `usage_status` also reports the current UTC-day ledger spend against a $2
 utilization pace derived from $60 per 30 days. It explicitly marks this pace as

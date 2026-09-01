@@ -1,4 +1,4 @@
-"""Pinned official OpenCode Go pricing and dual-limit accounting tests."""
+"""Pinned official OpenCode Go pricing and dual-ledger accounting tests."""
 
 from __future__ import annotations
 
@@ -22,9 +22,9 @@ from ask_ai_mcp.opencode_pricing import (
 from ask_ai_mcp.usage import UsageStore
 
 
-def test_catalog_matches_2026_08_28_official_fixed_values() -> None:
-    assert OPENCODE_GO_PRICING_VERSION == "opencode-go-2026-08-28"
-    assert datetime(2026, 8, 28, tzinfo=UTC) == OPENCODE_GO_PRICING_EFFECTIVE_AT
+def test_catalog_matches_2026_09_01_official_fixed_values() -> None:
+    assert OPENCODE_GO_PRICING_VERSION == "opencode-go-2026-09-01"
+    assert datetime(2026, 9, 1, tzinfo=UTC) == OPENCODE_GO_PRICING_EFFECTIVE_AT
     assert OPENCODE_GO_PRICING_SOURCE_URL == "https://opencode.ai/docs/go/"
     expected = {
         OpenCodeGoModel.GLM_5_3_FLASH: (0.15, 0.50, 0.03, 15.0),
@@ -47,7 +47,7 @@ def test_catalog_matches_2026_08_28_official_fixed_values() -> None:
 
 
 def test_grok_uses_high_context_prices_only_above_200k_input_tokens() -> None:
-    instant = datetime(2026, 8, 28, tzinfo=UTC)
+    instant = datetime(2026, 9, 1, tzinfo=UTC)
     standard_band, standard = rates_for(
         OpenCodeGoModel.GROK_4_6, priced_at=instant, input_tokens=200_000
     )
@@ -167,6 +167,47 @@ def test_shared_monthly_spend_is_not_duplicated_across_models(tmp_path: Path) ->
     assert flash.limit_usd == 30.0
     assert flash.remaining_usd == 30.0
     assert flash.effective_remaining_usd == 15.0
+
+
+def test_four_15_usd_model_caps_compose_and_shared_monthly_pool_counts_once(
+    tmp_path: Path,
+) -> None:
+    store = UsageStore(tmp_path / "usage.db")
+    models = (
+        OpenCodeGoModel.GLM_5_3_FLASH,
+        OpenCodeGoModel.GLM_5_3,
+        OpenCodeGoModel.KIMI_K3,
+        OpenCodeGoModel.DSV4_PRO,
+    )
+    for model in models:
+        store.record(
+            _usage(
+                model,
+                15.0,
+                account="team_a",
+                subscription="go-2026-a",
+                age=timedelta(days=1),
+            )
+        )
+
+    account = store.summarize(days=30).opencode_go_accounts[0]
+    monthly = next(window for window in account.windows if window.window == "rolling_30d")
+    allowances = {item.model_id: item for item in account.model_allowances}
+
+    assert monthly.spent_usd == 60.0
+    assert monthly.estimated_spent_usd == 60.0
+    assert monthly.provider_reported_spent_usd == 0.0
+    assert monthly.remaining_usd == 0.0
+    for model in models:
+        allowance = allowances[model.value]
+        assert allowance.limit_usd == 15.0
+        assert allowance.spent_usd == 15.0
+        assert allowance.estimated_spent_usd == 15.0
+        assert allowance.provider_reported_spent_usd == 0.0
+        assert allowance.remaining_usd == 0.0
+        assert allowance.effective_remaining_usd == 0.0
+    assert sum(allowances[model.value].spent_usd for model in models) == 60.0
+    assert account.rolling_30d_by_model_usd == {model.value: 15.0 for model in models}
 
 
 def test_accounts_and_subscriptions_have_isolated_windows(tmp_path: Path) -> None:

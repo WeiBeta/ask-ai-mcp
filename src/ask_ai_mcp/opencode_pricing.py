@@ -70,8 +70,8 @@ class OpenCodeGoCostBreakdown:
     estimated: bool = True
 
 
-OPENCODE_GO_PRICING_VERSION = "opencode-go-2026-08-28"
-OPENCODE_GO_PRICING_EFFECTIVE_AT = datetime(2026, 8, 28, tzinfo=UTC)
+OPENCODE_GO_PRICING_VERSION = "opencode-go-2026-09-01"
+OPENCODE_GO_PRICING_EFFECTIVE_AT = datetime(2026, 9, 1, tzinfo=UTC)
 OPENCODE_GO_PRICING_SOURCE_URL = "https://opencode.ai/docs/go/"
 OPENCODE_GO_MODELS_URL = "https://opencode.ai/zen/go/v1/models"
 OPENCODE_GO_LIMITS_USD = {"rolling_5h": 12.0, "rolling_7d": 30.0, "rolling_30d": 60.0}

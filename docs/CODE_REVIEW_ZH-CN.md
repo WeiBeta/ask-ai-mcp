@@ -86,8 +86,9 @@ Authorization 与 Cookie 即使在密文仓也不保存。
 
 ## OpenCode Go 双层账本
 
-价格目录固定为 `opencode-go-2026-08-28`，带 `effective_at` 和官方 source URL；远端
-`/zen/go/v1/models` 只用于健康/可用性检查，不能静默改价或扩张 reviewer 模型枚举。
+价格目录固定为 `opencode-go-2026-09-01`，带 2026-09-01 `effective_at` 和官方 source URL；
+历史记录保留写入时的目录版本，不按新快照重算。远端 `/zen/go/v1/models` 只用于健康/可用性
+检查，不能静默改价或扩张 reviewer 模型枚举。
 
 官方 Go 是双层限制：订阅共享滚动 5 小时 `$12`、每周 `$30`、每月 `$60`；模型月度 included
 usage 上限分别为 GLM `$15`、Kimi `$15`、DeepSeek Pro `$15`。Coding 模块另用 GLM Flash
