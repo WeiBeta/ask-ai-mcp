@@ -57,6 +57,7 @@ def test_grok_uses_high_context_prices_only_above_200k_input_tokens() -> None:
     assert standard.input_usd_per_million == 2.0
     assert high.input_usd_per_million == 4.0
     assert high.output_usd_per_million == 12.0
+    assert high.cache_read_usd_per_million == 1.0
 
 
 @pytest.mark.parametrize(
